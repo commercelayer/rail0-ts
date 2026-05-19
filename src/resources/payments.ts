@@ -1,71 +1,89 @@
 import type { HttpClient } from '../core/http.js'
 import type {
-  AuthorizeParams,
+  ApproveRequest,
+  ApproveResponse,
+  AuthorizePaymentResponse,
   Bytes32,
-  CaptureParams,
-  ChargeParams,
-  HashResponse,
-  NonceResponse,
-  Payment,
-  PaymentResponse,
-  RefundParams,
-  ReleaseParams,
-  TransactionResponse,
-  VoidParams,
+  CapturePaymentRequest,
+  CapturePaymentResponse,
+  ChargePaymentResponse,
+  CreatePaymentRequest,
+  CreatePaymentResponse,
+  PayerSignatureRequest,
+  PayerSignatureResponse,
+  PrepareTransactionResponse,
+  RefundPaymentRequest,
+  RefundPaymentResponse,
+  ReleasePaymentResponse,
+  SubmitTransactionRequest,
+  VoidPaymentResponse,
 } from './types.js'
 
 export class PaymentsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** Returns the current on-chain state and config hash for a payment. */
-  get(paymentId: Bytes32): Promise<PaymentResponse> {
-    return this.http.get(`/payments/${paymentId}`)
+  /** Create a payment intent. Returns the EIP-712 signingPayload for the payer to sign. */
+  createPayment(params: CreatePaymentRequest): Promise<CreatePaymentResponse> {
+    return this.http.post('/payments', params)
   }
 
-  /** Pull `amount` from the payer into escrow using an EIP-3009 transferWithAuthorization signature. */
-  authorize(paymentId: Bytes32, params: AuthorizeParams): Promise<TransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/authorize`, params)
+  /** Submit the payer's EIP-712 signature (v, r, s). */
+  sign(paymentId: Bytes32, params: PayerSignatureRequest): Promise<PayerSignatureResponse> {
+    return this.http.put(`/payments/${paymentId}/sign`, params)
   }
 
-  /** Authorize and immediately capture in a single transaction. Uses an EIP-3009 signature. */
-  charge(paymentId: Bytes32, params: ChargeParams): Promise<TransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/charge`, params)
+  /** Relay the stored EIP-3009 signature to the RAIL0 authorize() function. Called by the payee. */
+  authorize(paymentId: Bytes32): Promise<AuthorizePaymentResponse> {
+    return this.http.post(`/payments/${paymentId}/authorize`)
   }
 
-  /** Capture escrowed funds. Caller must be the payee. */
-  capture(paymentId: Bytes32, params: CaptureParams): Promise<TransactionResponse> {
+  /** Relay the stored EIP-3009 signature to the RAIL0 charge() function (one-shot). Called by the payee. */
+  charge(paymentId: Bytes32): Promise<ChargePaymentResponse> {
+    return this.http.post(`/payments/${paymentId}/charge`)
+  }
+
+  /** Build the unsigned capture() transaction. Called by the payee. */
+  prepareCapture(paymentId: Bytes32, params: CapturePaymentRequest): Promise<PrepareTransactionResponse> {
     return this.http.post(`/payments/${paymentId}/capture`, params)
   }
 
-  /** Cancel an authorization, returning escrowed funds to the payer. Caller must be the payee. */
-  void(paymentId: Bytes32, params: VoidParams): Promise<TransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/void`, params)
+  /** Broadcast a signed capture transaction. Called by the payee. */
+  submitCapture(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<CapturePaymentResponse> {
+    return this.http.post(`/payments/${paymentId}/capture/submit`, params)
   }
 
-  /** Return escrowed funds to the payer after authorizationExpiry. Permissionless. */
-  release(paymentId: Bytes32, params: ReleaseParams): Promise<TransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/release`, params)
+  /** Build the unsigned void() transaction. Called by the payee. */
+  prepareVoid(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${paymentId}/void`)
   }
 
-  /** Refund a previously captured amount from the payee to the payer. Caller must be the payee. */
-  refund(paymentId: Bytes32, params: RefundParams): Promise<TransactionResponse> {
+  /** Broadcast a signed void transaction. Called by the payee. */
+  submitVoid(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<VoidPaymentResponse> {
+    return this.http.post(`/payments/${paymentId}/void/submit`, params)
+  }
+
+  /** Release escrowed funds back to the payer after authorizationExpiry. Permissionless. */
+  release(paymentId: Bytes32): Promise<ReleasePaymentResponse> {
+    return this.http.post(`/payments/${paymentId}/release`)
+  }
+
+  /** Build the unsigned ERC-20 approve() transaction needed before a refund. Called by the payee. */
+  prepareApprove(paymentId: Bytes32, params: ApproveRequest): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${paymentId}/approve`, params)
+  }
+
+  /** Broadcast a signed ERC-20 approve transaction. Called by the payee. */
+  submitApprove(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<ApproveResponse> {
+    return this.http.post(`/payments/${paymentId}/approve/submit`, params)
+  }
+
+  /** Build the unsigned refund() transaction. Called by the payee. */
+  prepareRefund(paymentId: Bytes32, params: RefundPaymentRequest): Promise<PrepareTransactionResponse> {
     return this.http.post(`/payments/${paymentId}/refund`, params)
   }
 
-  /** Returns the EIP-3009 nonce the payer must use when signing an authorize call.
-   *  configHash is the EIP-712 digest of the Payment configuration (from payments.hash()). */
-  authorizeNonce(paymentId: Bytes32, configHash: Bytes32): Promise<NonceResponse> {
-    return this.http.get(`/payments/${paymentId}/authorize-nonce?configHash=${configHash}`)
-  }
-
-  /** Returns the EIP-3009 nonce the payer must use when signing a charge call.
-   *  configHash is the EIP-712 digest of the Payment configuration (from payments.hash()). */
-  chargeNonce(paymentId: Bytes32, configHash: Bytes32): Promise<NonceResponse> {
-    return this.http.get(`/payments/${paymentId}/charge-nonce?configHash=${configHash}`)
-  }
-
-  /** Compute the canonical EIP-712 digest of a Payment configuration. */
-  hash(payment: Payment): Promise<HashResponse> {
-    return this.http.post('/payments/hash', payment)
+  /** Broadcast a signed refund transaction. Called by the payee. */
+  submitRefund(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<RefundPaymentResponse> {
+    return this.http.post(`/payments/${paymentId}/refund/submit`, params)
   }
 }

@@ -1,6 +1,6 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
-import type { Address, Bytes32, Payment } from './resources/types.js'
+import type { Address, Bytes32, PaymentConfig } from './resources/types.js'
 
 // ================================================================
 //  EIP-712 type strings
@@ -151,24 +151,20 @@ export interface SignTransferParams {
 
 /**
  * Parameters for signing an authorize or charge call.
- * Obtain the nonce from client.payments.authorizeNonce() or chargeNonce().
- * The contract hardcodes validAfter=0 and validBefore=payment.authorizationExpiry;
- * these are not configurable by the caller.
+ * The nonce comes from `signingPayload.message.nonce` returned by `POST /payments`.
+ * The contract hardcodes validAfter=0 and validBefore=payment.authorizationExpiry.
  */
 export interface SignPaymentParams {
   /** Payer's private key (0x-prefixed hex or raw Uint8Array). */
   privateKey: `0x${string}` | Uint8Array
-  payment: Payment
+  payment: PaymentConfig
   /** Amount to pull from the payer, in token base units. */
   amount: bigint
-  /**
-   * Nonce from client.payments.authorizeNonce(paymentId, configHash)
-   * or client.payments.chargeNonce(paymentId, configHash).
-   */
+  /** Nonce from `createPaymentResponse.signingPayload.message.nonce`. */
   nonce: Bytes32
-  /** Deployed RAIL0 contract address — receives the escrowed funds. */
+  /** RAIL0 contract address — from `createPaymentResponse.rail0Contract`. */
   contractAddress: Address
-  /** EIP-712 domain of the payment token (name, version from the token contract). */
+  /** EIP-712 domain of the payment token — from `createPaymentResponse.signingPayload.domain`. */
   tokenDomain: TokenDomain
 }
 
@@ -225,10 +221,12 @@ export function signTransferWithAuthorization(
  * Sign the EIP-3009 payload required by an authorize call.
  *
  * ```ts
- * const { hash: configHash } = await client.payments.hash(payment)
- * const { nonce } = await client.payments.authorizeNonce(paymentId, configHash)
- * const sig = signAuthorize({ privateKey, payment, amount: 50_000_000n, nonce, contractAddress, tokenDomain })
- * await client.payments.authorize(paymentId, { payment, amount: '50000000', ...sig })
+ * const resp = await client.payments.createPayment({ payment, amount: '50000000', chainId, mode: 'authorize' })
+ * const { nonce } = resp.signingPayload.message
+ * const domain = resp.signingPayload.domain
+ * const sig = signAuthorize({ privateKey, payment, amount: 50_000_000n, nonce, contractAddress: resp.rail0Contract, tokenDomain: domain })
+ * await client.payments.sign(resp.paymentId, sig)
+ * await client.payments.authorize(resp.paymentId)
  * ```
  */
 export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
@@ -246,9 +244,11 @@ export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
  * Sign the EIP-3009 payload required by a charge call.
  *
  * ```ts
- * const { nonce } = await client.payments.chargeNonce(paymentId, payment.payer)
- * const sig = signCharge({ privateKey, payment, amount: 25_000_000n, nonce, contractAddress, tokenDomain })
- * await client.payments.charge(paymentId, { payment, amount: '25000000', ...sig })
+ * const resp = await client.payments.createPayment({ payment, amount: '25000000', chainId, mode: 'charge' })
+ * const { nonce } = resp.signingPayload.message
+ * const sig = signCharge({ privateKey, payment, amount: 25_000_000n, nonce, contractAddress: resp.rail0Contract, tokenDomain: resp.signingPayload.domain })
+ * await client.payments.sign(resp.paymentId, sig)
+ * await client.payments.charge(resp.paymentId)
  * ```
  */
 export function signCharge(params: SignPaymentParams): Eip3009Signature {

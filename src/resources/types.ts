@@ -30,7 +30,7 @@ export type Bytes32 = components['schemas']['Bytes32']
 export type Uint256String = components['schemas']['Uint256String']
 
 // ================================================================
-//  Core model
+//  Core models
 // ================================================================
 
 /**
@@ -41,103 +41,79 @@ export type Uint256String = components['schemas']['Uint256String']
  * `paymentId` must supply the exact same struct — a mismatch causes the
  * contract to revert with `PaymentMismatch`.
  */
-export type Payment = components['schemas']['Payment']
+export type PaymentConfig = components['schemas']['PaymentConfig']
+
+/** EIP-712 domain for the token contract (used by EIP-3009 TransferWithAuthorization). */
+export type EIP712Domain = components['schemas']['EIP712Domain']
+
+/** Message fields for the EIP-3009 TransferWithAuthorization typed-data signature. */
+export type EIP3009Message = components['schemas']['EIP3009Message']
 
 /**
- * On-chain mutable state for a payment, packed in a single storage slot.
- *
- * - `capturableAmount` holds the escrowed balance (authorize → capture / void / release path).
- * - `refundableAmount` holds funds already disbursed to the payee (capture → refund path).
+ * EIP-712 typed-data structure returned by `POST /payments`.
+ * Pass verbatim to `eth_signTypedData_v4`, or compute the digest manually
+ * with any EIP-712 library and sign with secp256k1.
  */
-export type PaymentState = components['schemas']['PaymentState']
+export type SigningPayload = components['schemas']['SigningPayload']
 
 // ================================================================
-//  Request params
+//  Request bodies
 // ================================================================
 
-/**
- * Body for `payments.authorize()`.
- *
- * `v`, `r`, `s` are the EIP-3009 `transferWithAuthorization` signature produced
- * by the payer's private key. Use `signAuthorize()` to build the signature off-chain.
- */
-export type AuthorizeParams = components['schemas']['AuthorizeRequest']
+/** Body for `payments.createPayment()`. */
+export type CreatePaymentRequest = components['schemas']['CreatePaymentRequest']
 
-/**
- * Body for `payments.charge()` (one-shot authorize + capture).
- *
- * Same shape as `AuthorizeParams`. The nonce must come from
- * `payments.chargeNonce()` — it is different from the authorize nonce.
- */
-export type ChargeParams = components['schemas']['AuthorizeRequest']
+/** Body for `payments.sign()`. EIP-712 signature components (v, r, s). */
+export type PayerSignatureRequest = components['schemas']['PayerSignatureRequest']
 
-/**
- * Body for `payments.capture()`.
- * The API submits the on-chain transaction on behalf of `payment.payee`.
- */
-export type CaptureParams = components['schemas']['PaymentWithAmountRequest']
+/** Body for `payments.prepareCapture()`. Amount to capture from escrow. */
+export type CapturePaymentRequest = components['schemas']['CapturePaymentRequest']
 
-/**
- * Body for `payments.void()`.
- * The API submits the on-chain transaction on behalf of `payment.payee`.
- */
-export type VoidParams = components['schemas']['PaymentRequest']
+/** Body for `payments.submitCapture()`, `submitVoid()`, `submitApprove()`, `submitRefund()`. */
+export type SubmitTransactionRequest = components['schemas']['SubmitTransactionRequest']
 
-/**
- * Body for `payments.release()`.
- *
- * Release is permissionless — anyone may call it once `authorizationExpiry` has
- * passed without a capture, returning escrowed funds to the payer.
- */
-export type ReleaseParams = components['schemas']['PaymentRequest']
+/** Body for `payments.prepareApprove()`. Allowance to grant the RAIL0 contract. */
+export type ApproveRequest = components['schemas']['ApproveRequest']
 
-/**
- * Body for `payments.refund()`.
- * The API submits the on-chain transaction on behalf of `payment.payee`.
- * Must be called before `refundExpiry`.
- */
-export type RefundParams = components['schemas']['PaymentWithAmountRequest']
+/** Body for `payments.prepareRefund()`. Amount to refund to the payer. */
+export type RefundPaymentRequest = components['schemas']['RefundPaymentRequest']
 
 // ================================================================
 //  Response shapes
 // ================================================================
 
-/** Full on-chain state returned by `payments.get()`. */
-export type PaymentResponse = components['schemas']['PaymentResponse']
+/** Returned by `payments.createPayment()`. Contains the paymentId and the EIP-712 signingPayload. */
+export type CreatePaymentResponse = components['schemas']['CreatePaymentResponse']
+
+/** Returned by `payments.sign()`. Confirms the signature was stored. */
+export type PayerSignatureResponse = components['schemas']['PayerSignatureResponse']
+
+/** Returned by `payments.authorize()`. Contains the on-chain tx hash and capturableAmount. */
+export type AuthorizePaymentResponse = components['schemas']['AuthorizePaymentResponse']
+
+/** Returned by `payments.charge()`. Contains the on-chain tx hash and amounts. */
+export type ChargePaymentResponse = components['schemas']['ChargePaymentResponse']
 
 /**
- * Returned by every write operation. The transaction has been submitted to
- * the network but may still be pending confirmation on-chain.
+ * Returned by prepare operations (prepareCapture, prepareVoid, prepareApprove, prepareRefund).
+ * An unsigned EIP-1559 transaction ready for the payee to sign.
  */
-export type TransactionResponse = components['schemas']['TransactionResponse']
+export type PrepareTransactionResponse = components['schemas']['PrepareTransactionResponse']
 
-/** `"pending" | "confirmed" | "failed"` — confirmation status of a submitted transaction. */
-export type TransactionStatus = TransactionResponse['status']
+/** Returned by `payments.submitCapture()`. Contains amounts and updated escrow balances. */
+export type CapturePaymentResponse = components['schemas']['CapturePaymentResponse']
 
-/** Returned by `tokens.isAccepted()`. */
-export type TokenStatusResponse =
-  operations['isAcceptedToken']['responses']['200']['content']['application/json']
+/** Returned by `payments.submitVoid()`. Contains the on-chain tx hash and released amount. */
+export type VoidPaymentResponse = components['schemas']['VoidPaymentResponse']
 
-/** EIP-712 digest of a Payment struct, returned by `payments.hash()`. */
-export type HashResponse =
-  operations['hashPayment']['responses']['200']['content']['application/json']
+/** Returned by `payments.release()`. Contains the on-chain tx hash and released amount. */
+export type ReleasePaymentResponse = components['schemas']['ReleasePaymentResponse']
 
-/**
- * Returned by `payments.authorizeNonce()` and `payments.chargeNonce()`.
- *
- * Pass the nonce value into `signAuthorize()` or `signCharge()` when building
- * the EIP-3009 `transferWithAuthorization` signature.
- */
-export type NonceResponse =
-  operations['authorizeNonce']['responses']['200']['content']['application/json']
+/** Returned by `payments.submitApprove()`. Contains the on-chain tx hash and approval details. */
+export type ApproveResponse = components['schemas']['ApproveResponse']
 
-/** EIP-712 domain separator of the RAIL0 contract, returned by `utils.domainSeparator()`. */
-export type DomainSeparatorResponse =
-  operations['domainSeparator']['responses']['200']['content']['application/json']
-
-/** Contract version number, returned by `utils.version()`. */
-export type VersionResponse =
-  operations['version']['responses']['200']['content']['application/json']
+/** Returned by `payments.submitRefund()`. Contains the on-chain tx hash and refunded amount. */
+export type RefundPaymentResponse = components['schemas']['RefundPaymentResponse']
 
 // ================================================================
 //  Error
@@ -147,4 +123,14 @@ export type VersionResponse =
  * Shape of error responses from the RAIL0 API.
  * Also exposed as properties on `Rail0ApiError` instances.
  */
-export type ApiErrorBody = components['schemas']['ErrorResponse']
+export type ApiErrorBody = components['schemas']['Error']
+
+// ================================================================
+//  Derived utility types
+// ================================================================
+
+/** `"authorize" | "charge"` — payment mode set at creation time. */
+export type PaymentMode = CreatePaymentRequest['mode']
+
+/** `"signature_stored"` — status returned after a successful sign call. */
+export type SignatureStatus = PayerSignatureResponse['status']
