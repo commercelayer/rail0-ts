@@ -779,7 +779,7 @@
           "payer",
           "payee",
           "token",
-          "maxAmount",
+          "amount",
           "authorizationExpiry",
           "refundExpiry",
           "feeBps",
@@ -798,9 +798,9 @@
             "allOf": [{ "$ref": "#/components/schemas/Address" }],
             "description": "EIP-3009-capable ERC-20 token address (must be accepted by the RAIL0 deployment)."
           },
-          "maxAmount": {
+          "amount": {
             "allOf": [{ "$ref": "#/components/schemas/Uint256String" }],
-            "description": "Upper bound on the authorized amount (fits in uint120)."
+            "description": "Exact amount the payer commits to pay (in token base units, fits in uint120)."
           },
           "authorizationExpiry": {
             "type": "integer",
@@ -829,19 +829,14 @@
       },
       "CreatePaymentRequest": {
         "type": "object",
-        "description": "Parameters needed to create a payment intent. The API generates a unique `paymentId` and constructs the EIP-712 signing payload.",
+        "description": "Parameters needed to create a payment intent. The API generates a unique `paymentId` and constructs the EIP-712 signing payload. The exact amount is set via `payment.amount`.",
         "required": [
           "payment",
-          "amount",
           "chainId"
         ],
         "properties": {
           "payment": {
             "$ref": "#/components/schemas/PaymentConfig"
-          },
-          "amount": {
-            "allOf": [{ "$ref": "#/components/schemas/Uint256String" }],
-            "description": "Exact amount to authorize (in token base units). Must be > 0 and <= payment.maxAmount."
           },
           "chainId": {
             "type": "integer",
@@ -960,7 +955,7 @@
       },
       "CreatePaymentResponse": {
         "type": "object",
-        "required": ["paymentId", "configHash", "payment", "amount", "chainId", "rail0Contract", "signingPayload"],
+        "required": ["paymentId", "configHash", "payment", "chainId", "rail0Contract", "signingPayload"],
         "properties": {
           "paymentId": {
             "allOf": [{ "$ref": "#/components/schemas/Bytes32" }],
@@ -972,10 +967,6 @@
           },
           "payment": {
             "$ref": "#/components/schemas/PaymentConfig"
-          },
-          "amount": {
-            "allOf": [{ "$ref": "#/components/schemas/Uint256String" }],
-            "description": "Exact amount to be authorized."
           },
           "chainId": {
             "type": "integer",
