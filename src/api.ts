@@ -286,8 +286,8 @@ export interface components {
             payee: components["schemas"]["Address"];
             /** @description EIP-3009-capable ERC-20 token address (must be accepted by the RAIL0 deployment). */
             token: components["schemas"]["Address"];
-            /** @description Upper bound on the authorized amount (fits in uint120). */
-            maxAmount: components["schemas"]["Uint256String"];
+            /** @description Exact amount the payer commits to pay (in token base units, fits in uint120). */
+            amount: components["schemas"]["Uint256String"];
             /**
              * Format: int64
              * @description Unix timestamp (seconds). Capture must happen before this; release opens after.
@@ -308,11 +308,9 @@ export interface components {
             /** @description Recipient of the fee on each capture. Use the zero address (0x0000…0000) when feeBps is 0. */
             feeReceiver: components["schemas"]["Address"];
         };
-        /** @description Parameters needed to create a payment intent. The API generates a unique `paymentId` and constructs the EIP-712 signing payload. */
+        /** @description Parameters needed to create a payment intent. The API generates a unique `paymentId` and constructs the EIP-712 signing payload. The exact amount is set via `payment.amount`. */
         CreatePaymentRequest: {
             payment: components["schemas"]["PaymentConfig"];
-            /** @description Exact amount to authorize (in token base units). Must be > 0 and <= payment.maxAmount. */
-            amount: components["schemas"]["Uint256String"];
             /**
              * @description EVM chain ID of the target network.
              * @example 84532
@@ -412,8 +410,6 @@ export interface components {
             /** @description EIP-712 hash of the Payment struct over the RAIL0 domain. Commits the signature to the exact payment terms. */
             configHash: components["schemas"]["Bytes32"];
             payment: components["schemas"]["PaymentConfig"];
-            /** @description Exact amount to be authorized. */
-            amount: components["schemas"]["Uint256String"];
             /**
              * @description EVM chain ID.
              * @example 84532

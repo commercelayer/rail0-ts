@@ -1,6 +1,6 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
-import type { Address, Bytes32, PaymentConfig } from './resources/types.js'
+import type { Address, Bytes32, CreatePaymentResponse, PaymentConfig } from './resources/types.js'
 
 // ================================================================
 //  EIP-712 type strings
@@ -153,13 +153,14 @@ export interface SignTransferParams {
  * Parameters for signing an authorize or charge call.
  * The nonce comes from `signingPayload.message.nonce` returned by `POST /payments`.
  * The contract hardcodes validAfter=0 and validBefore=payment.authorizationExpiry.
+ *
+ * For the simple case, prefer `signPayment(privateKey, createPaymentResponse)` which
+ * reads all fields from the API response directly.
  */
 export interface SignPaymentParams {
   /** Payer's private key (0x-prefixed hex or raw Uint8Array). */
   privateKey: `0x${string}` | Uint8Array
   payment: PaymentConfig
-  /** Amount to pull from the payer, in token base units. */
-  amount: bigint
   /** Nonce from `createPaymentResponse.signingPayload.message.nonce`. */
   nonce: Bytes32
   /** RAIL0 contract address — from `createPaymentResponse.rail0Contract`. */
@@ -221,10 +222,8 @@ export function signTransferWithAuthorization(
  * Sign the EIP-3009 payload required by an authorize call.
  *
  * ```ts
- * const resp = await client.payments.createPayment({ payment, amount: '50000000', chainId, mode: 'authorize' })
- * const { nonce } = resp.signingPayload.message
- * const domain = resp.signingPayload.domain
- * const sig = signAuthorize({ privateKey, payment, amount: 50_000_000n, nonce, contractAddress: resp.rail0Contract, tokenDomain: domain })
+ * const resp = await client.payments.createPayment({ payment: { ...payment, amount: '50000000' }, chainId, mode: 'authorize' })
+ * const sig = signAuthorize({ privateKey, payment: resp.payment, nonce: resp.signingPayload.message.nonce, contractAddress: resp.rail0Contract, tokenDomain: resp.signingPayload.domain })
  * await client.payments.sign(resp.paymentId, sig)
  * await client.payments.authorize(resp.paymentId)
  * ```
@@ -233,7 +232,7 @@ export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
   return doSign(params.privateKey, params.tokenDomain, {
     from: params.payment.payer,
     to: params.contractAddress,
-    value: params.amount,
+    value: BigInt(params.payment.amount),
     validAfter: 0n,
     validBefore: BigInt(params.payment.authorizationExpiry),
     nonce: params.nonce,
@@ -244,9 +243,8 @@ export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
  * Sign the EIP-3009 payload required by a charge call.
  *
  * ```ts
- * const resp = await client.payments.createPayment({ payment, amount: '25000000', chainId, mode: 'charge' })
- * const { nonce } = resp.signingPayload.message
- * const sig = signCharge({ privateKey, payment, amount: 25_000_000n, nonce, contractAddress: resp.rail0Contract, tokenDomain: resp.signingPayload.domain })
+ * const resp = await client.payments.createPayment({ payment: { ...payment, amount: '25000000' }, chainId, mode: 'charge' })
+ * const sig = signCharge({ privateKey, payment: resp.payment, nonce: resp.signingPayload.message.nonce, contractAddress: resp.rail0Contract, tokenDomain: resp.signingPayload.domain })
  * await client.payments.sign(resp.paymentId, sig)
  * await client.payments.charge(resp.paymentId)
  * ```
@@ -255,9 +253,37 @@ export function signCharge(params: SignPaymentParams): Eip3009Signature {
   return doSign(params.privateKey, params.tokenDomain, {
     from: params.payment.payer,
     to: params.contractAddress,
-    value: params.amount,
+    value: BigInt(params.payment.amount),
     validAfter: 0n,
     validBefore: BigInt(params.payment.authorizationExpiry),
     nonce: params.nonce,
+  })
+}
+
+/**
+ * Sign the EIP-3009 payload returned by `POST /payments`.
+ *
+ * Reads all required parameters directly from the API response — no manual
+ * field extraction needed. This is the recommended signing path for payers.
+ *
+ * ```ts
+ * const resp = await client.payments.createPayment({ payment: { ...payment, amount: '50000000' }, chainId, mode: 'authorize' })
+ * const sig = signPayment(privateKey, resp)
+ * await client.payments.sign(resp.paymentId, sig)
+ * await client.payments.authorize(resp.paymentId)
+ * ```
+ */
+export function signPayment(
+  privateKey: `0x${string}` | Uint8Array,
+  response: CreatePaymentResponse,
+): Eip3009Signature {
+  const { message, domain } = response.signingPayload
+  return doSign(privateKey, domain as TokenDomain, {
+    from: message.from as Address,
+    to: message.to as Address,
+    value: BigInt(message.value),
+    validAfter: BigInt(message.validAfter),
+    validBefore: BigInt(message.validBefore),
+    nonce: message.nonce as Bytes32,
   })
 }

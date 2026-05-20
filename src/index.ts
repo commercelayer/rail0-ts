@@ -4,6 +4,7 @@ export {
   signTransferWithAuthorization,
   signAuthorize,
   signCharge,
+  signPayment,
 } from './signing.js'
 export type {
   TokenDomain,
