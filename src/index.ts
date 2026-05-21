@@ -22,6 +22,8 @@ export { Rail0ApiError } from './core/error.js'
 export { debugLogger } from './core/http.js'
 export type { Logger, LogEntry } from './core/http.js'
 
+export { MerchantsResource } from './resources/merchants.js'
+
 export type {
   // Primitives
   Address,
@@ -39,6 +41,8 @@ export type {
   SubmitTransactionRequest,
   ApproveRequest,
   RefundPaymentRequest,
+  ReleaseRequest,
+  SubmitApproveRequest,
   // Response shapes
   CreatePaymentResponse,
   PayerSignatureResponse,
@@ -50,6 +54,9 @@ export type {
   ReleasePaymentResponse,
   ApproveResponse,
   RefundPaymentResponse,
+  OnChainState,
+  PaymentResponse,
+  PaymentMethod,
   // Utility types
   PaymentMode,
   SignatureStatus,

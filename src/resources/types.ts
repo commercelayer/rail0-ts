@@ -126,6 +126,53 @@ export type RefundPaymentResponse = components['schemas']['RefundPaymentResponse
 export type ApiErrorBody = components['schemas']['Error']
 
 // ================================================================
+//  Hand-written extension types
+// ================================================================
+
+/** Body for `payments.prepareRelease()`. Pass callerAddress to build the tx for the buyer. */
+export type ReleaseRequest = { callerAddress?: Address }
+
+/** Body for `payments.submitApprove()`. Include amount so the API records it in the transaction log. */
+export type SubmitApproveRequest = SubmitTransactionRequest & { amount?: Uint256String }
+
+/** Live on-chain escrow state for a payment. */
+export interface OnChainState {
+  exists: boolean
+  capturableAmount: Uint256String
+  refundableAmount: Uint256String
+}
+
+/** Returned by `payments.get()`. Combines DB status with live on-chain balances. */
+export interface PaymentResponse {
+  paymentId: Bytes32
+  status: string
+  mode: string
+  amount: Uint256String
+  payer: Address
+  payee: Address
+  token: Address
+  chainId: number
+  authorizationExpiry: number
+  refundExpiry: number
+  onChain?: OnChainState
+}
+
+/** A single accepted payment method for a merchant (chain + token + wallet). */
+export interface PaymentMethod {
+  id: number
+  tokenId: number
+  chainId: number
+  chainName: string
+  chainSlug: string
+  explorerUrl: string
+  tokenAddress: Address
+  tokenSymbol: string
+  tokenDecimals: number
+  walletAddress: Address
+  isDefault: boolean
+}
+
+// ================================================================
 //  Derived utility types
 // ================================================================
 
