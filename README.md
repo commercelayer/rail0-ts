@@ -1,8 +1,8 @@
 # @rail0/sdk
 
-TypeScript SDK for the [RAIL0](https://github.com/your-org/rail0) stablecoin payment API.
+TypeScript SDK for the [RAIL0](https://github.com/commercelayer/rail0) stablecoin payment API.
 
-RAIL0 is an immutable smart contract that brings the authorize → capture → refund lifecycle of card networks to stablecoin payments — no intermediaries, no protocol fee, no permission required. This SDK wraps the REST API that sits in front of the contract, giving you fully-typed access to every operation from any TypeScript or JavaScript environment.
+RAIL0 is an immutable smart contract that brings the authorize → capture → refund lifecycle of card networks to stablecoin payments — no intermediaries, no protocol fees, no permission required. This SDK wraps the REST API that sits in front of the contract, giving you fully-typed access to every operation from any TypeScript or JavaScript environment.
 
 ## Requirements
 
@@ -21,60 +21,62 @@ pnpm add @rail0/sdk
 
 ```typescript
 import { Rail0Client } from '@rail0/sdk'
-import type { Payment } from '@rail0/sdk'
 
 const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz' })
 
-const now = Math.floor(Date.now() / 1000)
+// Step 1 — discover payment methods
+const methods = await client.merchants.paymentMethods(1)
+const usdc = methods.find(m => m.tokenSymbol === 'USDC')!
 
-const payment: Payment = {
-  payer:               '0xBuyer...',
-  payee:               '0xMerchant...',
-  token:               '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
-  amount:              '100000000', // 100 USDC (6 decimals)
-  authorizationExpiry: now + 3600 * 24,     // 24 h to capture
-  refundExpiry:        now + 3600 * 24 * 7, // 7-day refund window
-  feeBps:              50,                  // 0.5 % to feeReceiver
-  feeReceiver:         '0xFeeReceiver...',
-}
-
-const paymentId = '0xabc...' // your unique identifier for this payment
-
-// Step 1 — buyer locks funds in escrow
-await client.payments.authorize(paymentId, {
-  payment,
-  amount: '50000000', // 50 USDC
-  caller: payment.payer,
+// Step 2 — create payment intent
+const resp = await client.payments.createPayment({
+  payment: {
+    payer: '0xBuyer...',
+    payee: usdc.walletAddress,
+    token: usdc.tokenAddress,
+  },
+  amount: '50000000',       // 50 USDC (6 decimals)
+  chainId: usdc.chainId,
+  mode: 'authorize',
 })
 
-// Step 2 — merchant releases them
-await client.payments.capture(paymentId, {
-  payment,
-  amount: '50000000',
-  caller: payment.payee,
-})
+// Step 3 — payer signs EIP-3009 payload off-chain (use viem, ethers, etc.)
+// const sig = await wallet.signTypedData(resp.signingPayload)
+
+// Step 4 — submit payer signature
+await client.payments.sign(resp.paymentId, { v, r, s })
+
+// Step 5 — payee prepares the unsigned authorize tx
+const tx = await client.payments.authorize(resp.paymentId)
+// sign tx.unsignedTransaction with payee's key (EIP-1559)
+
+// Step 6 — broadcast signed authorize tx
+await client.payments.submitAuthorize(resp.paymentId, { signedTransaction: signedBytes })
+
+// Step 7 — payee captures the funds
+const captureTx = await client.payments.prepareCapture(resp.paymentId, { amount: '50000000' })
+await client.payments.submitCapture(resp.paymentId, { signedTransaction: sign(captureTx) })
 ```
 
 ## Payment lifecycle
 
-A payment moves through two sequential time windows defined at creation time.
-
 ```text
-                  preApprovalExpiry    authorizationExpiry    refundExpiry
-                         │                     │                   │
-  ───────────────────────┼─────────────────────┼───────────────────┼────▶ time
-   authorize / charge     │   capture / void     │   refund          │
-                          │   reclaim (buyer)    │
+                            authorizationExpiry       refundExpiry
+                                   │                       │
+  ─────────────────────────────────┼───────────────────────┼──────▶ time
+   create → sign → authorize       │   capture / void       │   approve+refund
+                                    │   release              │
 ```
 
 | Operation | Caller | What it does |
-| --------- | ------ | ------------ |
-| `authorize` | payer | Locks `amount` in escrow |
-| `charge` | payer | Authorize + capture in one transaction |
-| `capture` | payee | Moves escrowed funds to the merchant |
-| `void` | payee | Cancels the hold, returns funds to the buyer |
-| `reclaim` | payer | Reclaims escrow after `authorizationExpiry` if never captured |
-| `refund` | payee | Pulls captured funds back from the merchant to the buyer |
+|-----------|--------|--------------|
+| `authorize` + `submitAuthorize` | payee | Prepare + broadcast the authorize tx; funds move to escrow |
+| `charge` | payee | Server-side one-shot: authorize + capture with no escrow window |
+| `prepareCapture` + `submitCapture` | payee | Moves escrowed funds to the merchant |
+| `prepareVoid` + `submitVoid` | payee | Cancels the hold, returns funds to the payer |
+| `prepareRelease` + `submitRelease` | anyone | Reclaims escrow after `authorizationExpiry` |
+| `prepareApprove` + `submitApprove` | payee | ERC-20 `approve()` required before a refund |
+| `prepareRefund` + `submitRefund` | payee | Returns captured funds to the payer |
 
 ## API reference
 
@@ -82,12 +84,12 @@ A payment moves through two sequential time windows defined at creation time.
 
 ```typescript
 const client = new Rail0Client({
-  baseUrl: 'https://api.rail0.xyz',
-  headers: { Authorization: 'Bearer ...' }, // optional
-  timeout: 30_000,                          // ms, default 30 000
-  maxRetries: 3,                            // optional, default 0 (no retry)
-  retryDelay: 200,                          // ms base delay, doubles each attempt, default 200
-  logger: debugLogger,                      // optional — see Logging
+  baseUrl:    'https://api.rail0.xyz',
+  headers:    { Authorization: 'Bearer ...' }, // optional
+  timeout:    30_000,                          // ms, default 30 000
+  maxRetries: 3,                               // default 0 (no retry)
+  retryDelay: 200,                             // ms base delay, doubles each attempt
+  logger:     debugLogger,                     // optional — see Logging
 })
 ```
 
@@ -95,32 +97,27 @@ const client = new Rail0Client({
 
 ### Logging
 
-Pass any function matching `(entry: LogEntry) => void` as `logger` to receive structured log entries for every request.
+Pass any `(entry: LogEntry) => void` as `logger` to receive structured log entries.
 
 ```typescript
-import { Rail0Client, debugLogger } from '@rail0/sdk'
+import { debugLogger } from '@rail0/sdk'
 
-// Built-in logger — writes to console.debug
 const client = new Rail0Client({
   baseUrl: 'https://api.rail0.xyz',
   logger: debugLogger,
 })
 ```
 
-Output format:
-
+Output:
 ```text
-[rail0] POST 202 https://api.rail0.xyz/payments/0x.../authorize 87ms → { ... } ← { ... }
-[rail0] ERROR GET https://api.rail0.xyz/payments/0x... 30001ms ! AbortError: The operation was aborted
+[rail0] POST 200 https://.../payments 87ms
+[rail0] ERROR PUT https://.../payments/0x.../sign 30001ms ! AbortError: The operation was aborted
 ```
 
-To integrate with an existing logger (pino, winston, etc.), pass a custom function:
+To integrate with pino, winston, or any structured logger:
 
 ```typescript
-import pino from 'pino'
 import type { LogEntry } from '@rail0/sdk'
-
-const log = pino()
 
 const client = new Rail0Client({
   baseUrl: 'https://api.rail0.xyz',
@@ -134,215 +131,95 @@ const client = new Rail0Client({
 })
 ```
 
-`LogEntry` fields:
+---
 
-| Field | Type | Present |
-| ----- | ---- | ------- |
-| `method` | `string` | always |
-| `url` | `string` | always |
-| `durationMs` | `number` | always |
-| `requestBody` | `unknown` | POST requests |
-| `status` | `number` | when a response was received |
-| `responseBody` | `unknown` | when a response was received |
-| `error` | `unknown` | on HTTP errors and network failures |
+### `client.merchants`
+
+#### `.paymentMethods(merchantId)` → `Promise<PaymentMethod[]>`
+
+Returns the active payment methods (chain + token + wallet) for a merchant.
+
+```typescript
+const methods = await client.merchants.paymentMethods(1)
+// methods[0].chainId, .tokenAddress, .walletAddress, .tokenSymbol, .chainSlug
+```
 
 ---
 
 ### `client.payments`
 
-#### `.get(paymentId)`
+All methods return a `Promise<T>`. Errors throw `Rail0ApiError`.
 
-Returns the on-chain state and configuration hash for a payment.
+#### `.get(paymentId)` → `Promise<PaymentResponse>`
 
-```typescript
-const { state, configHash } = await client.payments.get(paymentId)
-// state: { exists, capturableAmount, refundableAmount }
-```
-
-#### `.authorize(paymentId, params)`
-
-Locks `amount` from the buyer into escrow. The buyer must be the `caller`.
+Fetches the current payment state (DB status + live on-chain escrow balances).
 
 ```typescript
-await client.payments.authorize(paymentId, {
-  payment,
-  amount: '50000000',
-  caller: payment.payer,
-  permit,   // optional EIP-2612 signature — omit if buyer has a standing approval
-})
+const state = await client.payments.get(paymentId)
+// state.status, state.onChain.capturableAmount, state.onChain.refundableAmount
 ```
 
-#### `.charge(paymentId, params)`
+#### `.createPayment(params)` → `Promise<CreatePaymentResponse>`
 
-Authorize and capture in one transaction. Funds go directly to the merchant with no hold period. The buyer must be the `caller`.
+Creates a payment intent. Returns `signingPayload` for the payer to sign, plus `rail0Contract`.
+
+#### `.sign(paymentId, params)` → `Promise<PayerSignatureResponse>`
+
+Submits the payer's EIP-712 signature (v, r, s).
+
+#### `.authorize(paymentId)` → `Promise<PrepareTransactionResponse>`
+
+Prepares the unsigned `authorize()` transaction. Called by the payee. Sign `unsignedTransaction` with the payee's key and pass to `submitAuthorize`.
+
+#### `.submitAuthorize(paymentId, params)` → `Promise<AuthorizePaymentResponse>`
+
+Broadcasts the signed authorize transaction. Funds are moved to escrow.
 
 ```typescript
-await client.payments.charge(paymentId, {
-  payment,
-  amount: '50000000',
-  caller: payment.payer,
-  permit,   // optional
-})
+const tx = await client.payments.authorize(paymentId)
+const res = await client.payments.submitAuthorize(paymentId, { signedTransaction: signedBytes })
+// res.transactionHash, res.capturableAmount
 ```
 
-#### `.capture(paymentId, params)`
+#### `.charge(paymentId)` → `Promise<ChargePaymentResponse>`
 
-Moves escrowed funds to the merchant. The merchant must be the `caller`. Must be called before `authorizationExpiry`. Can be called multiple times for partial captures.
+Server-side one-shot: authorize + capture in a single transaction. No `submit` step. Called by the payee.
+
+#### `.prepareCapture(paymentId, params)` / `.submitCapture(paymentId, params)`
+
+Build and broadcast the capture transaction. Partial captures are supported.
 
 ```typescript
-await client.payments.capture(paymentId, {
-  payment,
-  amount: '50000000',
-  caller: payment.payee,
-})
+const tx = await client.payments.prepareCapture(paymentId, { amount: '50000000' })
+const res = await client.payments.submitCapture(paymentId, { signedTransaction: signed })
+// res.capturedAmount, res.capturableAmount, res.refundableAmount
 ```
 
-#### `.void(paymentId, params)`
+#### `.prepareVoid(paymentId)` / `.submitVoid(paymentId, params)`
 
-Cancels an authorization and returns all escrowed funds to the buyer. The merchant must be the `caller`.
+Void the authorization — releases all escrowed funds to the payer.
+
+#### `.prepareRelease(paymentId, params?)` / `.submitRelease(paymentId, params)`
+
+Release escrowed funds after `authorizationExpiry`. Pass `{ callerAddress }` to build the tx for the buyer (payer).
 
 ```typescript
-await client.payments.void(paymentId, {
-  payment,
-  caller: payment.payee,
-})
+const tx = await client.payments.prepareRelease(paymentId, { callerAddress: buyerAddr })
+await client.payments.submitRelease(paymentId, { signedTransaction: buyerSigned })
 ```
 
-#### `.reclaim(paymentId, params)`
+#### `.prepareApprove(paymentId, params)` / `.submitApprove(paymentId, params)`
 
-Returns escrowed funds to the buyer after `authorizationExpiry` has passed and no capture occurred. The buyer must be the `caller`.
+ERC-20 `approve()` before a refund. Include `amount` in `submitApprove` so the API records it.
 
 ```typescript
-await client.payments.reclaim(paymentId, {
-  payment,
-  caller: payment.payer,
-})
+const tx = await client.payments.prepareApprove(paymentId, { amount: '50000000' })
+await client.payments.submitApprove(paymentId, { signedTransaction: signed, amount: '50000000' })
 ```
 
-#### `.refund(paymentId, params)`
+#### `.prepareRefund(paymentId, params)` / `.submitRefund(paymentId, params)`
 
-Pulls previously captured funds back from the merchant to the buyer. The merchant must be the `caller` and must be called before `refundExpiry`.
-
-Captured funds live in the merchant's wallet, not in the contract. The contract pulls them back via `transferFrom`, so the merchant needs either a standing ERC-20 approval or a `permit` signature.
-
-```typescript
-await client.payments.refund(paymentId, {
-  payment,
-  amount: '50000000',
-  caller: payment.payee,
-  permit,   // optional — avoids a separate approve transaction
-})
-```
-
-#### `.hash(payment)`
-
-Computes the EIP-712 digest of a Payment configuration. Useful for pre-computing the config hash before submitting.
-
-```typescript
-const { hash } = await client.payments.hash(payment)
-```
-
----
-
-### `client.tokens`
-
-#### `.isAccepted(address)`
-
-Returns whether a token address is in this deployment's allowlist.
-
-```typescript
-const { accepted } = await client.tokens.isAccepted('0x833589...')
-```
-
----
-
-### `client.utils`
-
-#### `.domainSeparator()`
-
-Returns the EIP-712 domain separator for the RAIL0 contract. Needed when building permit or EIP-3009 signatures off-chain.
-
-```typescript
-const { domainSeparator } = await client.utils.domainSeparator()
-```
-
-#### `.version()`
-
-Returns the contract version number.
-
-```typescript
-const { version } = await client.utils.version() // 1
-```
-
----
-
-### `client.sponsor`
-
-RAIL0Sponsor is an ERC-4337 paymaster. A sponsor pre-deposits native gas and co-signs each UserOperation so the user's smart account pays zero gas. Sponsorship is scoped to RAIL0 entry-points only — sponsors cannot be tricked into paying for unrelated transactions.
-
-#### `.getDeposit(address)`
-
-Returns the native-gas balance (in wei) held by the paymaster for a sponsor.
-
-```typescript
-const { balance } = await client.sponsor.getDeposit(sponsorAddress)
-```
-
-#### `.deposit(params)` / `.depositFor(params)`
-
-Deposit native gas into the paymaster, crediting the caller's own balance or another address's balance.
-
-```typescript
-await client.sponsor.deposit({ amount: '10000000000000000', caller: sponsor })
-await client.sponsor.depositFor({ sponsor, amount: '5000000000000000', caller: funder })
-```
-
-#### `.withdraw(params)`
-
-Withdraw native gas from the caller's sponsor balance to a target address.
-
-```typescript
-await client.sponsor.withdraw({ to: recipient, amount: balance, caller: sponsor })
-```
-
-#### `.hashSponsorship(params)`
-
-Computes the EIP-712 digest that a sponsor must sign to authorize a UserOperation. The resulting signature is appended to `paymasterAndData` before the UserOp is submitted to a bundler.
-
-```typescript
-const { hash } = await client.sponsor.hashSponsorship({
-  userOpHash,
-  sponsor,
-  validUntil: now + 300,
-  validAfter: 0,
-})
-// sign `hash` with the sponsor's private key, then build paymasterAndData
-```
-
-#### `.domainSeparator()` (sponsor)
-
-Returns the EIP-712 domain separator for the RAIL0Sponsor contract.
-
----
-
-## EIP-2612 permit
-
-The `authorize`, `charge`, and `refund` methods accept an optional `permit` field. When provided, the API routes through the `permitAndAuthorize` / `permitAndCharge` / `permitAndRefund` contract entry-points, combining the ERC-20 approval and the payment operation into a single transaction. If the permit fails (e.g. the token does not support EIP-2612), the operation still proceeds if the caller has a sufficient standing approval.
-
-```typescript
-import type { PermitSignature } from '@rail0/sdk'
-
-const permit: PermitSignature = {
-  deadline: now + 300,
-  v: 27,
-  r: '0x...',
-  s: '0x...',
-}
-
-await client.payments.authorize(paymentId, { payment, amount, caller, permit })
-```
-
-The permit is signed off-chain against the **token's** EIP-712 domain, not RAIL0's. Use viem's `signTypedData` or ethers' `_signTypedData` to produce it.
+Build and broadcast the refund transaction. Partial refunds are supported.
 
 ---
 
@@ -354,7 +231,7 @@ Every 4xx / 5xx response is thrown as a `Rail0ApiError`:
 import { Rail0ApiError } from '@rail0/sdk'
 
 try {
-  await client.payments.capture(paymentId, { ... })
+  await client.payments.submitCapture(paymentId, params)
 } catch (err) {
   if (err instanceof Rail0ApiError) {
     console.error(err.status)  // HTTP status code, e.g. 422
@@ -364,127 +241,51 @@ try {
 }
 ```
 
-Common error codes returned by the contract:
+Common error codes:
 
 | Error | Cause |
-| ----- | ----- |
+|-------|-------|
 | `PaymentAlreadyExists` | `authorize` / `charge` called twice with the same `paymentId` |
 | `PaymentNotFound` | `paymentId` does not exist |
-| `PaymentMismatch` | `payment` config does not match the stored hash |
-| `PreApprovalExpired` | `preApprovalExpiry` is in the past |
 | `AuthorizationExpired` | `authorizationExpiry` is in the past (capture) |
-| `AuthorizationNotExpired` | `authorizationExpiry` has not passed yet (reclaim) |
+| `AuthorizationNotExpired` | `authorizationExpiry` has not passed yet (release) |
 | `RefundExpired` | `refundExpiry` is in the past |
 | `InvalidAmount` | `amount` is 0 |
-| `InvalidCaptureAmount` | `amount` exceeds `capturableAmount` |
-| `InvalidRefundAmount` | `amount` exceeds `refundableAmount` |
-| `TokenNotAccepted` | token is not in this deployment's allowlist |
-| `NotPayer` | caller is not `payment.payer` |
 | `NotPayee` | caller is not `payment.payee` |
-
----
-
-## Types
-
-All types are generated from the OpenAPI schema and re-exported from the package root:
-
-```typescript
-import type {
-  // Primitives
-  Address, Bytes32, Uint256String,
-
-  // Core model
-  Payment, PaymentState, PermitSignature,
-
-  // Request params
-  AuthorizeParams, ChargeParams, CaptureParams,
-  VoidParams, ReclaimParams, RefundParams,
-
-  // Responses
-  PaymentResponse, TransactionResponse, TransactionStatus,
-  TokenStatusResponse, HashResponse,
-  DomainSeparatorResponse, VersionResponse,
-
-  // Sponsor
-  SponsorDepositResponse,
-  DepositParams, DepositForParams, WithdrawParams, HashSponsorshipParams,
-
-  // Advanced — raw generated types
-  components, operations,
-} from '@rail0/sdk'
-```
-
-`components` and `operations` expose the full generated type tree for advanced use, such as deriving types for custom wrappers without repeating the schema.
 
 ---
 
 ## Development
 
-### Tests
-
 ```bash
 pnpm test
-```
+pnpm typecheck
 
-The test suite includes unit tests and integration tests. All HTTP calls are mocked with `vi.spyOn(globalThis, 'fetch')` — no running server is required.
-
-### Regenerate types after an API change
-
-```bash
+# Regenerate src/api.ts after an API change:
 # 1. Update the schema in rail0-api (sibling repo),
 #    or set RAIL0_SCHEMA_PATH to point to a local file.
-
-# 2. Regenerate src/api.ts
+# 2. Regenerate:
 pnpm generate
-
-# 3. See what broke
-pnpm typecheck
 ```
-
-See [`gen/README.md`](gen/README.md) for details on the generation pipeline.
-
-### Release
-
-```bash
-pnpm release
-```
-
-Runs in sequence: `pnpm update` → `format` → `lint:fix` → `typecheck` → `test` → `build`.
-
----
 
 ## Project structure
 
 ```text
 gen/              Generation pipeline (schema from rail0-api)
-
   generate.ts     regenerates src/api.ts from the schema
-  README.md
 
 src/
-  api.ts          generated — never hand-edited
-  vitest.d.ts     type augmentation for vitest inject()
-
-  core/           fixed infrastructure — no schema knowledge
+  core/
     error.ts      Rail0ApiError
-    http.ts       HttpClient (fetch, timeout, error parsing)
+    http.ts       HttpClient (fetch, timeout, retry, logging)
 
-  resources/      schema-dependent — review after pnpm generate
-    types.ts      named type aliases over the generated schema
+  resources/
+    types.ts      type aliases and hand-written types
+    merchants.ts  MerchantsResource
     payments.ts   PaymentsResource
-    tokens.ts     TokensResource
-    utils.ts      UtilsResource
-    sponsor.ts    SponsorResource
 
   client.ts       Rail0Client — assembles the resources
   index.ts        public re-exports
-
-examples/         standalone usage examples
-  01-authorize-and-capture.ts
-  02-charge.ts
-  03-refund.ts
-  04-permit.ts
-  05-sponsor.ts
 ```
 
 ---
