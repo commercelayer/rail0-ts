@@ -31,11 +31,11 @@ const usdc = methods.find(m => m.tokenSymbol === 'USDC')!
 // Step 2 — create payment intent
 const resp = await client.payments.createPayment({
   payment: {
-    payer: '0xBuyer...',
-    payee: usdc.walletAddress,
-    token: usdc.tokenAddress,
+    payer:  '0xBuyer...',
+    payee:  usdc.walletAddress,
+    token:  usdc.tokenAddress,
+    amount: '50000000',     // 50 USDC (6 decimals)
   },
-  amount: '50000000',       // 50 USDC (6 decimals)
   chainId: usdc.chainId,
   mode: 'authorize',
 })
@@ -44,25 +44,25 @@ const resp = await client.payments.createPayment({
 // const sig = await wallet.signTypedData(resp.signingPayload)
 
 // Step 4 — submit payer signature
-await client.payments.sign(resp.paymentId, { v, r, s })
+await client.payments.sign(resp.rail0_id, { signature: sig.toHex() })
 
 // Step 5 — payee prepares the unsigned authorize tx
-const tx = await client.payments.authorize(resp.paymentId)
+const tx = await client.payments.authorize(resp.rail0_id)
 // sign tx.unsignedTransaction with payee's key (EIP-1559)
 
 // Step 6 — broadcast signed authorize tx (HTTP 202, async)
-await client.payments.submit(resp.paymentId, { signedTransaction: signedBytes })
+await client.payments.submit(resp.rail0_id, { signedTransaction: signedBytes })
 
 // Step 7 — poll until status leaves "submitting"
-let state = await client.payments.get(resp.paymentId)
+let state = await client.payments.get(resp.rail0_id)
 while (state.status === 'submitting') {
   await new Promise(r => setTimeout(r, 2_000))
-  state = await client.payments.get(resp.paymentId)
+  state = await client.payments.get(resp.rail0_id)
 }
 
 // Step 8 — payee captures the funds
-const captureTx = await client.payments.prepareCapture(resp.paymentId, { amount: '50000000' })
-await client.payments.submit(resp.paymentId, { signedTransaction: sign(captureTx) })
+const captureTx = await client.payments.prepareCapture(resp.rail0_id, { amount: '50000000' })
+await client.payments.submit(resp.rail0_id, { signedTransaction: sign(captureTx) })
 ```
 
 ## Payment lifecycle
@@ -174,7 +174,7 @@ Creates a payment intent. Returns `signingPayload` for the payer to sign, plus `
 
 #### `.sign(paymentId, params)` → `Promise<PayerSignatureResponse>`
 
-Submits the payer's EIP-712 signature (v, r, s).
+Submits the payer's EIP-712 signature as a single 65-byte hex string (`{ signature: "0x..." }`).
 
 #### `.authorize(paymentId)` → `Promise<PrepareTransactionResponse>`
 
