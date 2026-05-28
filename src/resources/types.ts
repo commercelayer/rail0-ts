@@ -69,7 +69,7 @@ export type PayerSignatureRequest = components['schemas']['PayerSignatureRequest
 /** Body for `payments.prepareCapture()`. Amount to capture from escrow. */
 export type CapturePaymentRequest = components['schemas']['CapturePaymentRequest']
 
-/** Body for `payments.submitCapture()`, `submitVoid()`, `submitApprove()`, `submitRefund()`. */
+/** Body for `payments.submit()`. RLP-encoded signed EIP-1559 transaction. */
 export type SubmitTransactionRequest = components['schemas']['SubmitTransactionRequest']
 
 /** Body for `payments.prepareApprove()`. Allowance to grant the RAIL0 contract. */
@@ -88,32 +88,67 @@ export type CreatePaymentResponse = components['schemas']['CreatePaymentResponse
 /** Returned by `payments.sign()`. Confirms the signature was stored. */
 export type PayerSignatureResponse = components['schemas']['PayerSignatureResponse']
 
-/** Returned by `payments.authorize()`. Contains the on-chain tx hash and capturableAmount. */
+/**
+ * Returned by `payments.authorize()` (polling via `payments.get()` after submit).
+ * Contains the on-chain tx hash and capturableAmount.
+ */
 export type AuthorizePaymentResponse = components['schemas']['AuthorizePaymentResponse']
 
-/** Returned by `payments.charge()`. Contains the on-chain tx hash and amounts. */
+/**
+ * Returned by `payments.charge()` (polling via `payments.get()` after submit).
+ * Contains the on-chain tx hash and amounts.
+ */
 export type ChargePaymentResponse = components['schemas']['ChargePaymentResponse']
 
 /**
- * Returned by prepare operations (prepareCapture, prepareVoid, prepareApprove, prepareRefund).
+ * Returned by prepare operations (authorize, charge, prepareCapture, prepareVoid,
+ * prepareRelease, prepareApprove, prepareRefund).
  * An unsigned EIP-1559 transaction ready for the payee to sign.
  */
 export type PrepareTransactionResponse = components['schemas']['PrepareTransactionResponse']
 
-/** Returned by `payments.submitCapture()`. Contains amounts and updated escrow balances. */
+/**
+ * Returned by polling `payments.get()` after a capture submit.
+ * Contains amounts and updated escrow balances.
+ */
 export type CapturePaymentResponse = components['schemas']['CapturePaymentResponse']
 
-/** Returned by `payments.submitVoid()`. Contains the on-chain tx hash and released amount. */
+/**
+ * Returned by polling `payments.get()` after a void submit.
+ * Contains the on-chain tx hash and released amount.
+ */
 export type VoidPaymentResponse = components['schemas']['VoidPaymentResponse']
 
-/** Returned by `payments.release()`. Contains the on-chain tx hash and released amount. */
+/**
+ * Returned by polling `payments.get()` after a release submit.
+ * Contains the on-chain tx hash and released amount.
+ */
 export type ReleasePaymentResponse = components['schemas']['ReleasePaymentResponse']
 
-/** Returned by `payments.submitApprove()`. Contains the on-chain tx hash and approval details. */
+/**
+ * Returned by polling `payments.get()` after an approve submit.
+ * Contains the on-chain tx hash and approval details.
+ */
 export type ApproveResponse = components['schemas']['ApproveResponse']
 
-/** Returned by `payments.submitRefund()`. Contains the on-chain tx hash and refunded amount. */
+/**
+ * Returned by polling `payments.get()` after a refund submit.
+ * Contains the on-chain tx hash and refunded amount.
+ */
 export type RefundPaymentResponse = components['schemas']['RefundPaymentResponse']
+
+/**
+ * Returned immediately by `payments.submit()` (HTTP 202).
+ * The submission is asynchronous — poll `payments.get()` until status leaves "submitting"
+ * to learn whether the transaction was confirmed on-chain.
+ * `token` and `spender` are populated only when the pending operation is "approve".
+ */
+export interface SubmitTransactionAcceptedResponse {
+  rail0_id: string
+  status: 'submitting'
+  token?: string
+  spender?: string
+}
 
 // ================================================================
 //  Error
@@ -131,9 +166,6 @@ export type ApiErrorBody = components['schemas']['Error']
 
 /** Body for `payments.prepareRelease()`. Pass callerAddress to build the tx for the buyer. */
 export type ReleaseRequest = { callerAddress?: Address }
-
-/** Body for `payments.submitApprove()`. Include amount so the API records it in the transaction log. */
-export type SubmitApproveRequest = SubmitTransactionRequest & { amount?: Uint256String }
 
 /** Live on-chain escrow state for a payment. */
 export interface OnChainState {

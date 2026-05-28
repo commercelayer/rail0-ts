@@ -42,7 +42,6 @@ export type {
   ApproveRequest,
   RefundPaymentRequest,
   ReleaseRequest,
-  SubmitApproveRequest,
   // Response shapes
   CreatePaymentResponse,
   PayerSignatureResponse,
@@ -54,6 +53,7 @@ export type {
   ReleasePaymentResponse,
   ApproveResponse,
   RefundPaymentResponse,
+  SubmitTransactionAcceptedResponse,
   OnChainState,
   PaymentResponse,
   PaymentMethod,
