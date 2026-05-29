@@ -22,7 +22,7 @@ export { Rail0ApiError } from './core/error.js'
 export { debugLogger } from './core/http.js'
 export type { Logger, LogEntry } from './core/http.js'
 
-export { MerchantsResource } from './resources/merchants.js'
+export { AccountsResource } from './resources/accounts.js'
 
 export type {
   // Primitives
@@ -65,3 +65,7 @@ export type {
   components,
   operations,
 } from './resources/types.js'
+export { ChainsResource } from './resources/chains.js'
+export type { Blockchain } from './resources/chains.js'
+export { TokensResource } from './resources/tokens.js'
+export type { Token } from './resources/tokens.js'
