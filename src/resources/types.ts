@@ -66,17 +66,11 @@ export type CreatePaymentRequest = components['schemas']['CreatePaymentRequest']
 /** Body for `payments.sign()`. EIP-712 signature components (v, r, s). */
 export type PayerSignatureRequest = components['schemas']['PayerSignatureRequest']
 
-/** Body for `payments.prepareCapture()`. Amount to capture from escrow. */
+/** Body for `payments.capturePayload()`. Amount to capture from escrow. */
 export type CapturePaymentRequest = components['schemas']['CapturePaymentRequest']
 
-/** Body for `payments.submit()`. RLP-encoded signed EIP-1559 transaction. */
+/** Body for `payments.authorize()`, `charge()`, `capture()`, `void()`, `release()`, `refund()`. RLP-encoded signed EIP-1559 transaction. */
 export type SubmitTransactionRequest = components['schemas']['SubmitTransactionRequest']
-
-/** Body for `payments.prepareApprove()`. Allowance to grant the RAIL0 contract. */
-export type ApproveRequest = components['schemas']['ApproveRequest']
-
-/** Body for `payments.prepareRefund()`. Amount to refund to the payer. */
-export type RefundPaymentRequest = components['schemas']['RefundPaymentRequest']
 
 // ================================================================
 //  Response shapes
@@ -101,8 +95,8 @@ export type AuthorizePaymentResponse = components['schemas']['AuthorizePaymentRe
 export type ChargePaymentResponse = components['schemas']['ChargePaymentResponse']
 
 /**
- * Returned by prepare operations (authorize, charge, prepareCapture, prepareVoid,
- * prepareRelease, prepareApprove, prepareRefund).
+ * Returned by payload operations (authorizePayload, chargePayload, capturePayload, voidPayload,
+ * releasePayload, refundPayload).
  * An unsigned EIP-1559 transaction ready for the payee to sign.
  */
 export type PrepareTransactionResponse = components['schemas']['PrepareTransactionResponse']
@@ -126,29 +120,10 @@ export type VoidPaymentResponse = components['schemas']['VoidPaymentResponse']
 export type ReleasePaymentResponse = components['schemas']['ReleasePaymentResponse']
 
 /**
- * Returned by polling `payments.get()` after an approve submit.
- * Contains the on-chain tx hash and approval details.
- */
-export type ApproveResponse = components['schemas']['ApproveResponse']
-
-/**
  * Returned by polling `payments.get()` after a refund submit.
  * Contains the on-chain tx hash and refunded amount.
  */
 export type RefundPaymentResponse = components['schemas']['RefundPaymentResponse']
-
-/**
- * Returned immediately by `payments.submit()` (HTTP 202).
- * The submission is asynchronous — poll `payments.get()` until status leaves "submitting"
- * to learn whether the transaction was confirmed on-chain.
- * `token` and `spender` are populated only when the pending operation is "approve".
- */
-export interface SubmitTransactionAcceptedResponse {
-  rail0_id: string
-  status: 'submitting'
-  token?: string
-  spender?: string
-}
 
 // ================================================================
 //  Error

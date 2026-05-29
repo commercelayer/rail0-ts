@@ -24,6 +24,8 @@ export type { Logger, LogEntry } from './core/http.js'
 
 export { AccountsResource } from './resources/accounts.js'
 
+export type { RefundPayloadParams } from './resources/payments.js'
+
 export type {
   // Primitives
   Address,
@@ -39,8 +41,6 @@ export type {
   PayerSignatureRequest,
   CapturePaymentRequest,
   SubmitTransactionRequest,
-  ApproveRequest,
-  RefundPaymentRequest,
   ReleaseRequest,
   // Response shapes
   CreatePaymentResponse,
@@ -51,9 +51,7 @@ export type {
   CapturePaymentResponse,
   VoidPaymentResponse,
   ReleasePaymentResponse,
-  ApproveResponse,
   RefundPaymentResponse,
-  SubmitTransactionAcceptedResponse,
   OnChainState,
   PaymentResponse,
   PaymentMethod,
