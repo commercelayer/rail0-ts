@@ -39,7 +39,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{paymentId}/capture": {
+    "/payments/{paymentId}/capture/payload": {
         parameters: {
             query?: never;
             header?: never;
@@ -50,7 +50,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare a capture transaction
-         * @description Called by the payee to build the unsigned `capture()` transaction. The API validates the amount against the current on-chain state and returns a ready-to-sign EIP-1559 transaction. The payee signs it with their wallet (`eth_signTransaction`) and submits the result to `POST /payments/{paymentId}/capture/submit`.
+         * @description Called by the payee to build the unsigned `capture()` transaction. The API validates the amount against the current on-chain state and returns a ready-to-sign EIP-1559 transaction. The payee signs it and submits to `POST /payments/{paymentId}/capture`.
          */
         post: operations["prepareCapture"];
         delete?: never;
@@ -59,7 +59,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{paymentId}/capture/submit": {
+    "/payments/{paymentId}/capture": {
         parameters: {
             query?: never;
             header?: never;
@@ -70,9 +70,29 @@ export interface paths {
         put?: never;
         /**
          * Broadcast a signed capture transaction
-         * @description Submits a signed capture transaction to the network. The payee is the on-chain sender and pays gas. The `POST /payments/{paymentId}/capture` prepare step is optional: clients that can construct and sign the transaction independently (e.g. via an SDK with ABI knowledge) may call this endpoint directly with a self-built signed transaction. The `paymentId` in the path must match the one encoded in the transaction calldata and must already exist in the API (created via `POST /payments`) so that the stored payment config can be used to decode and return the updated state.
+         * @description Submits the signed capture transaction. Returns 202 immediately; poll `GET /payments/{paymentId}` until status = captured or partially_captured.
          */
         post: operations["submitCapture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payments/{paymentId}/release/payload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare a release transaction
+         * @description Builds the unsigned `release()` transaction. Pass optional `callerAddress` to set the transaction sender; defaults to the payee. The payee (or caller) signs it and submits to `POST /payments/{paymentId}/release`.
+         */
+        post: operations["prepareRelease"];
         delete?: never;
         options?: never;
         head?: never;
@@ -89,8 +109,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Release escrowed funds back to the payer
-         * @description Submits the RAIL0 `release()` transaction on-chain. Returns all remaining escrowed funds to the payer after `authorizationExpiry` has passed and no full capture occurred. Unlike capture, void, and refund, `release` has no `msg.sender` restriction — anyone can trigger it, so the API acts as relayer and pays gas. No request body or signing step required.
+         * Broadcast a signed release transaction
+         * @description Submits the signed release transaction. Returns 202; poll `GET /payments/{paymentId}` until status = released.
          */
         post: operations["releasePayment"];
         delete?: never;
@@ -139,7 +159,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{paymentId}/approve": {
+    "/payments/{paymentId}/void/payload": {
         parameters: {
             query?: never;
             header?: never;
@@ -149,30 +169,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Prepare a token approval transaction
-         * @description Builds an unsigned ERC-20 `approve(spender, amount)` transaction where `spender` is the RAIL0 contract and the token is taken from the payment config. Required before the payee can broadcast a refund. The payee signs the returned transaction and submits it to `POST /payments/{paymentId}/approve/submit`.
+         * Prepare a void transaction
+         * @description Called by the payee to cancel the authorization and return all escrowed funds to the payer. Void is only possible while `capturableAmount > 0`. The payee signs the returned transaction and submits to `POST /payments/{paymentId}/void`.
          */
-        post: operations["prepareApprove"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/payments/{paymentId}/approve/submit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Broadcast a signed token approval transaction
-         * @description Submits a signed ERC-20 `approve` transaction to the network. Once confirmed, the RAIL0 contract is authorized to pull up to `amount` tokens from the payee's wallet, enabling refund operations. The `POST /payments/{paymentId}/approve` prepare step is optional: clients that can construct and sign the transaction independently may call this endpoint directly.
-         */
-        post: operations["submitApprove"];
+        post: operations["prepareVoid"];
         delete?: never;
         options?: never;
         head?: never;
@@ -189,17 +189,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Prepare a void transaction
-         * @description Called by the payee to cancel the authorization and return all escrowed funds to the payer. Void is only possible while `capturableAmount > 0`. The API returns an unsigned transaction; the payee signs it and submits to `POST /payments/{paymentId}/void/submit`.
+         * Broadcast a signed void transaction
+         * @description Submits the signed void transaction. Returns 202; poll `GET /payments/{paymentId}` until status = voided.
          */
-        post: operations["prepareVoid"];
+        post: operations["submitVoid"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/payments/{paymentId}/void/submit": {
+    "/payments/{paymentId}/refund/payload": {
         parameters: {
             query?: never;
             header?: never;
@@ -209,10 +209,30 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Broadcast a signed void transaction
-         * @description Submits a signed void transaction to the network. All remaining escrowed funds are returned to the payer. The `POST /payments/{paymentId}/void` prepare step is optional: clients that can construct and sign the transaction independently may call this endpoint directly.
+         * Prepare a refund (two-phase)
+         * @description Two-phase EIP-3009 refund prepare. Phase 1: call without `v`/`r`/`s` — returns `signingPayload` for the payee to sign off-chain. Phase 2: call with `v`, `r`, `s` from the signed payload — returns the unsigned refund transaction. No separate ERC-20 approve step required.
          */
-        post: operations["submitVoid"];
+        post: operations["prepareRefund"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{accountId}/payment-methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List accepted payment methods for an account
+         * @description Returns all active wallet configurations for the given account, enriched with chain and token details.
+         */
+        get: operations["getPaymentMethods"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -229,48 +249,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Prepare a refund transaction
-         * @description Called by the payee to refund a previously captured amount to the payer. The payee must have approved the RAIL0 contract as an ERC-20 spender on the token for at least `amount` before submitting. The API returns an unsigned transaction; the payee signs it and submits to `POST /payments/{paymentId}/refund/submit`.
-         */
-        post: operations["prepareRefund"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/merchants/{merchantId}/payment-methods": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List accepted payment methods for a merchant
-         * @description Returns all active wallet configurations for the given merchant, enriched with chain and token details. Called by the buyer's frontend before `POST /payments` to present available payment options. The `isDefault` flag identifies the pre-selected method; the buyer may confirm it or choose another. The response is stable and safe to cache client-side — it changes only when the merchant updates their configuration.
-         */
-        get: operations["getPaymentMethods"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/payments/{paymentId}/refund/submit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
          * Broadcast a signed refund transaction
-         * @description Submits a signed refund transaction to the network. The specified amount is pulled from the payee's wallet back to the payer via `transferFrom`. The `POST /payments/{paymentId}/refund` prepare step is optional: clients that can construct and sign the transaction independently may call this endpoint directly.
+         * @description Submits the signed refund transaction. Returns 202; poll `GET /payments/{paymentId}` until status = refunded or partially_refunded.
          */
         post: operations["submitRefund"];
         delete?: never;
@@ -511,21 +491,6 @@ export interface components {
              * @example 1780000000
              */
             authorizationExpiry?: number;
-        };
-        /** @description Amount to approve on the token contract. Setting this to the maximum expected refund (or `type(uint256).max` for unlimited) avoids repeated approvals. */
-        ApproveRequest: {
-            /** @description Allowance to grant the RAIL0 contract (in token base units). Use '115792089237316195423570985008687907853269984665640564039457584007913129639935' for unlimited approval. */
-            amount: components["schemas"]["Uint256String"];
-        };
-        ApproveResponse: {
-            /** @description On-chain transaction hash of the `approve()` call. */
-            transactionHash: components["schemas"]["Bytes32"];
-            /** @description Token contract on which the approval was set. */
-            token: components["schemas"]["Address"];
-            /** @description RAIL0 contract address that was approved as spender. */
-            spender: components["schemas"]["Address"];
-            /** @description Approved allowance amount. */
-            amount: components["schemas"]["Uint256String"];
         };
         /** @description Amount to refund to the payer. Must be > 0 and <= current refundableAmount. */
         RefundPaymentRequest: {
@@ -843,6 +808,36 @@ export interface operations {
             };
         };
     };
+    prepareRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paymentId: components["schemas"]["Bytes32"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Address of the account that will sign and submit the release transaction. Defaults to payee if omitted. */
+                    callerAddress?: components["schemas"]["Address"];
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: {
+                    "application/json": components["schemas"]["PrepareTransactionResponse"];
+                };
+            };
+            404: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["Error"] };
+            };
+        };
+    };
     releasePayment: {
         parameters: {
             query?: never;
@@ -853,15 +848,19 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitTransactionRequest"];
+            };
+        };
         responses: {
-            /** @description Release submitted on-chain successfully. */
-            200: {
+            /** @description Release transaction submitted. Poll until status = released. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReleasePaymentResponse"];
+                    "application/json": { rail0_id: components["schemas"]["Bytes32"]; status: string };
                 };
             };
             /** @description Payment not found. */
@@ -974,87 +973,6 @@ export interface operations {
                 };
             };
             /** @description Payer signature not yet submitted, payment was created with mode=authorize, or on-chain revert (e.g. AuthorizationExpired, TokenNotAccepted). */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    prepareApprove: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                paymentId: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApproveRequest"];
-            };
-        };
-        responses: {
-            /** @description Unsigned approve transaction ready to sign. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PrepareTransactionResponse"];
-                };
-            };
-            /** @description Payment not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    submitApprove: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                paymentId: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitTransactionRequest"];
-            };
-        };
-        responses: {
-            /** @description Approval transaction submitted successfully. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApproveResponse"];
-                };
-            };
-            /** @description Payment not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Invalid or malformed signed transaction. */
             422: {
                 headers: {
                     [name: string]: unknown;
