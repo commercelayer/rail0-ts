@@ -87,10 +87,10 @@ export function personalSign(privateKeyHex: string, message: string): string {
 export class AuthResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** GET /auth/nonce — fetch a single-use SIWE nonce. */
+  /** POST /nonces — issue a single-use SIWE nonce. */
   getNonce(): Promise<{ nonce: string; expiresAt: string }> {
     return this.http
-      .get<{ nonce: string; expires_at: string }>('/auth/nonce')
+      .post<{ nonce: string; expires_at: string }>('/nonces', {})
       .then((r) => ({ nonce: r.nonce, expiresAt: r.expires_at }))
   }
 
@@ -111,7 +111,7 @@ export class AuthResource {
 
   /**
    * Full SIWE login flow:
-   *  1. GET /auth/nonce
+   *  1. POST /nonces
    *  2. Build EIP-4361 message via siwe library
    *  3. Sign with EIP-191 personal_sign using noble/curves
    *  4. POST /auth and return the JWT response
