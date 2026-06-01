@@ -5,6 +5,10 @@ import { debugLogger } from '../src/core/http.js'
 import type { LogEntry } from '../src/core/http.js'
 import type { Payment } from '../src/resources/types.js'
 
+// Known test key (Hardhat account #0)
+const TEST_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
+const TEST_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
+
 const BASE_URL = 'http://localhost:3000'
 
 const mockPayment: Payment = {
@@ -189,6 +193,88 @@ describe('Rail0Client', () => {
       expect(err.error).toBe('InvalidAmount')
       expect(err.message).toBe('Amount is zero.')
       expect(err).toBeInstanceOf(Error)
+    })
+  })
+
+  describe('auth', () => {
+    describe('auth.getNonce', () => {
+      it('returns nonce and expiresAt from GET /auth/nonce', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ nonce: 'abc123', expires_at: '2099-01-01T00:00:00Z' }),
+            { status: 200 },
+          ),
+        )
+
+        const result = await client.auth.getNonce()
+
+        expect(result.nonce).toBe('abc123')
+        expect(result.expiresAt).toBe('2099-01-01T00:00:00Z')
+      })
+    })
+
+    describe('auth.verify', () => {
+      it('posts message and signature to POST /auth and maps account_id → accountId', async () => {
+        const mockAuthResponse = {
+          token: 'jwt-token',
+          address: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+          account_id: 'some-uuid',
+          expires_at: '2099-01-01T00:00:00Z',
+        }
+        const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+          new Response(JSON.stringify(mockAuthResponse), { status: 200 }),
+        )
+
+        const result = await client.auth.verify('eip4361message', '0xsignature')
+
+        expect(result.token).toBe('jwt-token')
+        expect(result.address).toBe('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266')
+        expect(result.accountId).toBe('some-uuid')
+        expect(result.expiresAt).toBe('2099-01-01T00:00:00Z')
+
+        const [, init] = spy.mock.calls[0] as [string, RequestInit]
+        const body = JSON.parse(init.body as string) as Record<string, string>
+        expect(body.message).toBe('eip4361message')
+        expect(body.signature).toBe('0xsignature')
+      })
+    })
+
+    describe('auth.login', () => {
+      it('makes two fetch calls, sends valid EIP-4361 message with signature, returns token', async () => {
+        const nonceResponse = { nonce: 'testNonce123', expires_at: '2099-01-01T00:00:00Z' }
+        const authResponse = {
+          token: 'login-jwt',
+          address: TEST_ADDRESS,
+          account_id: 'account-uuid',
+          expires_at: '2099-01-01T00:00:00Z',
+        }
+        const fetchSpy = vi
+          .spyOn(globalThis, 'fetch')
+          .mockResolvedValueOnce(new Response(JSON.stringify(nonceResponse), { status: 200 }))
+          .mockResolvedValueOnce(new Response(JSON.stringify(authResponse), { status: 200 }))
+
+        const result = await client.auth.login(TEST_PRIVATE_KEY, 'localhost')
+
+        // Two calls: GET /auth/nonce, POST /auth
+        expect(fetchSpy).toHaveBeenCalledTimes(2)
+
+        // Inspect POST /auth body
+        const [, postInit] = fetchSpy.mock.calls[1] as [string, RequestInit]
+        const body = JSON.parse(postInit.body as string) as Record<string, string>
+
+        expect(body.message).toBeDefined()
+        expect(body.signature).toBeDefined()
+
+        // EIP-4361 message checks
+        expect(body.message).toContain('wants you to sign in')
+        expect(body.message).toContain(TEST_ADDRESS)
+        expect(body.message).toContain('Nonce: testNonce123')
+
+        // Signature: 0x-prefixed 132-char hex (65 bytes)
+        expect(body.signature).toMatch(/^0x[0-9a-fA-F]{130}$/)
+
+        expect(result.token).toBe('login-jwt')
+      })
     })
   })
 

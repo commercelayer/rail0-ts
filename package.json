@@ -70,6 +70,7 @@
   "packageManager": "pnpm@9.15.0",
   "dependencies": {
     "@noble/curves": "^2.2.0",
-    "@noble/hashes": "^2.2.0"
+    "@noble/hashes": "^2.2.0",
+    "siwe": "^3.0.0"
   }
 }

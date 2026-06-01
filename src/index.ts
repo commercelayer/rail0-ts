@@ -63,6 +63,9 @@ export type {
   components,
   operations,
 } from './resources/types.js'
+export { AuthResource } from './resources/auth.js'
+export type { AuthResponse } from './resources/auth.js'
+export { personalSign, checksumAddress } from './resources/auth.js'
 export { ChainsResource } from './resources/chains.js'
 export type { Blockchain } from './resources/chains.js'
 export { TokensResource } from './resources/tokens.js'
