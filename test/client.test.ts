@@ -198,7 +198,7 @@ describe('Rail0Client', () => {
 
   describe('auth', () => {
     describe('auth.getNonce', () => {
-      it('returns nonce and expiresAt from GET /auth/nonce', async () => {
+      it('returns nonce and expiresAt from POST /nonces', async () => {
         vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
           new Response(
             JSON.stringify({ nonce: 'abc123', expires_at: '2099-01-01T00:00:00Z' }),
@@ -255,7 +255,7 @@ describe('Rail0Client', () => {
 
         const result = await client.auth.login(TEST_PRIVATE_KEY, 'localhost')
 
-        // Two calls: GET /auth/nonce, POST /auth
+        // Two calls: POST /nonces, POST /auth
         expect(fetchSpy).toHaveBeenCalledTimes(2)
 
         // Inspect POST /auth body

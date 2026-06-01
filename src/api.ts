@@ -10,7 +10,7 @@ export interface paths {
         put?: never;
         /**
          * Create a payment intent
-         * @description Called by the payer. Creates a payment record and returns the EIP-712 typed-data payload for the payer to sign immediately. The `signingPayload` contains `domain`, `types`, and `message` in standard EIP-712 format: wallet users pass it verbatim to `eth_signTypedData_v4`; backends or SDKs with direct key access compute the same hash with any EIP-712 library and sign it with secp256k1 — the result is identical. The `mode` field determines the flow: `authorize` places funds in escrow for later capture; `charge` is a one-shot authorize+capture with no escrow window. The nonce in the `signingPayload` is derived using the corresponding prefix (`RAIL0.AUTHORIZE` or `RAIL0.CHARGE`), so a signature for one mode cannot be reused for the other. The resulting signature must then be submitted to `PUT /payments/{paymentId}/sign`, after which the payee triggers on-chain submission via `POST /payments/{paymentId}/authorize` or `POST /payments/{paymentId}/charge`.
+         * @description Called by the payer. Creates a payment record and returns the EIP-712 typed-data payload for the payer to sign immediately. The `signingPrepare` contains `domain`, `types`, and `message` in standard EIP-712 format: wallet users pass it verbatim to `eth_signTypedData_v4`; backends or SDKs with direct key access compute the same hash with any EIP-712 library and sign it with secp256k1 — the result is identical. The `mode` field determines the flow: `authorize` places funds in escrow for later capture; `charge` is a one-shot authorize+capture with no escrow window. The nonce in the `signingPrepare` is derived using the corresponding prefix (`RAIL0.AUTHORIZE` or `RAIL0.CHARGE`), so a signature for one mode cannot be reused for the other. The resulting signature must then be submitted to `PUT /payments/{paymentId}/sign`, after which the payee triggers on-chain submission via `POST /payments/{paymentId}/authorize` or `POST /payments/{paymentId}/charge`.
          */
         post: operations["createPayment"];
         delete?: never;
@@ -29,7 +29,7 @@ export interface paths {
         get?: never;
         /**
          * Submit the payer's authorization signature
-         * @description Called by the payer after signing the `signingPayload` returned by `POST /payments`. Stores the EIP-3009 signature server-side so that the payee can later trigger on-chain submission via `POST /payments/{paymentId}/authorize` without needing any input from the payer. Idempotent: re-submitting the same signature for the same payment is accepted.
+         * @description Called by the payer after signing the `signingPrepare` returned by `POST /payments`. Stores the EIP-3009 signature server-side so that the payee can later trigger on-chain submission via `POST /payments/{paymentId}/authorize` without needing any input from the payer. Idempotent: re-submitting the same signature for the same payment is accepted.
          */
         put: operations["sign"];
         post?: never;
@@ -39,7 +39,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{paymentId}/capture/payload": {
+    "/payments/{paymentId}/capture/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -79,7 +79,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{paymentId}/release/payload": {
+    "/payments/{paymentId}/release/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -159,7 +159,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{paymentId}/void/payload": {
+    "/payments/{paymentId}/void/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -199,7 +199,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{paymentId}/refund/payload": {
+    "/payments/{paymentId}/refund/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -210,7 +210,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare a refund (two-phase)
-         * @description Two-phase EIP-3009 refund prepare. Phase 1: call without `v`/`r`/`s` — returns `signingPayload` for the payee to sign off-chain. Phase 2: call with `v`, `r`, `s` from the signed payload — returns the unsigned refund transaction. No separate ERC-20 approve step required.
+         * @description Two-phase EIP-3009 refund prepare. Phase 1: call without `v`/`r`/`s` — returns `signingPrepare` for the payee to sign off-chain. Phase 2: call with `v`, `r`, `s` from the signed payload — returns the unsigned refund transaction. No separate ERC-20 approve step required.
          */
         post: operations["prepareRefund"];
         delete?: never;
@@ -535,7 +535,7 @@ export interface components {
             /** @description Remaining refundable balance after this refund. */
             refundableAmount: components["schemas"]["Uint256String"];
         };
-        /** @description EIP-712 signature over the `signingPayload` returned by `POST /payments`. Browser wallets return this directly from `eth_signTypedData_v4`; backends produce it with any EIP-712 library. The on-chain verification only checks the recovered address. */
+        /** @description EIP-712 signature over the `signingPrepare` returned by `POST /payments`. Browser wallets return this directly from `eth_signTypedData_v4`; backends produce it with any EIP-712 library. The on-chain verification only checks the recovered address. */
         PayerSignatureRequest: {
             /**
              * @description 65-byte secp256k1 signature in hex (0x-prefixed, 132 chars): r (32 bytes) + s (32 bytes) + v (1 byte). This is the format returned directly by `eth_signTypedData_v4` and all standard Ethereum signing libraries.
@@ -644,7 +644,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Payment intent created. Sign the returned `signingPayload` and submit to `PUT /payments/{paymentId}/sign`. */
+            /** @description Payment intent created. Sign the returned `signingPrepare` and submit to `PUT /payments/{paymentId}/sign`. */
             201: {
                 headers: {
                     [name: string]: unknown;

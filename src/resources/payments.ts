@@ -43,13 +43,13 @@ export class PaymentsResource {
   }
 
   /** Prepare the unsigned authorize() transaction. Called by the payee. */
-  authorizePayload(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/authorize/payload`)
+  authorizePrepare(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${paymentId}/authorize/prepare`)
   }
 
   /**
    * Submit the signed authorize transaction (HTTP 202, async).
-   * Sign the `unsignedTransaction` from `authorizePayload()` with the payee's key
+   * Sign the `unsignedTransaction` from `authorizePrepare()` with the payee's key
    * and pass it here. Poll `get()` until status leaves "submitting".
    */
   authorize(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<{ rail0_id: string; status: string }> {
@@ -60,8 +60,8 @@ export class PaymentsResource {
    * Prepare the unsigned charge() transaction (one-shot, no escrow).
    * The payer signature must have been submitted first via `sign()`.
    */
-  chargePayload(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/charge/payload`)
+  chargePrepare(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${paymentId}/charge/prepare`)
   }
 
   /**
@@ -73,8 +73,8 @@ export class PaymentsResource {
   }
 
   /** Build the unsigned capture() transaction. Called by the payee. */
-  capturePayload(paymentId: Bytes32, params: CapturePaymentRequest): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/capture/payload`, params)
+  capturePrepare(paymentId: Bytes32, params: CapturePaymentRequest): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${paymentId}/capture/prepare`, params)
   }
 
   /** Submit the signed capture transaction (HTTP 202, async). */
@@ -83,8 +83,8 @@ export class PaymentsResource {
   }
 
   /** Build the unsigned void() transaction. Called by the payee. */
-  voidPayload(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/void/payload`)
+  voidPrepare(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${paymentId}/void/prepare`)
   }
 
   /** Submit the signed void transaction (HTTP 202, async). */
@@ -98,8 +98,8 @@ export class PaymentsResource {
    * Omit or pass `{}` to default to the payee.
    * release() can only succeed after authorizationExpiry has passed on-chain.
    */
-  releasePayload(paymentId: Bytes32, params?: ReleaseRequest): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/release/payload`, params)
+  releasePrepare(paymentId: Bytes32, params?: ReleaseRequest): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${paymentId}/release/prepare`, params)
   }
 
   /** Submit the signed release transaction (HTTP 202, async). */
@@ -117,8 +117,8 @@ export class PaymentsResource {
    * Phase 2 — call with `{ amount, v, r, s }`:
    *   Returns the unsigned on-chain refund transaction ready to sign and submit.
    */
-  refundPayload(paymentId: Bytes32, params: RefundPayloadParams): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/refund/payload`, params)
+  refundPrepare(paymentId: Bytes32, params: RefundPayloadParams): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${paymentId}/refund/prepare`, params)
   }
 
   /** Submit the signed refund transaction (HTTP 202, async). */
