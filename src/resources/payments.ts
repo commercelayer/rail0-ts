@@ -1,128 +1,157 @@
+// GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.
 import type { HttpClient } from '../core/http.js'
 import type {
   Bytes32,
   CapturePaymentRequest,
   CreatePaymentRequest,
   CreatePaymentResponse,
+  GetPaymentResponse,
+  PaginatedResponse,
   PayerSignatureRequest,
   PayerSignatureResponse,
-  PaymentResponse,
+  PaymentSummary,
+  PrepareRefundResponse,
   PrepareTransactionResponse,
-  ReleaseRequest,
+  SubmitTransactionAcceptedResponse,
   SubmitTransactionRequest,
+  TransactionRecord,
 } from './types.js'
 
-export interface RefundPayloadParams {
+export interface ListPaymentsParams {
+  status?: string
+  mode?: string
+  payer?: string
+  payee?: string
+  token?: string
+  page?: number
+  per_page?: number
+}
+
+export interface ListTransactionsParams {
+  operation?: string
+  status?: string
+  page?: number
+  per_page?: number
+}
+
+export interface RefundPrepareParams {
   amount: string
   v?: number
   r?: string
   s?: string
 }
 
+/** @deprecated Use RefundPrepareParams */
+export type RefundPayloadParams = RefundPrepareParams
+
 export class PaymentsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** List payments for the authenticated account. Requires authentication. */
-  list(): Promise<PaymentResponse[]> {
-    return this.http.get('/payments')
-  }
-
-  /** Fetch current payment state (DB status + live on-chain escrow balances). */
-  get(paymentId: Bytes32): Promise<PaymentResponse> {
-    return this.http.get(`/payments/${paymentId}`)
+  /**
+   * List payments for the authenticated wallet. Requires a JWT.
+   * Returns a paginated response — access items via `.data` and pagination info via `.meta`.
+   */
+  list(params?: ListPaymentsParams): Promise<PaginatedResponse<PaymentSummary>> {
+    return this.http.get(`/payments${buildQuery(params)}`)
   }
 
   /** Create a payment intent. Returns the EIP-712 signingPayload for the payer to sign. */
-  createPayment(params: CreatePaymentRequest): Promise<CreatePaymentResponse> {
+  create(params: CreatePaymentRequest): Promise<CreatePaymentResponse> {
     return this.http.post('/payments', params)
   }
 
+  /** Fetch current payment state (DB status + live on-chain escrow balances). */
+  get(rail0_id: Bytes32): Promise<GetPaymentResponse> {
+    return this.http.get(`/payments/${rail0_id}`)
+  }
+
+  /**
+   * List on-chain transactions for a payment.
+   * Returns a paginated response — access items via `.data` and pagination info via `.meta`.
+   */
+  transactions(rail0_id: Bytes32, params?: ListTransactionsParams): Promise<PaginatedResponse<TransactionRecord>> {
+    return this.http.get(`/payments/${rail0_id}/transactions${buildQuery(params)}`)
+  }
+
   /** Submit the payer's EIP-712 signature (v, r, s). */
-  sign(paymentId: Bytes32, params: PayerSignatureRequest): Promise<PayerSignatureResponse> {
-    return this.http.put(`/payments/${paymentId}/sign`, params)
+  sign(rail0_id: Bytes32, params: PayerSignatureRequest): Promise<PayerSignatureResponse> {
+    return this.http.put(`/payments/${rail0_id}/sign`, params)
   }
 
   /** Prepare the unsigned authorize() transaction. Called by the payee. */
-  authorizePrepare(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/authorize/prepare`)
+  authorizePrepare(rail0_id: Bytes32): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${rail0_id}/authorize/prepare`)
   }
 
   /**
    * Submit the signed authorize transaction (HTTP 202, async).
-   * Sign the `unsignedTransaction` from `authorizePrepare()` with the payee's key
-   * and pass it here. Poll `get()` until status leaves "submitting".
+   * Poll `get()` until status leaves "submitting".
    */
-  authorize(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<{ rail0_id: string; status: string }> {
-    return this.http.post(`/payments/${paymentId}/authorize`, params)
+  authorize(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
+    return this.http.post(`/payments/${rail0_id}/authorize`, params)
   }
 
-  /**
-   * Prepare the unsigned charge() transaction (one-shot, no escrow).
-   * The payer signature must have been submitted first via `sign()`.
-   */
-  chargePrepare(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/charge/prepare`)
+  /** Prepare the unsigned charge() transaction (one-shot, no escrow). */
+  chargePrepare(rail0_id: Bytes32): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${rail0_id}/charge/prepare`)
   }
 
   /**
    * Submit the signed charge transaction (HTTP 202, async).
    * Poll `get()` until status leaves "submitting".
    */
-  charge(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<{ rail0_id: string; status: string }> {
-    return this.http.post(`/payments/${paymentId}/charge`, params)
+  charge(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
+    return this.http.post(`/payments/${rail0_id}/charge`, params)
   }
 
   /** Build the unsigned capture() transaction. Called by the payee. */
-  capturePrepare(paymentId: Bytes32, params: CapturePaymentRequest): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/capture/prepare`, params)
+  capturePrepare(rail0_id: Bytes32, params: CapturePaymentRequest): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${rail0_id}/capture/prepare`, params)
   }
 
   /** Submit the signed capture transaction (HTTP 202, async). */
-  capture(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<{ rail0_id: string; status: string }> {
-    return this.http.post(`/payments/${paymentId}/capture`, params)
+  capture(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
+    return this.http.post(`/payments/${rail0_id}/capture`, params)
   }
 
   /** Build the unsigned void() transaction. Called by the payee. */
-  voidPrepare(paymentId: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/void/prepare`)
+  voidPrepare(rail0_id: Bytes32): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${rail0_id}/void/prepare`)
   }
 
   /** Submit the signed void transaction (HTTP 202, async). */
-  void(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<{ rail0_id: string; status: string }> {
-    return this.http.post(`/payments/${paymentId}/void`, params)
+  void(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
+    return this.http.post(`/payments/${rail0_id}/void`, params)
   }
 
-  /**
-   * Build the unsigned release() transaction.
-   * Pass `{ callerAddress }` to build the tx for the buyer (payer).
-   * Omit or pass `{}` to default to the payee.
-   * release() can only succeed after authorizationExpiry has passed on-chain.
-   */
-  releasePrepare(paymentId: Bytes32, params?: ReleaseRequest): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/release/prepare`, params)
+  /** Build the unsigned release() transaction. */
+  releasePrepare(rail0_id: Bytes32, params?: Record<string, unknown>): Promise<PrepareTransactionResponse> {
+    return this.http.post(`/payments/${rail0_id}/release/prepare`, params)
   }
 
   /** Submit the signed release transaction (HTTP 202, async). */
-  release(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<{ rail0_id: string; status: string }> {
-    return this.http.post(`/payments/${paymentId}/release`, params)
+  release(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
+    return this.http.post(`/payments/${rail0_id}/release`, params)
   }
 
   /**
-   * Refund payload — two-phase EIP-3009 flow.
-   *
-   * Phase 1 — call with `{ amount }` only:
-   *   Returns an EIP-3009 `receiveWithAuthorization` signing payload.
-   *   The payee signs it off-chain (v, r, s).
-   *
-   * Phase 2 — call with `{ amount, v, r, s }`:
-   *   Returns the unsigned on-chain refund transaction ready to sign and submit.
+   * Refund prepare — two-phase EIP-3009 flow.
+   * Phase 1: call with `{ amount }` only — returns a signing payload.
+   * Phase 2: call with `{ amount, v, r, s }` — returns the unsigned on-chain refund transaction.
    */
-  refundPrepare(paymentId: Bytes32, params: RefundPayloadParams): Promise<PrepareTransactionResponse> {
-    return this.http.post(`/payments/${paymentId}/refund/prepare`, params)
+  refundPrepare(rail0_id: Bytes32, params: RefundPrepareParams): Promise<PrepareRefundResponse> {
+    return this.http.post(`/payments/${rail0_id}/refund/prepare`, params)
   }
 
   /** Submit the signed refund transaction (HTTP 202, async). */
-  refund(paymentId: Bytes32, params: SubmitTransactionRequest): Promise<{ rail0_id: string; status: string }> {
-    return this.http.post(`/payments/${paymentId}/refund`, params)
+  refund(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
+    return this.http.post(`/payments/${rail0_id}/refund`, params)
   }
+}
+
+function buildQuery(params?: object): string {
+  if (!params) return ''
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
+  if (entries.length === 0) return ''
+  return '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')
 }

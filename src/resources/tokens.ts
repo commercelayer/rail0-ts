@@ -1,22 +1,18 @@
+// GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.
 import type { HttpClient } from '../core/http.js'
+import type { Token } from './types.js'
 
-export interface Token {
-  chain_id: number
-  chain_slug: string
-  symbol: string
-  address: string
-  decimals: number
-}
+export type { Token } from './types.js'
 
 export class TokensResource {
   constructor(private readonly http: HttpClient) {}
 
   /**
    * List active tokens, optionally filtered by chain.
-   * @param chainId Chain ID to filter by. Omit for all chains.
+   * @param chain_id Chain ID to filter by. Omit for all chains.
    */
-  list(chainId?: number): Promise<Token[]> {
-    const path = chainId && chainId !== 0 ? `/tokens?chain_id=${chainId}` : '/tokens'
+  list(chain_id?: number): Promise<Token[]> {
+    const path = chain_id && chain_id !== 0 ? `/tokens?chain_id=${chain_id}` : '/tokens'
     return this.http.get(path)
   }
 }

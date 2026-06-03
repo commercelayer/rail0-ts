@@ -1,12 +1,8 @@
+// GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.
 import type { HttpClient } from '../core/http.js'
+import type { Blockchain } from './types.js'
 
-export interface Blockchain {
-  chain_id: number
-  name: string
-  slug: string
-  network_type: string
-  explorer_url: string
-}
+export type { Blockchain } from './types.js'
 
 export class ChainsResource {
   constructor(private readonly http: HttpClient) {}

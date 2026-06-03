@@ -234,7 +234,7 @@ export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
     to: params.contractAddress,
     value: BigInt(params.payment.amount),
     validAfter: 0n,
-    validBefore: BigInt(params.payment.authorizationExpiry),
+    validBefore: BigInt(params.payment.authorization_expiry),
     nonce: params.nonce,
   })
 }
@@ -244,9 +244,9 @@ export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
  *
  * ```ts
  * const resp = await client.payments.createPayment({ payment: { ...payment, amount: '25000000' }, chainId, mode: 'charge' })
- * const sig = signCharge({ privateKey, payment: resp.payment, nonce: resp.signingPayload.message.nonce, contractAddress: resp.rail0Contract, tokenDomain: resp.signingPayload.domain })
- * await client.payments.sign(resp.paymentId, sig)
- * await client.payments.charge(resp.paymentId)
+ * const sig = signCharge({ privateKey, payment: resp.payment, nonce: resp.signing_payload.message.nonce, contractAddress: resp.rail0_contract, tokenDomain: resp.signing_payload.domain })
+ * await client.payments.sign(resp.rail0_id, sig)
+ * await client.payments.charge(resp.rail0_id, signedTx)
  * ```
  */
 export function signCharge(params: SignPaymentParams): Eip3009Signature {
@@ -255,7 +255,7 @@ export function signCharge(params: SignPaymentParams): Eip3009Signature {
     to: params.contractAddress,
     value: BigInt(params.payment.amount),
     validAfter: 0n,
-    validBefore: BigInt(params.payment.authorizationExpiry),
+    validBefore: BigInt(params.payment.authorization_expiry),
     nonce: params.nonce,
   })
 }
@@ -267,17 +267,17 @@ export function signCharge(params: SignPaymentParams): Eip3009Signature {
  * field extraction needed. This is the recommended signing path for payers.
  *
  * ```ts
- * const resp = await client.payments.createPayment({ payment: { ...payment, amount: '50000000' }, chainId, mode: 'authorize' })
+ * const resp = await client.payments.create({ payment: { ...payment, amount: '50000000' }, chain_id: chainId, mode: 'authorize' })
  * const sig = signPayment(privateKey, resp)
- * await client.payments.sign(resp.paymentId, sig)
- * await client.payments.authorize(resp.paymentId)
+ * await client.payments.sign(resp.rail0_id, sig)
+ * await client.payments.authorizePrepare(resp.rail0_id)
  * ```
  */
 export function signPayment(
   privateKey: `0x${string}` | Uint8Array,
   response: CreatePaymentResponse,
 ): Eip3009Signature {
-  const { message, domain } = response.signingPayload
+  const { message, domain } = response.signing_payload
   return doSign(privateKey, domain as TokenDomain, {
     from: message.from as Address,
     to: message.to as Address,
