@@ -19,20 +19,20 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/auth/nonce": {
+    "/auth/nonces": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Request a SIWE nonce
-         * @description Returns a single-use nonce to embed in a SIWE (EIP-4361) message. The nonce is stored server-side and expires after a short TTL.
-         */
-        get: operations["getNonce"];
+        get?: never;
         put?: never;
-        post?: never;
+        /**
+         * Issue a SIWE nonce
+         * @description Issues a single-use nonce to embed in a SIWE (EIP-4361) message. The nonce is stored server-side and expires after a short TTL.
+         */
+        post: operations["issueNonce"];
         delete?: never;
         options?: never;
         head?: never;
@@ -128,13 +128,13 @@ export interface paths {
         };
         /**
          * List payments
-         * @description Returns a paginated list of payments visible to the authenticated account.
+         * @description Returns a paginated list of payments where the authenticated address is the payer or payee. Requires a valid JWT.
          */
         get: operations["listPayments"];
         put?: never;
         /**
          * Create a payment intent
-         * @description Called by the payer. Creates a payment record and returns the EIP-712 typed-data payload for the payer to sign immediately. The `signing_payload` contains `domain`, `types`, and `message` in standard EIP-712 format: wallet users pass it verbatim to `eth_signTypedData_v4`; backends with direct key access compute the same hash with any EIP-712 library and sign it with secp256k1 — the result is identical. The `mode` field determines the flow: `authorize` places funds in escrow for later capture; `charge` is a one-shot authorize+capture with no escrow window. The nonce in the `signing_payload` is derived using the corresponding prefix (`RAIL0.AUTHORIZE` or `RAIL0.CHARGE`), so a signature for one mode cannot be reused for the other. The resulting signature must then be submitted to `PUT /payments/{rail0_id}/sign`, after which the payee prepares the on-chain transaction via `POST /payments/{rail0_id}/authorize/payload` or `POST /payments/{rail0_id}/charge/payload`.
+         * @description Called by the payer. Creates a payment record and returns the EIP-712 typed-data payload for the payer to sign immediately. The `signing_payload` contains `domain`, `types`, and `message` in standard EIP-712 format: wallet users pass it verbatim to `eth_signTypedData_v4`; backends with direct key access compute the same hash with any EIP-712 library and sign it with secp256k1 — the result is identical. The `mode` field determines the flow: `authorize` places funds in escrow for later capture; `charge` is a one-shot authorize+capture with no escrow window. The nonce in the `signing_payload` is derived using the corresponding prefix (`RAIL0.AUTHORIZE` or `RAIL0.CHARGE`), so a signature for one mode cannot be reused for the other. The resulting signature must then be submitted to `PUT /payments/{rail0_id}/sign`, after which the payee prepares the on-chain transaction via `POST /payments/{rail0_id}/authorize/prepare` or `POST /payments/{rail0_id}/charge/prepare`.
          */
         post: operations["createPayment"];
         delete?: never;
@@ -163,6 +163,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payments/{rail0_id}/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List transactions for a payment
+         * @description Returns a paginated list of on-chain transaction attempts associated with a payment. Each operation (authorize, capture, refund, etc.) produces one transaction record.
+         */
+        get: operations["listPaymentTransactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payments/{rail0_id}/sign": {
         parameters: {
             query?: never;
@@ -173,7 +193,7 @@ export interface paths {
         get?: never;
         /**
          * Submit the payer's authorization signature
-         * @description Called by the payer after signing the `signing_payload` returned by `POST /payments`. Stores the EIP-3009 signature server-side so that the payee can later trigger on-chain submission via `POST /payments/{rail0_id}/authorize/payload` without needing any further input from the payer.
+         * @description Called by the payer after signing the `signing_payload` returned by `POST /payments`. Stores the EIP-3009 signature server-side so that the payee can later trigger on-chain submission via `POST /payments/{rail0_id}/authorize/prepare` without needing any further input from the payer.
          */
         put: operations["sign"];
         post?: never;
@@ -183,7 +203,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/authorize/payload": {
+    "/payments/{rail0_id}/authorize/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -214,7 +234,7 @@ export interface paths {
         put?: never;
         /**
          * Submit a signed authorization transaction
-         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/authorize/payload`. Returns HTTP 202 immediately; the Broadcaster worker picks up the job, broadcasts on-chain, and updates the payment status. Poll `GET /payments/{rail0_id}` for the outcome.
+         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/authorize/prepare`. Returns HTTP 202 immediately; the Broadcaster worker picks up the job, broadcasts on-chain, and updates the payment status. Poll `GET /payments/{rail0_id}` for the outcome.
          */
         post: operations["submitAuthorize"];
         delete?: never;
@@ -223,7 +243,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/charge/payload": {
+    "/payments/{rail0_id}/charge/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -254,7 +274,7 @@ export interface paths {
         put?: never;
         /**
          * Submit a signed charge transaction
-         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/charge/payload`. Returns HTTP 202 immediately; the Broadcaster worker broadcasts on-chain and updates the payment status.
+         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/charge/prepare`. Returns HTTP 202 immediately; the Broadcaster worker broadcasts on-chain and updates the payment status.
          */
         post: operations["submitCharge"];
         delete?: never;
@@ -263,7 +283,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/capture/payload": {
+    "/payments/{rail0_id}/capture/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -294,7 +314,7 @@ export interface paths {
         put?: never;
         /**
          * Submit a signed capture transaction
-         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/capture/payload`. Returns HTTP 202 immediately; the Broadcaster worker broadcasts on-chain and updates the payment status.
+         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/capture/prepare`. Returns HTTP 202 immediately; the Broadcaster worker broadcasts on-chain and updates the payment status.
          */
         post: operations["submitCapture"];
         delete?: never;
@@ -303,7 +323,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/void/payload": {
+    "/payments/{rail0_id}/void/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -334,7 +354,7 @@ export interface paths {
         put?: never;
         /**
          * Submit a signed void transaction
-         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/void/payload`. Returns HTTP 202 immediately.
+         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/void/prepare`. Returns HTTP 202 immediately.
          */
         post: operations["submitVoid"];
         delete?: never;
@@ -343,7 +363,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/release/payload": {
+    "/payments/{rail0_id}/release/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -374,7 +394,7 @@ export interface paths {
         put?: never;
         /**
          * Submit a signed release transaction
-         * @description Called after signing the unsigned tx from `POST /payments/{rail0_id}/release/payload`. Returns HTTP 202 immediately.
+         * @description Called after signing the unsigned tx from `POST /payments/{rail0_id}/release/prepare`. Returns HTTP 202 immediately.
          */
         post: operations["submitRelease"];
         delete?: never;
@@ -383,7 +403,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/refund/payload": {
+    "/payments/{rail0_id}/refund/prepare": {
         parameters: {
             query?: never;
             header?: never;
@@ -420,7 +440,7 @@ export interface paths {
         put?: never;
         /**
          * Submit a signed refund transaction
-         * @description Called after signing the unsigned tx from phase 2 of `POST /payments/{rail0_id}/refund/payload`. Returns HTTP 202 immediately.
+         * @description Called after signing the unsigned tx from phase 2 of `POST /payments/{rail0_id}/refund/prepare`. Returns HTTP 202 immediately.
          */
         post: operations["submitRefund"];
         delete?: never;
@@ -429,7 +449,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sync/start_blocks": {
+    "/sync/info": {
         parameters: {
             query?: never;
             header?: never;
@@ -437,10 +457,50 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get contract sync start blocks (indexer only)
-         * @description Returns the block numbers from which the indexer should start syncing for each known RAIL0 contract deployment. HMAC authenticated — not intended for direct client use.
+         * Get sync info (indexer only)
+         * @description Returns sync information including the block numbers from which the indexer should start syncing for each known RAIL0 contract deployment. HMAC authenticated — not intended for direct client use.
          */
-        get: operations["getSyncStartBlocks"];
+        get: operations["getSyncInfo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List wallet tokens for an account
+         * @description Returns paginated wallet token configurations for the given account. Public — no authentication required.
+         */
+        get: operations["listWallets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a wallet token
+         * @description Returns a single wallet token record for the given account. Public — no authentication required.
+         */
+        get: operations["getWallet"];
         put?: never;
         post?: never;
         delete?: never;
@@ -456,7 +516,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List stale submitting transactions (indexer only)
+         * @description Returns up to 100 transactions in `submitted` status whose `submitted_at` is older than 30 seconds, ordered oldest first. Used by the indexer sweeper to detect broadcasts that were never confirmed. HMAC authenticated — not intended for direct client use.
+         */
+        get: operations["getSyncTransactions"];
         put?: never;
         /**
          * Notify API of an on-chain transaction event (indexer only)
@@ -611,6 +675,19 @@ export interface components {
              * @enum {string}
              */
             mode: "authorize" | "charge";
+            /**
+             * @description Optional human-readable payment label visible to the payer (e.g. "Order #123 — Acme Store").
+             * @example Order #123 — Acme Store
+             */
+            description?: string | null;
+            /**
+             * @description Arbitrary key-value data for custom reconciliation. Set at creation and immutable. Max 4 KB.
+             * @example {
+             *       "order_id": "ORD-123",
+             *       "customer_ref": "CUST-456"
+             *     }
+             */
+            metadata?: Record<string, never> | null;
         };
         /** @description EIP-712 domain for the token contract. */
         EIP712Domain: {
@@ -664,6 +741,19 @@ export interface components {
             /** @description Address of the RAIL0 contract on the target chain. */
             rail0_contract: components["schemas"]["Address"];
             signing_payload: components["schemas"]["SigningPayload"];
+            /**
+             * @description Optional human-readable payment label.
+             * @example Order #123 — Acme Store
+             */
+            description?: string | null;
+            /**
+             * @description Arbitrary key-value data attached at creation for custom reconciliation.
+             * @example {
+             *       "order_id": "ORD-123",
+             *       "customer_ref": "CUST-456"
+             *     }
+             */
+            metadata?: Record<string, never> | null;
         };
         /** @description Current state of a payment record. */
         GetPaymentResponse: {
@@ -691,6 +781,19 @@ export interface components {
              * @example 1785000000
              */
             refund_expiry: number;
+            /**
+             * @description Optional human-readable payment label.
+             * @example Order #123 — Acme Store
+             */
+            description?: string | null;
+            /**
+             * @description Arbitrary key-value data attached at creation for custom reconciliation.
+             * @example {
+             *       "order_id": "ORD-123",
+             *       "customer_ref": "CUST-456"
+             *     }
+             */
+            metadata?: Record<string, never> | null;
             /** @description Live on-chain amounts. Present when status is authorized, captured, voided, released, charged, or refunded. */
             on_chain?: {
                 exists?: boolean;
@@ -826,6 +929,106 @@ export interface components {
             /** @description Token amount from the on-chain event. Required for `captured` and `refunded` events; optional for others. */
             amount?: components["schemas"]["Uint256String"] | null;
         };
+        /** @description A RAIL0 merchant account. */
+        Account: {
+            /** Format: uuid */
+            id: string;
+            /** @example Acme Corp */
+            name: string;
+            /** @example acme-corp */
+            slug: string;
+            /**
+             * Format: email
+             * @example payments@acme.com
+             */
+            email: string;
+            /** @example 50 */
+            fee_bps?: number | null;
+            active: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        /** @description Condensed payment record returned by GET /payments. */
+        PaymentSummary: {
+            rail0_id: components["schemas"]["Bytes32"];
+            /** @example authorized */
+            status: string;
+            /** @enum {string} */
+            mode: "authorize" | "charge";
+            /** @example 1000000 */
+            amount: string;
+            payer: components["schemas"]["Address"];
+            payee: components["schemas"]["Address"];
+            token: components["schemas"]["Address"];
+            /** @example 1717500000 */
+            authorization_expiry: number;
+            /** @example 1717600000 */
+            refund_expiry: number;
+            /** @example Order #123 — Acme Store */
+            description?: string | null;
+            /**
+             * @example {
+             *       "order_id": "ORD-123"
+             *     }
+             */
+            metadata?: Record<string, never> | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description An on-chain transaction attempt associated with a payment. */
+        TransactionRecord: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            operation: "authorize" | "charge" | "capture" | "void" | "release" | "refund";
+            /** @enum {string} */
+            status: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
+            transaction_hash?: components["schemas"]["Bytes32"];
+            /** @example 1000000 */
+            amount?: string | null;
+            /** @example 0 */
+            fee_amount: string;
+            /** @example 12345678 */
+            block_number?: number | null;
+            /** @example 0x08c379a0... */
+            error_reason?: string | null;
+            /** Format: date-time */
+            pending_at?: string | null;
+            /** Format: date-time */
+            submitted_at?: string | null;
+            /** Format: date-time */
+            confirmed_at?: string | null;
+        };
+        /** @description A wallet token configuration linking a wallet address to a specific token on a chain. */
+        WalletToken: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            wallet_id: string;
+            /** @description Ethereum wallet address. */
+            address: components["schemas"]["Address"];
+            /** @example Treasury */
+            label?: string | null;
+            /** @example true */
+            default: boolean;
+            /** @example true */
+            active: boolean;
+            /** Format: uuid */
+            token_id: string;
+            /** @example USDC */
+            token_symbol: string;
+            token_address: components["schemas"]["Address"];
+            /** @example 6 */
+            token_decimals: number;
+            /** @example 8453 */
+            chain_id: number;
+            /** @example Base */
+            chain_name: string;
+            /** @example base */
+            chain_slug: string;
+        };
         Error: {
             /**
              * @description Human-readable error description.
@@ -903,7 +1106,7 @@ export interface operations {
             };
         };
     };
-    getNonce: {
+    issueNonce: {
         parameters: {
             query?: never;
             header?: never;
@@ -912,8 +1115,8 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Nonce generated. */
-            200: {
+            /** @description Nonce issued. */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -921,6 +1124,12 @@ export interface operations {
                     "application/json": {
                         /** @example abc123xyz */
                         nonce: string;
+                        /**
+                         * Format: date-time
+                         * @description ISO 8601 timestamp when the nonce expires.
+                         * @example 2026-06-03T00:05:00Z
+                         */
+                        expires_at: string;
                     };
                 };
             };
@@ -945,7 +1154,7 @@ export interface operations {
         };
         responses: {
             /** @description Authentication successful. */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -953,11 +1162,24 @@ export interface operations {
                     "application/json": {
                         /** @description JWT bearer token for authenticated requests. */
                         token: string;
+                        /** @description Ethereum address recovered from the SIWE signature. */
+                        address: string;
                         /**
                          * Format: uuid
                          * @description Account UUID, if the signing address is a known account wallet.
                          */
                         account_id?: string | null;
+                        /**
+                         * @description URL-safe account identifier.
+                         * @example acme-corp
+                         */
+                        account_slug?: string | null;
+                        /**
+                         * Format: date-time
+                         * @description ISO 8601 timestamp when the JWT expires.
+                         * @example 2026-06-04T00:00:00Z
+                         */
+                        expires_at?: string;
                     };
                 };
             };
@@ -1065,8 +1287,18 @@ export interface operations {
             query?: {
                 /** @description Filter by payment status. */
                 status?: string;
-                /** @description Page number (1-based). */
+                /** @description Filter by payment mode. */
+                mode?: "authorize" | "charge";
+                /** @description Filter by payer Ethereum address. */
+                payer?: string;
+                /** @description Filter by payee Ethereum address. */
+                payee?: string;
+                /** @description Filter by token contract address. */
+                token?: string;
+                /** @description Page number (1-based, default 1). */
                 page?: number;
+                /** @description Items per page (default 20, max 100). */
+                per_page?: number;
             };
             header?: never;
             path?: never;
@@ -1074,13 +1306,32 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description List of payments. */
+            /** @description Paginated list of payments. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GetPaymentResponse"][];
+                    "application/json": {
+                        data: components["schemas"]["PaymentSummary"][];
+                        meta: {
+                            /** @example 1 */
+                            page: number;
+                            /** @example 20 */
+                            per_page: number;
+                            /** @example 42 */
+                            total: number;
+                        };
+                    };
+                };
+            };
+            /** @description Missing or invalid JWT. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };
@@ -1159,6 +1410,57 @@ export interface operations {
             };
         };
     };
+    listPaymentTransactions: {
+        parameters: {
+            query?: {
+                /** @description Filter by operation type. */
+                operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund";
+                /** @description Filter by transaction status. */
+                status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
+                /** @description Page number (1-based, default 1). */
+                page?: number;
+                /** @description Items per page (default 20, max 100). */
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Unique payment identifier (bytes32 hex). */
+                rail0_id: components["schemas"]["Bytes32"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated list of transaction records. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["TransactionRecord"][];
+                        meta: {
+                            /** @example 1 */
+                            page: number;
+                            /** @example 20 */
+                            per_page: number;
+                            /** @example 3 */
+                            total: number;
+                        };
+                    };
+                };
+            };
+            /** @description Payment not found. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     sign: {
         parameters: {
             query?: never;
@@ -1175,7 +1477,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Signature stored. The payee may now call `POST /payments/{rail0_id}/authorize/payload`. */
+            /** @description Signature stored. The payee may now call `POST /payments/{rail0_id}/authorize/prepare`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1713,7 +2015,7 @@ export interface operations {
             };
         };
     };
-    getSyncStartBlocks: {
+    getSyncInfo: {
         parameters: {
             query?: never;
             header?: never;
@@ -1722,14 +2024,21 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Map of chain_id to start block number. */
+            /** @description Sync info including start blocks per chain. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        [key: string]: number;
+                        start_blocks?: {
+                            /** @example 8453 */
+                            chain_id?: number;
+                            /** @example 12345678 */
+                            start_block?: number;
+                            /** @example deployment */
+                            reason?: string;
+                        }[];
                     };
                 };
             };
@@ -1741,6 +2050,123 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Error"];
                 };
+            };
+        };
+    };
+    listWallets: {
+        parameters: {
+            query?: {
+                /** @description Filter by EVM chain ID. */
+                chain_id?: number;
+                /** @description Filter by chain slug (e.g. "base"). */
+                chain_slug?: string;
+                /** @description Filter by token symbol (e.g. "USDC"). */
+                token_symbol?: string;
+                /** @description Filter by active flag. Omit to return all records. */
+                active?: boolean;
+                /** @description Page number (1-based, default 1). */
+                page?: number;
+                /** @description Items per page (default 20, max 100). */
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Account UUID. */
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated list of wallet token objects. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["WalletToken"][];
+                        meta: {
+                            /** @example 1 */
+                            page: number;
+                            /** @example 20 */
+                            per_page: number;
+                            /** @example 42 */
+                            total: number;
+                        };
+                    };
+                };
+            };
+        };
+    };
+    getWallet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Account UUID. */
+                account_id: string;
+                /** @description Wallet token UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Wallet token object. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletToken"];
+                };
+            };
+            /** @description Wallet token not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSyncTransactions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Up to 100 submitted unconfirmed transactions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        transactions?: {
+                            transaction_hash?: components["schemas"]["Bytes32"];
+                            /** @description rail0_id of the payment. */
+                            payment_id?: components["schemas"]["Bytes32"];
+                            /** @example 8453 */
+                            chain_id?: number;
+                            /** @example authorize */
+                            operation?: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid HMAC signature. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

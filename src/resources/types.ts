@@ -123,6 +123,10 @@ export interface CreatePaymentResponse {
   /** Address of the RAIL0 contract on the target chain. */
   rail0_contract: Address
   signing_payload: SigningPayload
+  /** Optional human-readable payment label. */
+  description?: string | null
+  /** Arbitrary key-value data attached at creation for custom reconciliation. */
+  metadata?: Record<string, unknown> | null
 }
 
 export interface PayerSignatureResponse {
@@ -223,6 +227,10 @@ export interface GetPaymentResponse {
   chain_id: number
   authorization_expiry: number
   refund_expiry: number
+  /** Optional human-readable payment label. */
+  description?: string | null
+  /** Arbitrary key-value data attached at creation for custom reconciliation. */
+  metadata?: Record<string, unknown> | null
   /** Live on-chain amounts. Present when status is authorized, captured, voided, released, charged, or refunded. */
   on_chain?: OnChainState | null
   /** Hash of the most recently broadcast transaction. */
