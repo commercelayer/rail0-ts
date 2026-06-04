@@ -25,18 +25,18 @@ import { Rail0Client } from '@rail0/sdk'
 const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz' })
 
 // Step 1 — discover payment methods
-const methods = await client.merchants.paymentMethods(1)
-const usdc = methods.find(m => m.tokenSymbol === 'USDC')!
+const methods = await client.accounts.paymentMethods(accountId)
+const usdc = methods.find(m => m.token_symbol === 'USDC')!
 
 // Step 2 — create payment intent
-const resp = await client.payments.createPayment({
+const resp = await client.payments.create({
   payment: {
     payer:  '0xBuyer...',
-    payee:  usdc.walletAddress,
-    token:  usdc.tokenAddress,
+    payee:  usdc.wallet_address,
+    token:  usdc.token_address,
     amount: '50000000',     // 50 USDC (6 decimals)
   },
-  chainId: usdc.chainId,
+  chain_id: usdc.chain_id,
   mode: 'authorize',
 })
 
@@ -46,9 +46,9 @@ const resp = await client.payments.createPayment({
 // Step 4 — submit payer signature
 await client.payments.sign(resp.rail0_id, { signature: sig.toHex() })
 
-// Step 5 — payee fetches the unsigned authorize tx (payload step)
-const tx = await client.payments.authorizePayload(resp.rail0_id)
-// sign tx.unsignedTransaction with payee's key (EIP-1559)
+// Step 5 — payee fetches the unsigned authorize tx (prepare step)
+const tx = await client.payments.authorizePrepare(resp.rail0_id)
+// sign tx.unsigned_transaction with payee's key (EIP-1559)
 
 // Step 6 — submit the signed authorize tx (HTTP 202, async)
 await client.payments.authorize(resp.rail0_id, { signedTransaction: signedBytes })
@@ -61,7 +61,7 @@ while (state.status === 'submitting') {
 }
 
 // Step 8 — payee captures the funds
-const captureTx = await client.payments.capturePayload(resp.rail0_id, { amount: '50000000' })
+const captureTx = await client.payments.capturePrepare(resp.rail0_id, { amount: '50000000' })
 await client.payments.capture(resp.rail0_id, { signedTransaction: sign(captureTx) })
 ```
 
@@ -69,7 +69,7 @@ await client.payments.capture(resp.rail0_id, { signedTransaction: sign(captureTx
 
 Each operation follows the same two-step pattern:
 
-1. **Payload step** — `POST /payments/:id/operation/payload` — returns an unsigned EIP-1559 transaction. Sign it off-chain with the payee's key.
+1. **Prepare step** — `POST /payments/:id/operation/prepare` — returns an unsigned EIP-1559 transaction. Sign it off-chain with the payee's key.
 2. **Submit step** — `POST /payments/:id/operation` with `{ signedTransaction }` — broadcasts the signed tx (HTTP 202, async). Poll `get()` until status leaves `"submitting"`.
 
 ```text
@@ -84,12 +84,12 @@ Payment status values: `submitting`, `submitted`, `partially_captured`, `partial
 
 | Operation | Caller | What it does |
 |-----------|--------|--------------|
-| `authorizePayload` + `authorize` | payee | Prepare + broadcast the authorize tx; funds move to escrow |
-| `chargePayload` + `charge` | payee | One-shot: authorize + capture with no escrow window |
-| `capturePayload` + `capture` | payee | Moves escrowed funds to the merchant |
-| `voidPayload` + `void` | payee | Cancels the hold, returns funds to the payer |
-| `releasePayload` + `release` | anyone | Reclaims escrow after `authorizationExpiry` |
-| `refundPayload` + `refund` | payee | EIP-3009 `receiveWithAuthorization` refund (no ERC-20 approve needed) |
+| `authorizePrepare` + `authorize` | payee | Prepare + broadcast the authorize tx; funds move to escrow |
+| `chargePrepare` + `charge` | payee | One-shot: authorize + capture with no escrow window |
+| `capturePrepare` + `capture` | payee | Moves escrowed funds to the merchant |
+| `voidPrepare` + `void` | payee | Cancels the hold, returns funds to the payer |
+| `releasePrepare` + `release` | anyone | Reclaims escrow after `authorizationExpiry` |
+| `refundPrepare` + `refund` | payee | EIP-3009 `receiveWithAuthorization` refund (no ERC-20 approve needed) |
 
 ## Contract addresses (v9)
 
@@ -153,15 +153,15 @@ const client = new Rail0Client({
 
 ---
 
-### `client.merchants`
+### `client.accounts`
 
-#### `.paymentMethods(merchantId)` → `Promise<PaymentMethod[]>`
+#### `.paymentMethods(accountId)` → `Promise<PaymentMethod[]>`
 
-Returns the active payment methods (chain + token + wallet) for a merchant.
+Returns the active payment methods (chain + token + wallet) for an account.
 
 ```typescript
-const methods = await client.merchants.paymentMethods(1)
-// methods[0].chainId, .tokenAddress, .walletAddress, .tokenSymbol, .chainSlug
+const methods = await client.accounts.paymentMethods(accountId)
+// methods[0].chain_id, .token_address, .wallet_address, .token_symbol, .chain_slug
 ```
 
 ---
@@ -180,32 +180,32 @@ Fetches the current payment state (DB status + live on-chain escrow balances).
 
 ```typescript
 const state = await client.payments.get(paymentId)
-// state.status, state.onChain.capturableAmount, state.onChain.refundableAmount
+// state.status, state.on_chain.capturable_amount, state.on_chain.refundable_amount
 ```
 
-#### `.createPayment(params)` → `Promise<CreatePaymentResponse>`
+#### `.create(params)` → `Promise<CreatePaymentResponse>`
 
-Creates a payment intent. Returns `signingPayload` for the payer to sign, plus `rail0Contract`.
+Creates a payment intent. Returns `signing_payload` for the payer to sign, plus `rail0Contract`.
 
 #### `.sign(paymentId, params)` → `Promise<PayerSignatureResponse>`
 
 Submits the payer's EIP-712 signature as a single 65-byte hex string (`{ signature: "0x..." }`).
 
-#### `.authorizePayload(paymentId)` → `Promise<PrepareTransactionResponse>`
+#### `.authorizePrepare(paymentId)` → `Promise<PrepareTransactionResponse>`
 
-Prepares the unsigned `authorize()` transaction. Called by the payee. Sign `unsignedTransaction` with the payee's key and pass to `authorize()`.
+Prepares the unsigned `authorize()` transaction. Called by the payee. Sign `unsigned_transaction` with the payee's key and pass to `authorize()`.
 
 #### `.authorize(paymentId, params)` → `Promise<...>`
 
 Broadcasts the signed authorize transaction (HTTP 202, async). Poll `get()` until status leaves `"submitting"`.
 
 ```typescript
-const tx = await client.payments.authorizePayload(paymentId)
-// sign tx.unsignedTransaction with payee's key
+const tx = await client.payments.authorizePrepare(paymentId)
+// sign tx.unsigned_transaction with payee's key
 await client.payments.authorize(paymentId, { signedTransaction: signedBytes })
 ```
 
-#### `.chargePayload(paymentId)` → `Promise<PrepareTransactionResponse>`
+#### `.chargePrepare(paymentId)` → `Promise<PrepareTransactionResponse>`
 
 Prepares the unsigned charge transaction (one-shot authorize + capture, no escrow window). The payer signature must have been submitted first via `sign()`.
 
@@ -213,29 +213,29 @@ Prepares the unsigned charge transaction (one-shot authorize + capture, no escro
 
 Broadcasts the signed charge transaction (HTTP 202, async).
 
-#### `.capturePayload(paymentId, params)` → `Promise<PrepareTransactionResponse>`
+#### `.capturePrepare(paymentId, params)` → `Promise<PrepareTransactionResponse>`
 
 Build the unsigned capture transaction. Partial captures are supported.
 
 ```typescript
-const tx = await client.payments.capturePayload(paymentId, { amount: '50000000' })
+const tx = await client.payments.capturePrepare(paymentId, { amount: '50000000' })
 await client.payments.capture(paymentId, { signedTransaction: sign(tx) })
 ```
 
-#### `.voidPayload(paymentId)` → `Promise<PrepareTransactionResponse>`
+#### `.voidPrepare(paymentId)` → `Promise<PrepareTransactionResponse>`
 
 Build the unsigned void transaction — releases all escrowed funds to the payer.
 
-#### `.releasePayload(paymentId, params?)` → `Promise<PrepareTransactionResponse>`
+#### `.releasePrepare(paymentId, params?)` → `Promise<PrepareTransactionResponse>`
 
 Build the unsigned release transaction for reclaiming escrow after `authorizationExpiry`. Pass `{ callerAddress }` to build the tx for the buyer (payer).
 
 ```typescript
-const tx = await client.payments.releasePayload(paymentId, { callerAddress: buyerAddr })
+const tx = await client.payments.releasePrepare(paymentId, { callerAddress: buyerAddr })
 await client.payments.release(paymentId, { signedTransaction: buyerSigned })
 ```
 
-#### `.refundPayload(paymentId, params)` → `Promise<PrepareTransactionResponse>`
+#### `.refundPrepare(paymentId, params)` → `Promise<PrepareTransactionResponse>`
 
 Two-phase EIP-3009 `receiveWithAuthorization` refund (no ERC-20 approve step required).
 
@@ -249,12 +249,12 @@ Returns the unsigned on-chain refund transaction ready to sign and submit.
 
 ```typescript
 // Phase 1 — get EIP-3009 signing payload
-const sigPayload = await client.payments.refundPayload(paymentId, { amount: '50000000' })
-// sign sigPayload.unsignedTransaction off-chain → v, r, s
+const sigPayload = await client.payments.refundPrepare(paymentId, { amount: '50000000' })
+// sign sigPayload.signing_payload off-chain → v, r, s
 
 // Phase 2 — get unsigned on-chain tx
-const tx = await client.payments.refundPayload(paymentId, { amount: '50000000', v, r, s })
-// sign tx.unsignedTransaction with payee's key
+const tx = await client.payments.refundPrepare(paymentId, { amount: '50000000', v, r, s })
+// sign tx.unsigned_transaction with payee's key
 await client.payments.refund(paymentId, { signedTransaction: signedBytes })
 ```
 
