@@ -41,7 +41,7 @@ const resp = await client.payments.create({
 })
 
 // Step 3 — payer signs EIP-3009 payload off-chain (use viem, ethers, etc.)
-// const sig = await wallet.signTypedData(resp.signingPayload)
+// const sig = await wallet.signTypedData(resp.signing_payload)
 
 // Step 4 — submit payer signature
 await client.payments.sign(resp.rail0_id, { signature: sig.toHex() })
@@ -185,7 +185,7 @@ const state = await client.payments.get(paymentId)
 
 #### `.create(params)` → `Promise<CreatePaymentResponse>`
 
-Creates a payment intent. Returns `signing_payload` for the payer to sign, plus `rail0Contract`.
+Creates a payment intent. Returns `signing_payload` for the payer to sign, plus `rail0_contract`.
 
 #### `.sign(paymentId, params)` → `Promise<PayerSignatureResponse>`
 
@@ -322,7 +322,7 @@ src/
 
   resources/
     types.ts      type aliases and hand-written types
-    merchants.ts  MerchantsResource
+    accounts.ts   AccountsResource
     payments.ts   PaymentsResource
 
   client.ts       Rail0Client — assembles the resources
