@@ -67,12 +67,13 @@ export function personalSign(privateKeyHex: string, message: string): string {
   const digest = keccak_256(combined)
 
   const privBytes = hexToBytes(privateKeyHex)
-  // sign returns [recovery(1), r(32), s(32)] = 65 bytes in 'recovered' format
-  const sig = secp256k1.sign(digest, privBytes, { format: 'recovered', lowS: true, prehash: false })
-  const recovery = sig.at(0) ?? 0
+  // format:'recovered' → Uint8Array(65): recovery(1) || r(32) || s(32)
+  const sig = secp256k1.sign(digest, privBytes, { format: 'recovered', lowS: true, prehash: false }) as Uint8Array
+  const recovery = sig[0] as number
   const r = sig.slice(1, 33)
   const s = sig.slice(33, 65)
   const v = recovery + 27
+  // EIP-191 expects: r(32) || s(32) || v(1)
   const out = new Uint8Array(65)
   out.set(r, 0)
   out.set(s, 32)
@@ -87,10 +88,10 @@ export function personalSign(privateKeyHex: string, message: string): string {
 export class AuthResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** POST /nonces — issue a single-use SIWE nonce. */
+  /** POST /auth/nonces — issue a single-use SIWE nonce. */
   getNonce(): Promise<{ nonce: string; expiresAt: string }> {
     return this.http
-      .post<{ nonce: string; expires_at: string }>('/nonces', {})
+      .post<{ nonce: string; expires_at: string }>('/auth/nonces', {})
       .then((r) => ({ nonce: r.nonce, expiresAt: r.expires_at }))
   }
 
@@ -123,10 +124,13 @@ export class AuthResource {
     const { nonce } = await this.getNonce()
     const address = checksumAddress(privateKeyHex)
 
+    // Strip port from domain — the API's siwe_domain is host-only (e.g. "localhost")
+    const siweHost = domain.split(':')[0] as string
+
     const siweMessage = new SiweMessage({
-      domain,
+      domain: siweHost,
       address,
-      uri: `https://${domain}`,
+      uri: `http://${domain}`,
       version: '1',
       chainId: 1,
       nonce,
@@ -134,6 +138,9 @@ export class AuthResource {
     })
     const messageStr = siweMessage.prepareMessage()
     const signature = personalSign(privateKeyHex, messageStr)
+    console.log('[sdk/login] address:', address)
+    console.log('[sdk/login] message:\n', messageStr)
+    console.log('[sdk/login] signature:', signature)
     return this.verify(messageStr, signature)
   }
 }
