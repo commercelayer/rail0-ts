@@ -35,6 +35,8 @@ export interface Blockchain {
   chain_id: number
   name: string
   slug: string
+  /** Symbol of the native gas token (e.g. "ETH", "MATIC", "USDC" on Arc). */
+  native_symbol: string
   network_type: string
   explorer_url: string
 }
