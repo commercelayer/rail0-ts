@@ -101,10 +101,6 @@ export interface PaymentConfig {
   authorization_expiry: number
   /** Unix timestamp (seconds). Refund must happen before this. Must be >= authorization_expiry. */
   refund_expiry: number
-  /** Fee in basis points (0 = no fee, 10000 = 100%). */
-  fee_bps: number
-  /** Recipient of the fee on each capture. Use the zero address when fee_bps is 0. */
-  fee_receiver: Address
 }
 
 /** EIP-712 typed-data structure that the payer (or payee for refund) must sign. Pass verbatim to `eth_signTypedData_v4`. */

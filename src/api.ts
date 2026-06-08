@@ -642,15 +642,8 @@ export interface components {
              * @example 1785000000
              */
             refund_expiry: number;
-            /**
-             * @description Fee in basis points (0 = no fee, 10000 = 100%).
-             * @example 100
-             */
-            fee_bps: number;
-            /** @description Recipient of the fee on each capture. Use the zero address when fee_bps is 0. */
-            fee_receiver: components["schemas"]["Address"];
         };
-        /** @description Buyer-supplied payment parameters. Policy fields (authorization_expiry, refund_expiry, fee_bps, fee_receiver) are fixed API configuration applied server-side. */
+        /** @description Buyer-supplied payment parameters. Policy fields (authorization_expiry, refund_expiry) are fixed API configuration applied server-side. */
         PaymentInput: {
             /** @description Buyer address. Funds are pulled from this address. */
             payer: components["schemas"]["Address"];
@@ -942,8 +935,6 @@ export interface components {
              * @example payments@acme.com
              */
             email: string;
-            /** @example 50 */
-            fee_bps?: number | null;
             active: boolean;
             /** Format: date-time */
             created_at: string;
