@@ -101,6 +101,14 @@ export class HttpClient {
     return this.request<T>('POST', path, body)
   }
 
+  async patch<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>('PATCH', path, body)
+  }
+
+  async delete<T = void>(path: string): Promise<T> {
+    return this.request<T>('DELETE', path)
+  }
+
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl}${path}`
     const maxAttempts = this.maxRetries + 1

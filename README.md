@@ -22,43 +22,50 @@ pnpm add @rail0/sdk
 ```typescript
 import { Rail0Client } from '@rail0/sdk'
 
-const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz' })
-
-// Step 1 — discover payment methods
-const methods = await client.accounts.paymentMethods(accountId)
-const usdc = methods.find(m => m.token_symbol === 'USDC')!
-
-// Step 2 — create payment intent
-const resp = await client.payments.create({
-  chain_id: usdc.chain_id,
-  mode:     'authorize',
-  amount:   '50000000',     // 50 USDC (6 decimals)
-  payer:    '0xBuyer...',
-  payee:    usdc.wallet_address,
-  token:    usdc.token_address,
+const client = new Rail0Client({
+  baseUrl: 'https://api.rail0.xyz',
+  headers: { Authorization: 'Bearer <jwt>' },
 })
 
-// Step 3 — payer signs EIP-3009 payload off-chain (use viem, ethers, etc.)
+// Step 1 — list wallets for an account and pick one
+const wallets = await client.accounts.wallets(accountId)
+const wallet = wallets.data[0]
+
+// Step 2 — pick a token accepted by that wallet
+const tokens = await client.wallets.tokens(wallet.id)
+const usdc = tokens.data.find(t => t.symbol === 'USDC')!
+
+// Step 3 — create payment intent
+const resp = await client.payments.create({
+  chain_id: usdc.blockchain.chain_id,
+  mode:     'authorize',
+  amount:   '50000000',       // 50 USDC (6 decimals)
+  payer:    '0xBuyer...',
+  payee:    wallet.address,
+  token:    usdc.address,
+})
+
+// Step 4 — payer signs EIP-3009 payload off-chain (use viem, ethers, etc.)
 // const sig = await wallet.signTypedData(resp.signing_payload)
 
-// Step 4 — submit payer signature
+// Step 5 — submit payer signature
 await client.payments.sign(resp.rail0_id, { signature: sig.toHex() })
 
-// Step 5 — payee fetches the unsigned authorize tx (prepare step)
+// Step 6 — payee fetches the unsigned authorize tx (prepare step)
 const tx = await client.payments.authorizePrepare(resp.rail0_id)
 // sign tx.unsigned_transaction with payee's key (EIP-1559)
 
-// Step 6 — submit the signed authorize tx (HTTP 202, async)
+// Step 7 — submit the signed authorize tx (HTTP 202, async)
 await client.payments.authorize(resp.rail0_id, { signedTransaction: signedBytes })
 
-// Step 7 — poll until status leaves "submitting"
+// Step 8 — poll until status leaves "submitting"
 let state = await client.payments.get(resp.rail0_id)
 while (state.status === 'submitting') {
   await new Promise(r => setTimeout(r, 2_000))
   state = await client.payments.get(resp.rail0_id)
 }
 
-// Step 8 — payee captures the funds
+// Step 9 — payee captures the funds
 const captureTx = await client.payments.capturePrepare(resp.rail0_id, { amount: '50000000' })
 await client.payments.capture(resp.rail0_id, { signedTransaction: sign(captureTx) })
 ```
@@ -153,13 +160,88 @@ const client = new Rail0Client({
 
 ### `client.accounts`
 
-#### `.paymentMethods(accountId)` → `Promise<PaymentMethod[]>`
+#### `.wallets(accountId, params?)` → `Promise<PaginatedResponse<Wallet>>`
 
-Returns the active payment methods (chain + token + wallet) for an account.
+List wallets registered to an account.
 
 ```typescript
-const methods = await client.accounts.paymentMethods(accountId)
-// methods[0].chain_id, .token_address, .wallet_address, .token_symbol, .chain_slug
+const result = await client.accounts.wallets(accountId, { active: true })
+// result.data[0].id, .address, .label, .active, .account_id
+```
+
+#### `.wallet(accountId, walletId)` → `Promise<Wallet>`
+
+Fetch a single wallet.
+
+```typescript
+const wallet = await client.accounts.wallet(accountId, walletId)
+```
+
+#### `.createWallet(accountId, params)` → `Promise<Wallet>`
+
+Register a new EVM wallet address. Requires authentication.
+
+```typescript
+const wallet = await client.accounts.createWallet(accountId, {
+  address: '0xABC...',
+  label:   'Treasury',
+})
+```
+
+#### `.updateWallet(accountId, walletId, params)` → `Promise<Wallet>`
+
+Update label or active status. Requires authentication.
+
+```typescript
+const wallet = await client.accounts.updateWallet(accountId, walletId, { active: false })
+```
+
+#### `.deleteWallet(accountId, walletId)` → `Promise<void>`
+
+Remove a wallet from an account. Requires authentication.
+
+```typescript
+await client.accounts.deleteWallet(accountId, walletId)
+```
+
+---
+
+### `client.wallets`
+
+#### `.tokens(walletId, params?)` → `Promise<PaginatedResponse<Token>>`
+
+List the tokens accepted by a wallet. Each token includes a nested `blockchain` object.
+
+```typescript
+const result = await client.wallets.tokens(walletId, { symbol: 'USDC' })
+// result.data[0].id, .symbol, .address, .decimals, .active
+// result.data[0].blockchain.chain_id, .name, .slug, .rpc_url
+```
+
+---
+
+### `client.tokens`
+
+#### `.list(params?)` → `Promise<CatalogToken[]>`
+
+List all tokens from the flat catalog (no entity IDs, no nested blockchain).
+
+```typescript
+const tokens = await client.tokens.list({ chain_slug: 'arc-testnet' })
+// tokens[0].chain_id, .chain_slug, .symbol, .address, .decimals
+```
+
+---
+
+### `client.chains`
+
+#### `.list()` → `Promise<Blockchain[]>`
+
+List all supported blockchains.
+
+```typescript
+const chains = await client.chains.list()
+// chains[0].chain_id, .name, .slug, .rpc_url, .explorer_url
 ```
 
 ---
@@ -205,7 +287,7 @@ await client.payments.authorize(paymentId, { signedTransaction: signedBytes })
 
 #### `.chargePrepare(paymentId)` → `Promise<PrepareTransactionResponse>`
 
-Prepares the unsigned charge transaction (one-shot authorize + capture, no escrow window). The payer signature must have been submitted first via `sign()`.
+Prepares the unsigned charge transaction (one-shot authorize + capture, no escrow window).
 
 #### `.charge(paymentId, params)` → `Promise<...>`
 
@@ -228,22 +310,13 @@ Build the unsigned void transaction — releases all escrowed funds to the payer
 
 Build the unsigned release transaction for reclaiming escrow after `authorizationExpiry`. Pass `{ callerAddress }` to build the tx for the buyer (payer).
 
-```typescript
-const tx = await client.payments.releasePrepare(paymentId, { callerAddress: buyerAddr })
-await client.payments.release(paymentId, { signedTransaction: buyerSigned })
-```
-
 #### `.refundPrepare(paymentId, params)` → `Promise<PrepareTransactionResponse>`
 
 Two-phase EIP-3009 `receiveWithAuthorization` refund (no ERC-20 approve step required).
 
-**Phase 1** — pass `{ amount }` only:
+**Phase 1** — pass `{ amount }` only — returns the EIP-3009 signing payload. Sign off-chain to obtain `v`, `r`, `s`.
 
-Returns the EIP-3009 signing payload. Sign it off-chain to obtain `v`, `r`, `s`.
-
-**Phase 2** — pass `{ amount, v, r, s }`:
-
-Returns the unsigned on-chain refund transaction ready to sign and submit.
+**Phase 2** — pass `{ amount, v, r, s }` — returns the unsigned on-chain refund transaction.
 
 ```typescript
 // Phase 1 — get EIP-3009 signing payload
@@ -320,7 +393,9 @@ src/
 
   resources/
     types.ts      type aliases and hand-written types
-    accounts.ts   AccountsResource
+    accounts.ts   AccountsResource  (wallet CRUD)
+    wallets.ts    WalletsResource   (wallet tokens)
+    tokens.ts     TokensResource    (flat catalog)
     payments.ts   PaymentsResource
 
   client.ts       Rail0Client — assembles the resources

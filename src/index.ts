@@ -23,6 +23,9 @@ export { debugLogger } from './core/http.js'
 export type { Logger, LogEntry } from './core/http.js'
 
 export { AccountsResource } from './resources/accounts.js'
+export type { ListWalletsParams, CreateWalletParams, UpdateWalletParams } from './resources/accounts.js'
+export { WalletsResource } from './resources/wallets.js'
+export type { ListWalletTokensParams } from './resources/wallets.js'
 
 export type { RefundPayloadParams } from './resources/payments.js'
 
@@ -55,6 +58,9 @@ export type {
   OnChainState,
   PaymentResponse,
   PaymentMethod,
+  Wallet,
+  WalletToken,
+  Token,
   // Utility types
   PaymentMode,
   SignatureStatus,
@@ -69,4 +75,4 @@ export { personalSign, checksumAddress } from './resources/auth.js'
 export { ChainsResource } from './resources/chains.js'
 export type { Blockchain } from './resources/chains.js'
 export { TokensResource } from './resources/tokens.js'
-export type { Token } from './resources/tokens.js'
+export type { CatalogToken } from './resources/tokens.js'

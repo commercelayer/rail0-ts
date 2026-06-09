@@ -41,12 +41,52 @@ export interface Blockchain {
   explorer_url: string
 }
 
-export interface Token {
+/** Flat catalog token from GET /tokens. */
+export interface CatalogToken {
   chain_id: number
   chain_slug: string
   symbol: string
   address: string
   decimals: number
+}
+
+/** Full token entity from GET /wallets/:id/tokens (includes nested blockchain). */
+export interface Token {
+  id: string
+  symbol: string
+  address: string
+  decimals: number
+  active: boolean
+  blockchain: Blockchain
+  created_at: string
+  updated_at: string
+}
+
+export interface Wallet {
+  id: string
+  account_id: string
+  address: string
+  label?: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** Denormalized wallet+token+chain record for backwards-compatible use. */
+export interface WalletToken {
+  id: string
+  wallet_id: string
+  address: string
+  label?: string | null
+  default: boolean
+  active: boolean
+  token_id: string
+  token_symbol: string
+  token_address: string
+  token_decimals: number
+  chain_id: number
+  chain_name: string
+  chain_slug: string
 }
 
 export interface PaymentMethod {
