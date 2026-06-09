@@ -656,7 +656,6 @@ export interface components {
         };
         /** @description Parameters needed to create a payment intent. */
         CreatePaymentRequest: {
-            payment: components["schemas"]["PaymentInput"];
             /**
              * @description EVM chain ID of the target network.
              * @example 84532
@@ -668,6 +667,14 @@ export interface components {
              * @enum {string}
              */
             mode: "authorize" | "charge";
+            /** @description Amount to pay (in token base units). */
+            amount: components["schemas"]["Uint256String"];
+            /** @description ERC-20 token address (token_address from GET /accounts/{id}/wallets). */
+            token: components["schemas"]["Address"];
+            /** @description Buyer address. Funds are pulled from this address. */
+            payer: components["schemas"]["Address"];
+            /** @description Account wallet address (wallet_address from GET /accounts/{id}/wallets). */
+            payee: components["schemas"]["Address"];
             /**
              * @description Optional human-readable payment label visible to the payer (e.g. "Order #123 — Acme Store").
              * @example Order #123 — Acme Store
