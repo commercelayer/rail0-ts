@@ -152,7 +152,7 @@ export interface paths {
         };
         /**
          * Get current payment state
-         * @description Returns the full payment record from the database, plus live on-chain amounts when the payment is in an active on-chain state (`authorized`, `captured`, `voided`, `released`, `charged`, `refunded`). Clients should poll this endpoint after calling a submit endpoint — the `status` field progresses from `submitting` to the target state (e.g. `authorized`) once the background worker confirms the transaction. If the worker encounters an error, `status` becomes `failed` and the `failure_code` / `failure_message` fields explain why.
+         * @description Returns the full payment record from the database, plus live on-chain amounts when the payment is in an active on-chain state (`authorized`, `captured`, `voided`, `released`, `charged`, `refunded`). Clients should poll this endpoint after calling a submit endpoint — the `status` field progresses from `submitting` to the target state (e.g. `authorized`) once the background worker confirms the transaction. If the worker encounters an error, `status` becomes `failed` and the `last_error_code` / `last_error_message` fields explain why.
          */
         get: operations["getPayment"];
         put?: never;
@@ -449,26 +449,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sync/info": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get sync info (indexer only)
-         * @description Returns sync information including the block numbers from which the indexer should start syncing for each known RAIL0 contract deployment. HMAC authenticated — not intended for direct client use.
-         */
-        get: operations["getSyncInfo"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/accounts/{account_id}/wallets": {
         parameters: {
             query?: never;
@@ -503,98 +483,6 @@ export interface paths {
         get: operations["getWallet"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sync/transactions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List stale submitting transactions (indexer only)
-         * @description Returns up to 100 transactions in `submitted` status whose `submitted_at` is older than 30 seconds, ordered oldest first. Used by the indexer sweeper to detect broadcasts that were never confirmed. HMAC authenticated — not intended for direct client use.
-         */
-        get: operations["getSyncTransactions"];
-        put?: never;
-        /**
-         * Notify API of an on-chain transaction event (indexer only)
-         * @description Called by rail0-indexer after a transaction is confirmed or reverted. Authenticated with HMAC-SHA256.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        /** @example 0x... */
-                        transaction_hash: string;
-                        /** @example 8453 */
-                        chain_id?: number;
-                        /** @enum {string} */
-                        operation: "confirm" | "fail";
-                        /** @description rail0_id of the payment */
-                        payment_id: string;
-                        /**
-                         * @description Required for operation=confirm
-                         * @example authorized
-                         */
-                        event_type?: string;
-                        block_number: number;
-                        /** @description Token amount (confirm + delta events only) */
-                        amount?: string;
-                        /** @description ABI-encoded revert data (fail only) */
-                        revert_reason?: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description Accepted — job enqueued (confirm) or payment marked failed (fail) */
-                202: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Missing required field */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Invalid HMAC signature */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Payment not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Invalid operation or event_type */
-                422: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
         delete?: never;
         options?: never;
         head?: never;
@@ -806,12 +694,12 @@ export interface components {
              * @description Machine-readable failure reason. Present only when status=failed.
              * @example revert
              */
-            failure_code?: string;
+            last_error_code?: string;
             /**
              * @description Human-readable failure description. Present only when status=failed.
              * @example Transaction reverted
              */
-            failure_message?: string;
+            last_error_message?: string;
         };
         /** @description An unsigned EIP-1559 transaction ready for the payee to sign. */
         PrepareTransactionResponse: {
@@ -986,8 +874,6 @@ export interface components {
             transaction_hash?: components["schemas"]["Bytes32"];
             /** @example 1000000 */
             amount?: string | null;
-            /** @example 0 */
-            fee_amount: string;
             /** @example 12345678 */
             block_number?: number | null;
             /** @example 0x08c379a0... */
@@ -1057,8 +943,6 @@ export interface components {
             status: "submitted" | "confirmed" | "failed";
             /** @description Token amount processed. `null` until confirmed. */
             amount?: components["schemas"]["Uint256String"] | null;
-            /** @description Protocol fee deducted. `"0"` until confirmed. */
-            fee_amount: components["schemas"]["Uint256String"];
             /** @description Block number in which the transaction was mined. `null` until confirmed. */
             block_number?: number | null;
             /**
@@ -2013,44 +1897,6 @@ export interface operations {
             };
         };
     };
-    getSyncInfo: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sync info including start blocks per chain. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        start_blocks?: {
-                            /** @example 8453 */
-                            chain_id?: number;
-                            /** @example 12345678 */
-                            start_block?: number;
-                            /** @example deployment */
-                            reason?: string;
-                        }[];
-                    };
-                };
-            };
-            /** @description Invalid or missing HMAC signature. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
     listWallets: {
         parameters: {
             query?: {
@@ -2128,43 +1974,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Error"];
                 };
-            };
-        };
-    };
-    getSyncTransactions: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Up to 100 submitted unconfirmed transactions. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        transactions?: {
-                            transaction_hash?: components["schemas"]["Bytes32"];
-                            /** @description rail0_id of the payment. */
-                            payment_id?: components["schemas"]["Bytes32"];
-                            /** @example 8453 */
-                            chain_id?: number;
-                            /** @example authorize */
-                            operation?: string;
-                        }[];
-                    };
-                };
-            };
-            /** @description Invalid HMAC signature. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

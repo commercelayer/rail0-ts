@@ -1,7 +1,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { describe, expect, it } from 'vitest'
-import type { Payment, TokenDomain } from '../src/index.js'
+import type { PaymentConfig, TokenDomain } from '../src/resources/types.js'
 import { signAuthorize, signCharge, signTransferWithAuthorization } from '../src/signing.js'
 
 // ================================================================
@@ -24,15 +24,13 @@ const TOKEN_DOMAIN: TokenDomain = {
   verifyingContract: TOKEN_ADDRESS,
 }
 
-const PAYMENT: Payment = {
+const PAYMENT: PaymentConfig = {
   payer: PAYER,
   payee: '0x2222222222222222222222222222222222222222',
   token: TOKEN_ADDRESS,
-  maxAmount: '100000000',
-  authorizationExpiry: 9999999999,
-  refundExpiry: 9999999999 + 60 * 60 * 24 * 7,
-  feeBps: 0,
-  feeReceiver: '0x0000000000000000000000000000000000000000',
+  amount: '50000000',
+  authorization_expiry: 9999999999,
+  refund_expiry: 9999999999 + 60 * 60 * 24 * 7,
 }
 
 const NONCE = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const
@@ -212,11 +210,10 @@ describe('signTransferWithAuthorization', () => {
 // ================================================================
 
 describe('signAuthorize', () => {
-  it('returns a valid signature using payment.authorizationExpiry as default validBefore', () => {
+  it('returns a valid signature using payment.authorization_expiry as default validBefore', () => {
     const sig = signAuthorize({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 50_000_000n,
       nonce: NONCE,
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
@@ -231,15 +228,14 @@ describe('signAuthorize', () => {
     const manual = signTransferWithAuthorization(PRIVATE_KEY, TOKEN_DOMAIN, {
       from: PAYMENT.payer,
       to: CONTRACT_ADDRESS,
-      value: 50_000_000n,
+      value: BigInt(PAYMENT.amount),
       validAfter: 0n,
-      validBefore: BigInt(PAYMENT.authorizationExpiry),
+      validBefore: BigInt(PAYMENT.authorization_expiry),
       nonce: NONCE,
     })
     const auto = signAuthorize({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 50_000_000n,
       nonce: NONCE,
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
@@ -256,7 +252,6 @@ describe('signCharge', () => {
     const sig = signCharge({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 25_000_000n,
       nonce: chargeNonce,
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
@@ -270,7 +265,6 @@ describe('signCharge', () => {
     const authSig = signAuthorize({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 50_000_000n,
       nonce: NONCE,
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
@@ -278,7 +272,6 @@ describe('signCharge', () => {
     const chargeSig = signCharge({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 50_000_000n,
       nonce: '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,

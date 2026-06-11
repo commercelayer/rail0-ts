@@ -3,7 +3,7 @@ import { Rail0Client } from '../src/client.js'
 import { Rail0ApiError } from '../src/core/error.js'
 import { debugLogger } from '../src/core/http.js'
 import type { LogEntry } from '../src/core/http.js'
-import type { Payment } from '../src/resources/types.js'
+import type { PaymentConfig } from '../src/resources/types.js'
 
 // Known test key (Hardhat account #0)
 const TEST_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
@@ -11,15 +11,13 @@ const TEST_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
 
 const BASE_URL = 'http://localhost:3000'
 
-const mockPayment: Payment = {
+const mockPayment: PaymentConfig = {
   payer: '0x1111111111111111111111111111111111111111',
   payee: '0x2222222222222222222222222222222222222222',
   token: '0x3333333333333333333333333333333333333333',
-  maxAmount: '1000000',
-  authorizationExpiry: 9999999999,
-  refundExpiry: 9999999999,
-  feeBps: 0,
-  feeReceiver: '0x0000000000000000000000000000000000000000',
+  amount: '1000000',
+  authorization_expiry: 9999999999,
+  refund_expiry: 9999999999,
 }
 
 const mockSig = {
@@ -73,20 +71,18 @@ describe('Rail0Client', () => {
   describe('payments.authorize', () => {
     it('posts to the correct endpoint and returns tx', async () => {
       const mockTx = {
-        transactionHash: `0x${'ff'.repeat(32)}`,
-        status: 'pending',
+        rail0_id: mockPaymentId,
+        status: 'submitting',
       }
       const spy = vi
         .spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(new Response(JSON.stringify(mockTx), { status: 202 }))
 
       const result = await client.payments.authorize(mockPaymentId, {
-        payment: mockPayment,
-        amount: '1000000',
-        ...mockSig,
+        signed_transaction: '0x02f8ab',
       })
 
-      expect(result.status).toBe('pending')
+      expect(result.status).toBe('submitting')
       expect(spy).toHaveBeenCalledWith(
         `${BASE_URL}/payments/${mockPaymentId}/authorize`,
         expect.objectContaining({ method: 'POST' }),
@@ -94,29 +90,34 @@ describe('Rail0Client', () => {
     })
   })
 
-  describe('payments.hash', () => {
-    it('posts the payment config and returns a hash', async () => {
-      const mockHash = { hash: `0x${'cc'.repeat(32)}` }
+  describe('payments.list', () => {
+    it('calls GET /payments and returns paginated data', async () => {
+      const mockList = { data: [], meta: { page: 1, per_page: 20, total: 0 } }
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify(mockHash), { status: 200 }),
+        new Response(JSON.stringify(mockList), { status: 200 }),
       )
 
-      const result = await client.payments.hash(mockPayment)
+      const result = await client.payments.list()
 
-      expect(result.hash).toMatch(/^0x[0-9a-f]{64}$/i)
+      expect(result.data).toBeInstanceOf(Array)
+      expect(result.meta.page).toBe(1)
     })
   })
 
-  describe('tokens.isAccepted', () => {
-    it('returns token status', async () => {
+  describe('tokens.list', () => {
+    it('returns an array of catalog tokens', async () => {
       const tokenAddress = mockPayment.token
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify({ address: tokenAddress, accepted: true }), { status: 200 }),
+        new Response(
+          JSON.stringify([{ address: tokenAddress, symbol: 'USDC', chain_id: 8453, chain_slug: 'base', decimals: 6 }]),
+          { status: 200 },
+        ),
       )
 
-      const result = await client.tokens.isAccepted(tokenAddress)
+      const result = await client.tokens.list()
 
-      expect(result.accepted).toBe(true)
+      expect(Array.isArray(result)).toBe(true)
+      expect(result[0].address).toBe(tokenAddress)
     })
   })
 
@@ -307,11 +308,11 @@ describe('Rail0Client', () => {
     it('includes requestBody on POST', async () => {
       const logger = vi.fn<(entry: LogEntry) => void>()
       client = new Rail0Client({ baseUrl: BASE_URL, logger })
-      const mockTx = { transactionHash: `0x${'ff'.repeat(32)}`, status: 'pending' }
+      const mockTx = { rail0_id: mockPaymentId, status: 'submitting' }
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(JSON.stringify(mockTx), { status: 202 }),
       )
-      const params = { payment: mockPayment, amount: '1000000', ...mockSig }
+      const params = { signed_transaction: '0x02f8ab' }
 
       await client.payments.authorize(mockPaymentId, params)
 

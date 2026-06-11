@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Rail0Client } from '../src/index.js'
-import type { Payment } from '../src/index.js'
+import type { PaymentConfig } from '../src/resources/types.js'
 
 const BASE_URL = 'http://localhost:3000'
 
@@ -8,27 +8,17 @@ const PAYMENT_ID = '0x1111111111111111111111111111111111111111111111111111111111
 const PAYER = '0xBuyerAddress000000000000000000000000000000' as const
 const PAYEE = '0xMerchantAddress0000000000000000000000000000' as const
 
-const PAYMENT: Payment = {
+const PAYMENT: PaymentConfig = {
   payer: PAYER,
   payee: PAYEE,
   token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  maxAmount: '100000000',
-  authorizationExpiry: 9999999999,
-  refundExpiry: 9999999999,
-  feeBps: 0,
-  feeReceiver: '0x0000000000000000000000000000000000000000',
-}
-
-const SIG = {
-  v: 27 as const,
-  r: '0x1111111111111111111111111111111111111111111111111111111111111111' as const,
-  s: '0x2222222222222222222222222222222222222222222222222222222222222222' as const,
+  amount: '100000000',
+  authorization_expiry: 9999999999,
+  refund_expiry: 9999999999,
 }
 
 const TX_HASH = `0x${'ab'.repeat(32)}`
-const NONCE = `0x${'cc'.repeat(32)}`
 const CONFIG_HASH = `0x${'ff'.repeat(32)}`
-const DOMAIN_SEP = `0x${'ee'.repeat(32)}`
 
 function client() {
   return new Rail0Client({ baseUrl: BASE_URL })
@@ -47,119 +37,129 @@ afterEach(() => {
 // ================================================================
 
 describe('payments', () => {
-  it('GET /payments/:paymentId returns state and configHash', async () => {
+  it('GET /payments/:rail0_id returns status and config fields', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
       ok({
-        state: { exists: true, capturableAmount: '50000000', refundableAmount: '0' },
-        configHash: CONFIG_HASH,
+        rail0_id: PAYMENT_ID,
+        status: 'authorized',
+        mode: 'authorize',
+        amount: '50000000',
+        payer: PAYER,
+        payee: PAYEE,
+        token: PAYMENT.token,
+        chain_id: 8453,
+        authorization_expiry: 9999999999,
+        refund_expiry: 9999999999,
+        config_hash: CONFIG_HASH,
       }),
     )
     const res = await client().payments.get(PAYMENT_ID)
 
     expect(res).toMatchObject({
-      state: {
-        exists: expect.any(Boolean),
-        capturableAmount: expect.any(String),
-        refundableAmount: expect.any(String),
-      },
-      configHash: expect.stringMatching(/^0x[0-9a-f]{64}$/i),
+      rail0_id: expect.any(String),
+      status: expect.any(String),
+      mode: expect.any(String),
     })
   })
 
-  it('POST authorize returns a pending transaction', async () => {
+  it('POST authorize returns a submitting transaction', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ transactionHash: TX_HASH, status: 'pending' }),
+      ok({ rail0_id: PAYMENT_ID, status: 'submitting' }),
     )
     const res = await client().payments.authorize(PAYMENT_ID, {
-      payment: PAYMENT,
-      amount: '50000000',
-      ...SIG,
+      signed_transaction: '0x02f8ab',
     })
 
-    expect(res.transactionHash).toMatch(/^0x[0-9a-f]{64}$/i)
-    expect(['pending', 'confirmed', 'failed']).toContain(res.status)
+    expect(res.rail0_id).toBe(PAYMENT_ID)
+    expect(res.status).toBe('submitting')
   })
 
-  it('POST charge returns a pending transaction', async () => {
+  it('POST charge returns a submitting transaction', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ transactionHash: TX_HASH, status: 'pending' }),
+      ok({ rail0_id: PAYMENT_ID, status: 'submitting' }),
     )
     const res = await client().payments.charge(PAYMENT_ID, {
-      payment: PAYMENT,
-      amount: '50000000',
-      ...SIG,
+      signed_transaction: '0x02f8ab',
     })
 
-    expect(res.transactionHash).toMatch(/^0x[0-9a-f]{64}$/i)
+    expect(res.rail0_id).toBe(PAYMENT_ID)
   })
 
-  it('POST capture returns a pending transaction', async () => {
+  it('POST capture returns a submitting transaction', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ transactionHash: TX_HASH, status: 'pending' }),
+      ok({ rail0_id: PAYMENT_ID, status: 'submitting' }),
     )
     const res = await client().payments.capture(PAYMENT_ID, {
-      payment: PAYMENT,
-      amount: '50000000',
+      signed_transaction: '0x02f8ab',
     })
 
-    expect(res.transactionHash).toMatch(/^0x[0-9a-f]{64}$/i)
+    expect(res.rail0_id).toBe(PAYMENT_ID)
   })
 
-  it('POST void returns a pending transaction', async () => {
+  it('POST void returns a submitting transaction', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ transactionHash: TX_HASH, status: 'pending' }),
+      ok({ rail0_id: PAYMENT_ID, status: 'submitting' }),
     )
     const res = await client().payments.void(PAYMENT_ID, {
-      payment: PAYMENT,
+      signed_transaction: '0x02f8ab',
     })
 
-    expect(res.transactionHash).toMatch(/^0x[0-9a-f]{64}$/i)
+    expect(res.rail0_id).toBe(PAYMENT_ID)
   })
 
-  it('POST release returns a pending transaction', async () => {
+  it('POST release returns a submitting transaction', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ transactionHash: TX_HASH, status: 'pending' }),
+      ok({ rail0_id: PAYMENT_ID, status: 'submitting' }),
     )
     const res = await client().payments.release(PAYMENT_ID, {
-      payment: PAYMENT,
+      signed_transaction: '0x02f8ab',
     })
 
-    expect(res.transactionHash).toMatch(/^0x[0-9a-f]{64}$/i)
+    expect(res.rail0_id).toBe(PAYMENT_ID)
   })
 
-  it('POST refund returns a pending transaction', async () => {
+  it('POST refund returns a submitting transaction', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ transactionHash: TX_HASH, status: 'pending' }),
+      ok({ rail0_id: PAYMENT_ID, status: 'submitting' }),
     )
     const res = await client().payments.refund(PAYMENT_ID, {
-      payment: PAYMENT,
-      amount: '50000000',
+      signed_transaction: '0x02f8ab',
     })
 
-    expect(res.transactionHash).toMatch(/^0x[0-9a-f]{64}$/i)
+    expect(res.rail0_id).toBe(PAYMENT_ID)
   })
 
-  it('GET authorize-nonce returns a bytes32', async () => {
-    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(ok({ nonce: NONCE }))
-    const res = await client().payments.authorizeNonce(PAYMENT_ID, PAYER)
-
-    expect(res.nonce).toMatch(/^0x[0-9a-f]{64}$/i)
-  })
-
-  it('GET charge-nonce returns a bytes32', async () => {
-    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(ok({ nonce: NONCE }))
-    const res = await client().payments.chargeNonce(PAYMENT_ID, PAYER)
-
-    expect(res.nonce).toMatch(/^0x[0-9a-f]{64}$/i)
-  })
-
-  it('POST /payments/hash returns a bytes32 digest', async () => {
+  it('GET /payments returns paginated list', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ hash: `0x${'dd'.repeat(32)}` }),
+      ok({ data: [], meta: { page: 1, per_page: 20, total: 0 } }),
     )
-    const res = await client().payments.hash(PAYMENT)
+    const res = await client().payments.list()
 
-    expect(res.hash).toMatch(/^0x[0-9a-f]{64}$/i)
+    expect(res.data).toBeInstanceOf(Array)
+    expect(typeof res.meta.total).toBe('number')
+  })
+
+  it('POST /payments/hash returns a bytes32 digest via create', async () => {
+    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
+      ok({
+        rail0_id: PAYMENT_ID,
+        config_hash: `0x${'dd'.repeat(32)}`,
+        payment: PAYMENT,
+        chain_id: 8453,
+        rail0_contract: '0x1234567890123456789012345678901234567890',
+        signing_payload: { domain: {}, types: {}, primaryType: 'TransferWithAuthorization', message: {} },
+      }),
+    )
+    const res = await client().payments.create({
+      chain_id: 8453,
+      mode: 'authorize',
+      amount: PAYMENT.amount,
+      token: PAYMENT.token,
+      payer: PAYMENT.payer,
+      payee: PAYMENT.payee,
+    })
+
+    expect(res.config_hash).toMatch(/^0x[0-9a-f]{64}$/i)
   })
 })
 
@@ -168,37 +168,14 @@ describe('payments', () => {
 // ================================================================
 
 describe('tokens', () => {
-  it('GET /tokens/:address returns acceptance status', async () => {
+  it('GET /tokens returns array of catalog tokens', async () => {
     const token = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const
     vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ address: token, accepted: true }),
+      ok([{ address: token, symbol: 'USDC', chain_id: 8453, chain_slug: 'base', decimals: 6 }]),
     )
-    const res = await client().tokens.isAccepted(token)
+    const res = await client().tokens.list()
 
-    expect(res.address).toBe(token)
-    expect(typeof res.accepted).toBe('boolean')
-  })
-})
-
-// ================================================================
-//  Utils
-// ================================================================
-
-describe('utils', () => {
-  it('GET /domain-separator returns a bytes32', async () => {
-    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(
-      ok({ domainSeparator: DOMAIN_SEP }),
-    )
-    const res = await client().utils.domainSeparator()
-
-    expect(res.domainSeparator).toMatch(/^0x[0-9a-f]{64}$/i)
-  })
-
-  it('GET /version returns a positive integer', async () => {
-    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(ok({ version: 1 }))
-    const res = await client().utils.version()
-
-    expect(Number.isInteger(res.version)).toBe(true)
-    expect(res.version).toBeGreaterThan(0)
+    expect(Array.isArray(res)).toBe(true)
+    expect(res[0].address).toBe(token)
   })
 })
