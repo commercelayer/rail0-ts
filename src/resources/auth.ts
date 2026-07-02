@@ -11,6 +11,8 @@ export interface AuthResponse {
   token: string
   address: string
   accountId: string
+  /** The account's human-readable name, for client display. */
+  name: string
   expiresAt: string
 }
 
@@ -98,7 +100,7 @@ export class AuthResource {
   /** POST /auth — submit a signed SIWE message and receive a JWT. */
   verify(message: string, signature: string): Promise<AuthResponse> {
     return this.http
-      .post<{ token: string; address: string; account_id: string; expires_at: string }>('/auth', {
+      .post<{ token: string; address: string; account_id: string; name: string; expires_at: string }>('/auth', {
         message,
         signature,
       })
@@ -106,6 +108,7 @@ export class AuthResource {
         token: r.token,
         address: r.address,
         accountId: r.account_id,
+        name: r.name,
         expiresAt: r.expires_at,
       }))
   }
