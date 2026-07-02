@@ -195,9 +195,6 @@ export interface Payment {
   payer: Address
   payee: Address
   token: Address
-  /** Token metadata from the gateway's in-memory Catalog, for formatting amounts. */
-  token_decimals?: number | null
-  token_symbol?: string | null
   authorization_expiry: number
   refund_expiry: number
   disputed?: boolean
