@@ -78,6 +78,7 @@ export type {
   Payment,
   PaymentDetail,
   Transaction,
+  TransactionGas,
   Dispute,
   Wallet,
   WalletTokenHolding,
