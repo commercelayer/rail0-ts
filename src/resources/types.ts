@@ -170,6 +170,19 @@ export interface Transaction {
   created_at?: string
   updated_at?: string
 }
+export interface TransactionGas {
+  tx_hash: string
+  payment_id: string
+  chain_id: number
+  event_type: string
+  block_number: string
+  block_timestamp: number
+  gas_limit: string
+  gas_used: string
+  effective_gas_price: string
+  gas_cost: string
+  base_fee_per_gas?: string | null
+}
 export interface Dispute {
   id?: string
   payment_id?: string

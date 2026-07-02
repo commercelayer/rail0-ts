@@ -229,6 +229,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payments/{id}/transactions/{tx_hash}/gas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                tx_hash: string;
+            };
+            cookie?: never;
+        };
+        /** Get on-chain gas data for a payment transaction (proxied from the indexer) */
+        get: operations["getPaymentTransactionGas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payments/{id}/{operation}/prepare": {
         parameters: {
             query?: never;
@@ -806,6 +826,20 @@ export interface components {
             transactions?: components["schemas"]["Transaction"][];
             /** @description EIP-3009 payload the payer must sign; present only when the payment is unsigned (may be null on transient RPC failure). */
             signing_payload?: unknown;
+        };
+        /** @description On-chain gas/receipt data for a confirmed transaction, proxied from the indexer. */
+        TransactionGas: {
+            tx_hash?: string;
+            payment_id?: string;
+            chain_id?: number;
+            event_type?: string;
+            block_number?: string;
+            block_timestamp?: number;
+            gas_limit?: string;
+            gas_used?: string;
+            effective_gas_price?: string;
+            gas_cost?: string;
+            base_fee_per_gas?: string | null;
         };
         Transaction: {
             /** Format: uuid */
@@ -1494,6 +1528,37 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    getPaymentTransactionGas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                tx_hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description On-chain gas data for the transaction. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionGas"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description The indexer is unreachable or returned an error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     preparePaymentOperation: {

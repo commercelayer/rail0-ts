@@ -230,6 +230,19 @@ export interface Transaction {
   created_at?: string
   updated_at?: string
 }
+export interface TransactionGas {
+  tx_hash: string
+  payment_id: string
+  chain_id: number
+  event_type: string
+  block_number: string
+  block_timestamp: number
+  gas_limit: string
+  gas_used: string
+  effective_gas_price: string
+  gas_cost: string
+  base_fee_per_gas?: string | null
+}
 export interface Dispute {
   id?: string
   payment_id?: string
@@ -398,6 +411,7 @@ import type {
   PrepareRequest,
   SubmitTransactionRequest,
   Transaction,
+  TransactionGas,
   TransactionOperation,
 } from './types.js'
 
@@ -442,6 +456,11 @@ export class PaymentsResource {
   /** List a payment's on-chain transactions. */
   transactions(id: Bytes32, params?: ListTransactionsParams): Promise<PaginatedResponse<Transaction>> {
     return this.http.getPaginated(\`/payments/\${id}/transactions\${buildQuery(params)}\`)
+  }
+
+  /** On-chain gas data for one of the payment's transactions, proxied from the indexer. */
+  transactionGas(id: Bytes32, txHash: Bytes32): Promise<TransactionGas> {
+    return this.http.get(\`/payments/\${id}/transactions/\${txHash}/gas\`)
   }
 
   /** Store the payer's EIP-3009 signature (moves the payment to \`signed\`). */
