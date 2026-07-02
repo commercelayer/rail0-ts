@@ -162,6 +162,13 @@ export interface Transaction {
   transaction_hash?: string | null
   amount?: Uint256String | null
   block_number?: number | null
+  /** On-chain gas/receipt data, mirrored from the indexer on confirm; null until confirmed. */
+  gas_used?: Uint256String | null
+  gas_limit?: Uint256String | null
+  effective_gas_price?: Uint256String | null
+  base_fee_per_gas?: Uint256String | null
+  /** Derived (gas_used * effective_gas_price); null until confirmed. */
+  gas_cost?: Uint256String | null
   /** Present for refund prepare phase-1: the EIP-3009 payload for the payee to sign. */
   signing_payload?: SigningPayload | null
   pending_at?: string | null
@@ -169,19 +176,6 @@ export interface Transaction {
   confirmed_at?: string | null
   created_at?: string
   updated_at?: string
-}
-export interface TransactionGas {
-  tx_hash: string
-  payment_id: string
-  chain_id: number
-  event_type: string
-  block_number: string
-  block_timestamp: number
-  gas_limit: string
-  gas_used: string
-  effective_gas_price: string
-  gas_cost: string
-  base_fee_per_gas?: string | null
 }
 export interface Dispute {
   id?: string

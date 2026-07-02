@@ -11,7 +11,6 @@ import type {
   PrepareRequest,
   SubmitTransactionRequest,
   Transaction,
-  TransactionGas,
   TransactionOperation,
 } from './types.js'
 
@@ -56,11 +55,6 @@ export class PaymentsResource {
   /** List a payment's on-chain transactions. */
   transactions(id: Bytes32, params?: ListTransactionsParams): Promise<PaginatedResponse<Transaction>> {
     return this.http.getPaginated(`/payments/${id}/transactions${buildQuery(params)}`)
-  }
-
-  /** On-chain gas data for one of the payment's transactions, proxied from the indexer. */
-  transactionGas(id: Bytes32, txHash: Bytes32): Promise<TransactionGas> {
-    return this.http.get(`/payments/${id}/transactions/${txHash}/gas`)
   }
 
   /** Store the payer's EIP-3009 signature (moves the payment to `signed`). */
