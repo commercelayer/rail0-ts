@@ -658,17 +658,15 @@ export interface components {
             /** Format: date-time */
             timestamp?: string;
         };
+        /** @description A single-use SIWE nonce to embed in the sign-in message. */
         Nonce: {
-            /** Format: uuid */
-            id?: string;
-            value?: string;
-            /** Format: date-time */
-            expires_at?: string;
-            used?: boolean;
-            /** Format: date-time */
-            created_at?: string;
-            /** Format: date-time */
-            updated_at?: string;
+            /** @description The nonce value to place in the SIWE message's `Nonce:` field. */
+            nonce: string;
+            /**
+             * Format: date-time
+             * @description When the nonce expires and can no longer be used.
+             */
+            expires_at: string;
         };
         /** @description Issued after a successful SIWE verification. */
         Session: {
@@ -1051,7 +1049,12 @@ export interface operations {
     };
     listBlockchains: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Filter by network type. */
+                network_type?: "testnet" | "mainnet";
+                /** @description Filter by native symbol (case-insensitive, e.g. ETH, USDC, CELO). */
+                symbol?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1074,6 +1077,8 @@ export interface operations {
             query?: {
                 /** @description EVM chain ID to filter tokens. */
                 chain_id?: number;
+                /** @description Token symbol to filter by (case-insensitive, e.g. USDC). */
+                symbol?: string;
             };
             header?: never;
             path?: never;
@@ -1099,12 +1104,16 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                sort?: components["parameters"]["Sort"];
                 /** @description Restrict nested tokens to this chain ID (does not hide wallets). */
                 chain_id?: number;
                 /** @description Restrict nested tokens to this symbol (does not hide wallets). */
                 token_symbol?: string;
                 /** @description Filter wallets by active status. */
                 active?: boolean;
+                /** @description Restrict nested token holdings to the default one (does not hide wallets). */
+                default?: boolean;
             };
             header?: never;
             path: {
@@ -1294,6 +1303,18 @@ export interface operations {
                 token?: string;
                 /** @description Filter by the logical on-chain payment id (0x…). */
                 rail0_id?: string;
+                /** @description Filter by the payment's chain (resolved via its contract). */
+                chain_id?: number;
+                /** @description Filter by whether an open dispute exists. */
+                disputed?: boolean;
+                /** @description Minimum amount in token base units (inclusive). */
+                min_amount?: string;
+                /** @description Maximum amount in token base units (inclusive). */
+                max_amount?: string;
+                /** @description Only payments created at/after this time (ISO-8601). */
+                created_from?: string;
+                /** @description Only payments created at/before this time (ISO-8601). */
+                created_to?: string;
             };
             header?: never;
             path?: never;
@@ -1449,7 +1470,7 @@ export interface operations {
                 per_page?: components["parameters"]["PerPage"];
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
                 sort?: components["parameters"]["Sort"];
-                operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund" | "dispute" | "close_dispute";
+                operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
                 status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
             };
             header?: never;
@@ -1731,7 +1752,16 @@ export interface operations {
     };
     listDisputes: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Filter by dispute status. */
+                status?: "open" | "closed";
+            };
             header?: never;
             path: {
                 id: string;
@@ -2007,6 +2037,14 @@ export interface operations {
                 sort?: components["parameters"]["Sort"];
                 /** @description Filter by delivery status. */
                 status?: "pending" | "delivered" | "failed";
+                /** @description Filter by event topic. */
+                topic?: components["schemas"]["WebhookTopic"];
+                /** @description Filter by the payment the delivery is for. */
+                payment_id?: string;
+                /** @description Only deliveries at/after this time (ISO-8601). */
+                since?: string;
+                /** @description Only deliveries at/before this time (ISO-8601). */
+                until?: string;
             };
             header?: never;
             path: {

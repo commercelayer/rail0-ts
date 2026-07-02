@@ -206,8 +206,7 @@ describe('Rail0Client', () => {
       it('returns nonce and expiresAt from POST /nonces', async () => {
         vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
           new Response(
-            // The gateway returns the nonce under `value` (the DB column).
-            JSON.stringify({ value: 'abc123', expires_at: '2099-01-01T00:00:00Z' }),
+            JSON.stringify({ nonce: 'abc123', expires_at: '2099-01-01T00:00:00Z' }),
             { status: 200 },
           ),
         )
@@ -247,7 +246,7 @@ describe('Rail0Client', () => {
 
     describe('auth.login', () => {
       it('makes two fetch calls, sends valid EIP-4361 message with signature, returns token', async () => {
-        const nonceResponse = { value: 'testNonce123', expires_at: '2099-01-01T00:00:00Z' }
+        const nonceResponse = { nonce: 'testNonce123', expires_at: '2099-01-01T00:00:00Z' }
         const authResponse = {
           token: 'login-jwt',
           address: TEST_ADDRESS,
