@@ -90,9 +90,13 @@ export class AuthResource {
 
   /** POST /auth/nonces — issue a single-use SIWE nonce. */
   getNonce(): Promise<{ nonce: string; expiresAt: string }> {
+    // The gateway returns the nonce record with the value under `value` (the DB
+    // column), not `nonce` — see the Nonce schema in the OpenAPI spec. Reading
+    // the wrong key yields an undefined nonce, which the SIWE message then
+    // embeds and the gateway rejects with "Nonce not found".
     return this.http
-      .post<{ nonce: string; expires_at: string }>('/auth/nonces', {})
-      .then((r) => ({ nonce: r.nonce, expiresAt: r.expires_at }))
+      .post<{ value: string; expires_at: string }>('/auth/nonces', {})
+      .then((r) => ({ nonce: r.value, expiresAt: r.expires_at }))
   }
 
   /** POST /auth — submit a signed SIWE message and receive a JWT. */
@@ -138,9 +142,6 @@ export class AuthResource {
     })
     const messageStr = siweMessage.prepareMessage()
     const signature = personalSign(privateKeyHex, messageStr)
-    console.log('[sdk/login] address:', address)
-    console.log('[sdk/login] message:\n', messageStr)
-    console.log('[sdk/login] signature:', signature)
     return this.verify(messageStr, signature)
   }
 }
