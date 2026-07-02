@@ -70,7 +70,7 @@ describe('payments', () => {
       signed_transaction: '0x02f8ab',
     })
 
-    expect(res.rail0_id).toBe(PAYMENT_ID)
+    expect(res.status).toBe('submitting')
     expect(res.status).toBe('submitting')
   })
 
@@ -82,7 +82,7 @@ describe('payments', () => {
       signed_transaction: '0x02f8ab',
     })
 
-    expect(res.rail0_id).toBe(PAYMENT_ID)
+    expect(res.status).toBe('submitting')
   })
 
   it('POST capture returns a submitting transaction', async () => {
@@ -93,7 +93,7 @@ describe('payments', () => {
       signed_transaction: '0x02f8ab',
     })
 
-    expect(res.rail0_id).toBe(PAYMENT_ID)
+    expect(res.status).toBe('submitting')
   })
 
   it('POST void returns a submitting transaction', async () => {
@@ -104,7 +104,7 @@ describe('payments', () => {
       signed_transaction: '0x02f8ab',
     })
 
-    expect(res.rail0_id).toBe(PAYMENT_ID)
+    expect(res.status).toBe('submitting')
   })
 
   it('POST release returns a submitting transaction', async () => {
@@ -115,7 +115,7 @@ describe('payments', () => {
       signed_transaction: '0x02f8ab',
     })
 
-    expect(res.rail0_id).toBe(PAYMENT_ID)
+    expect(res.status).toBe('submitting')
   })
 
   it('POST refund returns a submitting transaction', async () => {
@@ -126,7 +126,7 @@ describe('payments', () => {
       signed_transaction: '0x02f8ab',
     })
 
-    expect(res.rail0_id).toBe(PAYMENT_ID)
+    expect(res.status).toBe('submitting')
   })
 
   it('GET /payments returns paginated list', async () => {
@@ -176,6 +176,6 @@ describe('tokens', () => {
     const res = await client().tokens.list()
 
     expect(Array.isArray(res)).toBe(true)
-    expect(res[0].address).toBe(token)
+    expect(res[0]?.address).toBe(token)
   })
 })

@@ -1,16 +1,13 @@
 export interface paths {
-    "/version": {
+    "/health": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Get API version
-         * @description Returns the current RAIL0 API and contract version.
-         */
-        get: operations["getVersion"];
+        /** Liveness/readiness check (incl. DB connectivity) */
+        get: operations["getHealth"];
         put?: never;
         post?: never;
         delete?: never;
@@ -28,11 +25,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Issue a SIWE nonce
-         * @description Issues a single-use nonce to embed in a SIWE (EIP-4361) message. The nonce is stored server-side and expires after a short TTL.
-         */
-        post: operations["issueNonce"];
+        /** Issue a single-use SIWE nonce */
+        post: operations["createNonce"];
         delete?: never;
         options?: never;
         head?: never;
@@ -48,11 +42,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Authenticate via SIWE
-         * @description Verify an EIP-4361 SIWE message and its secp256k1 signature. Returns a JWT for use in subsequent authenticated requests.
-         */
-        post: operations["authenticate"];
+        /** Verify a signed SIWE message and return a JWT */
+        post: operations["verifySiwe"];
         delete?: never;
         options?: never;
         head?: never;
@@ -66,10 +57,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List supported blockchains
-         * @description Returns all blockchain networks supported by this RAIL0 deployment.
-         */
+        /** List active blockchains */
         get: operations["listBlockchains"];
         put?: never;
         post?: never;
@@ -86,10 +74,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List supported tokens
-         * @description Returns all ERC-20 tokens accepted by this RAIL0 deployment.
-         */
+        /** List active tokens, optionally filtered by chain */
         get: operations["listTokens"];
         put?: never;
         post?: never;
@@ -99,18 +84,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/accounts/{account_id}/payment-methods": {
+    "/accounts/{account_id}/wallets": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        /** List the account's wallets, each with its token holdings nested */
+        get: operations["listAccountWallets"];
+        put?: never;
+        /** Add a wallet to the account */
+        post: operations["createWallet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. The address is unique per account, so either resolves to the same wallet. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a single wallet (by id or address) */
+        get: operations["getWallet"];
+        put?: never;
+        post?: never;
+        /** Deactivate a wallet (soft delete) */
+        delete: operations["deactivateWallet"];
+        options?: never;
+        head?: never;
+        /** Update a wallet label or active status */
+        patch: operations["updateWallet"];
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets/{id}/balances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+            };
             cookie?: never;
         };
         /**
-         * List accepted payment methods for a account
-         * @description Returns all active wallet configurations for the given account, enriched with chain and token details. Called by the buyer's frontend before `POST /payments` to present available payment options. The `default` flag identifies the pre-selected method; the buyer may confirm it or choose another. The response is stable and safe to cache client-side — it changes only when the account updates their configuration.
+         * Get the wallet's on-chain balances (native + tokens)
+         * @description Reads the wallet address's on-chain balances — native gas token + active ERC-20 tokens — across all active chains, or one chain via `chain_id`. Protected: only the wallet's own account may read it. Chains are read in parallel; one whose RPC is unreachable is returned with an `error` instead of failing the whole response.
          */
-        get: operations["getPaymentMethods"];
+        get: operations["getWalletBalances"];
         put?: never;
         post?: never;
         delete?: never;
@@ -126,15 +158,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List payments
-         * @description Returns a paginated list of payments where the authenticated address is the payer or payee. Requires a valid JWT.
-         */
+        /** List payments for the authenticated wallet (payer or payee) */
         get: operations["listPayments"];
         put?: never;
         /**
-         * Create a payment intent
-         * @description Called by the payer. Creates a payment record and returns the EIP-712 typed-data payload for the payer to sign immediately. The `signing_payload` contains `domain`, `types`, and `message` in standard EIP-712 format: wallet users pass it verbatim to `eth_signTypedData_v4`; backends with direct key access compute the same hash with any EIP-712 library and sign it with secp256k1 — the result is identical. The `mode` field determines the flow: `authorize` places funds in escrow for later capture; `charge` is a one-shot authorize+capture with no escrow window. The nonce in the `signing_payload` is derived using the corresponding prefix (`RAIL0.AUTHORIZE` or `RAIL0.CHARGE`), so a signature for one mode cannot be reused for the other. The resulting signature must then be submitted to `PUT /payments/{rail0_id}/sign`, after which the payee prepares the on-chain transaction via `POST /payments/{rail0_id}/authorize/prepare` or `POST /payments/{rail0_id}/charge/prepare`.
+         * Create a payment
+         * @description Idempotent on the `Idempotency-Key` header: when a payment already exists for the key, the existing record is returned with 200 instead of 201.
          */
         post: operations["createPayment"];
         delete?: never;
@@ -143,17 +172,16 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}": {
+    "/payments/{id}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
-        /**
-         * Get current payment state
-         * @description Returns the full payment record from the database, plus live on-chain amounts when the payment is in an active on-chain state (`authorized`, `captured`, `voided`, `released`, `charged`, `refunded`). Clients should poll this endpoint after calling a submit endpoint — the `status` field progresses from `submitting` to the target state (e.g. `authorized`) once the background worker confirms the transaction. If the worker encounters an error, `status` becomes `failed` and the `last_error_code` / `last_error_message` fields explain why.
-         */
+        /** Get a payment with embedded transactions and optional signing payload */
         get: operations["getPayment"];
         put?: never;
         post?: never;
@@ -163,17 +191,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/transactions": {
+    "/payments/{id}/sign": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
-        /**
-         * List transactions for a payment
-         * @description Returns a paginated list of on-chain transaction attempts associated with a payment. Each operation (authorize, capture, refund, etc.) produces one transaction record.
-         */
+        get?: never;
+        /** Store the payer's signature on a payment */
+        put: operations["signPayment"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payments/{id}/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List a payment's transactions */
         get: operations["listPaymentTransactions"];
         put?: never;
         post?: never;
@@ -183,284 +229,153 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/sign": {
+    "/payments/{id}/{operation}/prepare": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Submit the payer's authorization signature
-         * @description Called by the payer after signing the `signing_payload` returned by `POST /payments`. Stores the EIP-3009 signature server-side so that the payee can later trigger on-chain submission via `POST /payments/{rail0_id}/authorize/prepare` without needing any further input from the payer.
-         */
-        put: operations["sign"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/payments/{rail0_id}/authorize/prepare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
+            path: {
+                id: string;
+                /** @description Payment operation namespace. */
+                operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
         /**
-         * Prepare an unsigned authorization transaction
-         * @description Called by the payee to build the unsigned `authorize()` transaction. Requires the payer's signature to have been deposited via `PUT /payments/{rail0_id}/sign`. Creates a Transaction row with `status: pending`. Returns a ready-to-sign EIP-1559 transaction. The payee signs it and submits to `POST /payments/{rail0_id}/authorize`.
+         * Prepare an operation's unsigned transaction
+         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated: it is payer-or-payee on-chain and the payer has no gateway account, so authorization is on-chain (the signed tx + the contract's NotPayerOrPayee gate). `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2).
          */
-        post: operations["prepareAuthorize"];
+        post: operations["preparePaymentOperation"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/authorize": {
+    "/payments/{id}/{operation}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+                /** @description Payment operation namespace. */
+                operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
         /**
-         * Submit a signed authorization transaction
-         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/authorize/prepare`. Returns HTTP 202 immediately; the Broadcaster worker picks up the job, broadcasts on-chain, and updates the payment status. Poll `GET /payments/{rail0_id}` for the outcome.
+         * Submit an operation's signed transaction
+         * @description Stores the caller's signed raw transaction on the latest pending transaction for this operation and enqueues the broadcaster. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated (payer-or-payee submit it). As a robustness check the gateway also recovers the signed tx's sender and requires it to match the party the contract accepts as msg.sender — the payee for payee ops, the payer or payee for `release` — returning 403 otherwise and 400 if the tx can't be decoded, before broadcasting. Broadcast happens asynchronously.
          */
-        post: operations["submitAuthorize"];
+        post: operations["submitPaymentOperation"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/charge/prepare": {
+    "/payments/{id}/dispute/prepare": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
         /**
-         * Prepare an unsigned charge transaction
-         * @description Called by the payee to build the unsigned `charge()` transaction. Requires the payer's signature (mode=charge) to have been deposited via `PUT /payments/{rail0_id}/sign`. Creates a Transaction row with `status: pending`. Returns a ready-to-sign EIP-1559 transaction. The payee signs it and submits to `POST /payments/{rail0_id}/charge`.
+         * Prepare the dispute transaction (open; payer-signed)
+         * @description Builds the unsigned dispute() transaction on a pending transaction for the payer to sign. Signal-only (no fund effect). NOT session-gated — the payer has no gateway account, so authorization is on-chain (the payer-signed tx + the contract's NotPayer gate). Submit the signed tx to POST /payments/{id}/dispute.
          */
-        post: operations["prepareCharge"];
+        post: operations["prepareDispute"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/charge": {
+    "/payments/{id}/dispute": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
         /**
-         * Submit a signed charge transaction
-         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/charge/prepare`. Returns HTTP 202 immediately; the Broadcaster worker broadcasts on-chain and updates the payment status.
+         * Submit the signed dispute transaction (open; payer-signed)
+         * @description Stores the payer's signed dispute() transaction and enqueues the broadcaster. NOT session-gated; as a robustness check the gateway recovers the signed tx's sender and requires it to be the payer (403 otherwise, 400 if undecodable), mirroring the contract's NotPayer gate. The disputed flag is set when the indexer reports the on-chain event.
          */
-        post: operations["submitCharge"];
+        post: operations["submitDispute"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/capture/prepare": {
+    "/payments/{id}/dispute/close/prepare": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
         /**
-         * Prepare an unsigned capture transaction
-         * @description Called by the payee to build the unsigned `capture()` transaction. Returns a ready-to-sign EIP-1559 transaction. The payee signs it and submits to `POST /payments/{rail0_id}/capture`. Partial captures are supported: `amount` may be less than the current `capturable_amount`.
+         * Prepare the close-dispute transaction (open; payer-signed)
+         * @description Builds the unsigned closeDispute() transaction on a pending transaction for the payer to sign. NOT session-gated — the payer has no gateway account; authorization is on-chain (the payer-signed tx + the contract's NotPayer gate). Submit the signed tx to POST /payments/{id}/dispute/close.
          */
-        post: operations["prepareCapture"];
+        post: operations["prepareCloseDispute"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/capture": {
+    "/payments/{id}/dispute/close": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
         /**
-         * Submit a signed capture transaction
-         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/capture/prepare`. Returns HTTP 202 immediately; the Broadcaster worker broadcasts on-chain and updates the payment status.
+         * Submit the signed close-dispute transaction (open; payer-signed)
+         * @description Stores the payer's signed closeDispute() transaction and enqueues the broadcaster. NOT session-gated; as a robustness check the gateway recovers the signed tx's sender and requires it to be the payer (403 otherwise, 400 if undecodable), mirroring the contract's NotPayer gate.
          */
-        post: operations["submitCapture"];
+        post: operations["submitCloseDispute"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/payments/{rail0_id}/void/prepare": {
+    "/payments/{id}/disputes": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /**
-         * Prepare an unsigned void transaction
-         * @description Called by the payee to build the unsigned `void()` transaction. Cancels the authorization and returns all escrowed funds to the payer. Only possible when `status=authorized`. The payee signs the returned transaction and submits to `POST /payments/{rail0_id}/void`.
-         */
-        post: operations["prepareVoid"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/payments/{rail0_id}/void": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit a signed void transaction
-         * @description Called by the payee after signing the unsigned tx from `POST /payments/{rail0_id}/void/prepare`. Returns HTTP 202 immediately.
-         */
-        post: operations["submitVoid"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/payments/{rail0_id}/release/prepare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Prepare an unsigned release transaction
-         * @description Called by the payer or payee to build the unsigned `release()` transaction. Returns all remaining escrowed funds to the payer. Available in states `authorized`, `captured`, or `refunded`. The caller signs the returned transaction and submits to `POST /payments/{rail0_id}/release`. If `caller_address` is omitted the API defaults to the payment's `payee`.
-         */
-        post: operations["prepareRelease"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/payments/{rail0_id}/release": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit a signed release transaction
-         * @description Called after signing the unsigned tx from `POST /payments/{rail0_id}/release/prepare`. Returns HTTP 202 immediately.
-         */
-        post: operations["submitRelease"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/payments/{rail0_id}/refund/prepare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Prepare a refund (two-phase EIP-3009)
-         * @description Prepare a refund using EIP-3009 `receiveWithAuthorization`. Two-phase flow:
-         *
-         *     **Phase 1** — POST with only `amount`. Returns `{ signing_payload }` (EIP-712 typed data for `ReceiveWithAuthorization`). The payee signs this with `eth_signTypedData_v4`.
-         *
-         *     **Phase 2** — POST with `amount`, `v`, `r`, `s` (from the phase 1 signature). Returns a full `PrepareTransactionResponse` with the unsigned `refund()` transaction (EIP-3009 signature embedded in calldata).
-         *
-         *     No separate ERC-20 `approve()` step needed.
-         */
-        post: operations["prepareRefund"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/payments/{rail0_id}/refund": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit a signed refund transaction
-         * @description Called after signing the unsigned tx from phase 2 of `POST /payments/{rail0_id}/refund/prepare`. Returns HTTP 202 immediately.
-         */
-        post: operations["submitRefund"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/accounts/{account_id}/wallets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List wallet tokens for an account
-         * @description Returns paginated wallet token configurations for the given account. Public — no authentication required.
-         */
-        get: operations["listWallets"];
+        /** List a payment's disputes */
+        get: operations["listDisputes"];
         put?: never;
         post?: never;
         delete?: never;
@@ -469,7 +384,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/accounts/{account_id}/wallets/{id}": {
+    "/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List webhooks for the authenticated account */
+        get: operations["listWebhooks"];
+        put?: never;
+        /** Create a webhook */
+        post: operations["createWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a webhook */
+        get: operations["getWebhook"];
+        put?: never;
+        post?: never;
+        /** Delete a webhook */
+        delete: operations["deleteWebhook"];
+        options?: never;
+        head?: never;
+        /** Update a webhook (name, callback_url, topic) */
+        patch: operations["updateWebhook"];
+        trace?: never;
+    };
+    "/webhooks/{id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Enable a webhook */
+        put: operations["enableWebhook"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Disable a webhook */
+        put: operations["disableWebhook"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{id}/rotate_secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Rotate the shared secret — returns the new secret once */
+        put: operations["rotateWebhookSecret"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{id}/reset_circuit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Reset the circuit breaker and re-enable the webhook */
+        put: operations["resetWebhookCircuit"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{id}/event_callbacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List delivery attempts for a webhook */
+        get: operations["listWebhookEventCallbacks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sync/info": {
         parameters: {
             query?: never;
             header?: never;
@@ -477,11 +526,76 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get a wallet token
-         * @description Returns a single wallet token record for the given account. Public — no authentication required.
+         * Indexer/sync status information
+         * @description Indexer-facing. Currently not implemented (returns 501).
          */
-        get: operations["getWallet"];
+        get: operations["getSyncInfo"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sync/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stale submitted transactions for the indexer sweeper
+         * @description HMAC-protected, indexer-facing.
+         */
+        get: operations["getSyncTransactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sync/blockchains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Start blocks and confirmations per chain for the indexer
+         * @description HMAC-protected, indexer-facing.
+         */
+        get: operations["getSyncBlockchains"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sync/chains/{chain_id}/transactions/{tx_hash}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description EVM chain id the transaction belongs to. */
+                chain_id: number;
+                /** @description On-chain transaction hash. */
+                tx_hash: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Indexer callback: confirm or fail an on-chain transaction
+         * @description HMAC-protected, indexer-facing event delivery. The `operation` field selects the action. For `confirm`, `event_type` and `block_number` are required, and fund-affecting events also carry `capturable_amount`/`refundable_amount` — the live on-chain escrow balances the gateway mirrors (the indexer is the single source; the gateway no longer recomputes them). As long as the request is authentic and well-formed the gateway accepts it (202) and enqueues the Syncer; matching the callback to a gateway transaction is asynchronous. A callback for an unknown tx hash, or one whose tx is on a different chain than the URL, is recorded as a SyncError for manual review rather than rejected — so the indexer never receives a 404 to retry.
+         */
+        put: operations["syncTransactionCallback"];
         post?: never;
         delete?: never;
         options?: never;
@@ -493,479 +607,362 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /**
-         * @description EVM address (checksummed or lowercase hex, 20 bytes).
-         * @example 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
-         */
-        Address: string;
-        /**
-         * @description 32-byte hex value.
-         * @example 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab
-         */
-        Bytes32: string;
-        /**
-         * @description Non-negative integer encoded as a decimal string to avoid JSON numeric precision loss.
-         * @example 1000000
-         */
-        Uint256String: string;
-        /** @description Immutable payment configuration that maps 1-to-1 to the RAIL0 `Payment` Solidity struct. */
-        PaymentConfig: {
-            /** @description Buyer address. Funds are pulled from this address. */
-            payer: components["schemas"]["Address"];
-            /** @description Account address. Authorized to capture, void, and refund. */
-            payee: components["schemas"]["Address"];
-            /** @description EIP-3009-capable ERC-20 token address (must be accepted by the RAIL0 deployment). */
-            token: components["schemas"]["Address"];
-            /** @description Exact amount the payer commits to pay (in token base units). */
-            amount: components["schemas"]["Uint256String"];
-            /**
-             * Format: int64
-             * @description Unix timestamp (seconds). Capture must happen before this; release opens after.
-             * @example 1780000000
-             */
-            authorization_expiry: number;
-            /**
-             * Format: int64
-             * @description Unix timestamp (seconds). Refund must happen before this. Must be >= authorization_expiry.
-             * @example 1785000000
-             */
-            refund_expiry: number;
-        };
-        /** @description Buyer-supplied payment parameters. Policy fields (authorization_expiry, refund_expiry) are fixed API configuration applied server-side. */
-        PaymentInput: {
-            /** @description Buyer address. Funds are pulled from this address. */
-            payer: components["schemas"]["Address"];
-            /** @description Account wallet address (wallet_address from GET /accounts/{id}/payment-methods). */
-            payee: components["schemas"]["Address"];
-            /** @description ERC-20 token address (token_address from GET /accounts/{id}/payment-methods). */
-            token: components["schemas"]["Address"];
-            /** @description Amount to pay (in token base units). */
-            amount: components["schemas"]["Uint256String"];
-        };
-        /** @description Parameters needed to create a payment intent. */
-        CreatePaymentRequest: {
-            /**
-             * @description EVM chain ID of the target network.
-             * @example 84532
-             */
-            chain_id: number;
-            /**
-             * @description `authorize` — funds held in escrow, captured later. `charge` — one-shot: funds immediately distributed. The two modes use different EIP-3009 nonce prefixes; a signature for one cannot be reused for the other.
-             * @default authorize
-             * @enum {string}
-             */
-            mode: "authorize" | "charge";
-            /** @description Amount to pay (in token base units). */
-            amount: components["schemas"]["Uint256String"];
-            /** @description ERC-20 token address (token_address from GET /accounts/{id}/wallets). */
-            token: components["schemas"]["Address"];
-            /** @description Buyer address. Funds are pulled from this address. */
-            payer: components["schemas"]["Address"];
-            /** @description Account wallet address (wallet_address from GET /accounts/{id}/wallets). */
-            payee: components["schemas"]["Address"];
-            /**
-             * @description Optional human-readable payment label visible to the payer (e.g. "Order #123 — Acme Store").
-             * @example Order #123 — Acme Store
-             */
-            description?: string | null;
-            /**
-             * @description Arbitrary key-value data for custom reconciliation. Set at creation and immutable. Max 4 KB.
-             * @example {
-             *       "order_id": "ORD-123",
-             *       "customer_ref": "CUST-456"
-             *     }
-             */
-            metadata?: Record<string, never> | null;
-        };
-        /** @description EIP-712 domain for the token contract. */
-        EIP712Domain: {
-            /** @example USD Coin */
-            name: string;
-            /** @example 2 */
-            version: string;
-            /** @example 84532 */
-            chainId: number;
-            /** @description Token contract address. */
-            verifyingContract: components["schemas"]["Address"];
-        };
-        /** @description Message fields for the EIP-3009 TransferWithAuthorization signature. */
-        EIP3009Message: {
-            from: components["schemas"]["Address"];
-            /** @description RAIL0 contract address. */
-            to: components["schemas"]["Address"];
-            value: components["schemas"]["Uint256String"];
-            /** @description Always '0' for RAIL0 flows. */
-            validAfter: components["schemas"]["Uint256String"];
-            /** @description Equals authorization_expiry. */
-            validBefore: components["schemas"]["Uint256String"];
-            /** @description keccak256(NONCE_PREFIX, rail0_id, config_hash). Binds the signature to the exact config and operation type. */
-            nonce: components["schemas"]["Bytes32"];
-        };
-        /** @description EIP-712 typed-data structure that the payer (or payee for refund) must sign. Pass verbatim to `eth_signTypedData_v4`. */
-        SigningPayload: {
-            domain: components["schemas"]["EIP712Domain"];
-            types: {
-                TransferWithAuthorization?: {
-                    name: string;
-                    type: string;
-                }[];
-                ReceiveWithAuthorization?: {
-                    name: string;
-                    type: string;
-                }[];
-            };
-            /** @enum {string} */
-            primaryType: "TransferWithAuthorization" | "ReceiveWithAuthorization";
-            message: components["schemas"]["EIP3009Message"];
-        };
-        CreatePaymentResponse: {
-            /** @description Unique identifier for this payment. */
-            rail0_id: components["schemas"]["Bytes32"];
-            /** @description EIP-712 hash of the Payment struct. Commits the signature to the exact payment terms. */
-            config_hash: components["schemas"]["Bytes32"];
-            payment: components["schemas"]["PaymentConfig"];
-            /** @example 84532 */
-            chain_id: number;
-            /** @description Address of the RAIL0 contract on the target chain. */
-            rail0_contract: components["schemas"]["Address"];
-            signing_payload: components["schemas"]["SigningPayload"];
-            /**
-             * @description Optional human-readable payment label.
-             * @example Order #123 — Acme Store
-             */
-            description?: string | null;
-            /**
-             * @description Arbitrary key-value data attached at creation for custom reconciliation.
-             * @example {
-             *       "order_id": "ORD-123",
-             *       "customer_ref": "CUST-456"
-             *     }
-             */
-            metadata?: Record<string, never> | null;
-        };
-        /** @description Current state of a payment record. */
-        GetPaymentResponse: {
-            rail0_id: components["schemas"]["Bytes32"];
-            /**
-             * @description Current lifecycle state.
-             * @enum {string}
-             */
-            status: "unsigned" | "signed" | "submitting" | "submitted" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded" | "failed";
-            /** @enum {string} */
-            mode: "authorize" | "charge";
-            amount: components["schemas"]["Uint256String"];
-            payer: components["schemas"]["Address"];
-            payee: components["schemas"]["Address"];
-            token: components["schemas"]["Address"];
-            /** @example 84532 */
-            chain_id: number;
-            /**
-             * Format: int64
-             * @example 1780000000
-             */
-            authorization_expiry: number;
-            /**
-             * Format: int64
-             * @example 1785000000
-             */
-            refund_expiry: number;
-            /**
-             * @description Optional human-readable payment label.
-             * @example Order #123 — Acme Store
-             */
-            description?: string | null;
-            /**
-             * @description Arbitrary key-value data attached at creation for custom reconciliation.
-             * @example {
-             *       "order_id": "ORD-123",
-             *       "customer_ref": "CUST-456"
-             *     }
-             */
-            metadata?: Record<string, never> | null;
-            /** @description Live on-chain amounts. Present when status is authorized, captured, voided, released, charged, or refunded. */
-            on_chain?: {
-                exists?: boolean;
-                capturable_amount?: components["schemas"]["Uint256String"];
-                refundable_amount?: components["schemas"]["Uint256String"];
-            } | null;
-            /** @description Hash of the most recently broadcast transaction. */
-            last_broadcast_hash?: components["schemas"]["Bytes32"];
-            /**
-             * @description Machine-readable failure reason. Present only when status=failed.
-             * @example revert
-             */
-            last_error_code?: string;
-            /**
-             * @description Human-readable failure description. Present only when status=failed.
-             * @example Transaction reverted
-             */
-            last_error_message?: string;
-        };
-        /** @description An unsigned EIP-1559 transaction ready for the payee to sign. */
-        PrepareTransactionResponse: {
-            /**
-             * @description RLP-encoded unsigned EIP-1559 transaction (type 2).
-             * @example 0x02f8...
-             */
-            unsigned_transaction: string;
-            /**
-             * Format: uuid
-             * @description Server-side Transaction row ID. Passed back in the submit body to link the signed tx to the prepare step.
-             */
-            transaction_id: string;
-            /** @description Target contract address (informational). */
-            to: components["schemas"]["Address"];
-            /**
-             * @description ABI-encoded calldata (informational).
-             * @example 0x1234abcd...
-             */
-            data: string;
-            /** @example 84532 */
-            chainId: number;
-            /** @example 42 */
-            nonce: number;
-            maxFeePerGas: components["schemas"]["Uint256String"];
-            maxPriorityFeePerGas: components["schemas"]["Uint256String"];
-            gasLimit: components["schemas"]["Uint256String"];
-        };
-        /** @description Signed transaction to broadcast on-chain. */
-        SubmitTransactionRequest: {
-            /**
-             * @description RLP-encoded signed EIP-1559 transaction as returned by `eth_signTransaction`.
-             * @example 0x02f8...
-             */
-            signed_transaction: string;
-        };
-        /** @description Acknowledgement that the transaction has been enqueued. Poll `GET /payments/{rail0_id}` for the final outcome. */
-        SubmitTransactionAcceptedResponse: {
-            /** @description Payment identifier. */
-            rail0_id: components["schemas"]["Bytes32"];
-            /**
-             * @description Always `submitting` — the worker has not yet received the on-chain receipt.
-             * @enum {string}
-             */
-            status: "submitting";
-        };
-        /** @description Amount to capture from escrow. May be less than `capturable_amount` for a partial capture. */
-        CapturePaymentRequest: {
-            /** @description Amount to capture (in token base units). Must be > 0 and <= current capturable_amount. */
-            amount: components["schemas"]["Uint256String"];
-        };
-        /** @description Amount to refund to the payer. */
-        RefundPaymentRequest: {
-            /** @description Amount to refund (in token base units). Must be > 0 and <= current refundable_amount. */
-            amount: components["schemas"]["Uint256String"];
-        };
-        /** @description Optional parameters for the release prepare step. */
-        ReleaseRequest: {
-            /** @description Address of the account that will sign and submit the release transaction. Defaults to the payment's `payee` if omitted. */
-            caller_address?: components["schemas"]["Address"];
-        };
-        /** @description EIP-712 signature over the `signing_payload` returned by `POST /payments`. */
-        PayerSignatureRequest: {
-            /**
-             * @description 65-byte secp256k1 signature (0x-prefixed, 132 chars): r (32 bytes) + s (32 bytes) + v (1 byte).
-             * @example 0xd693b532a80fed6392b428604171fb1c5e7a2513e9e785424e8b7cbe6d7f4a4b2b9b7b3f4c2d1e0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f61b
-             */
-            signature: string;
-        };
-        PayerSignatureResponse: {
-            rail0_id: components["schemas"]["Bytes32"];
-            /**
-             * @description Confirms the signature was accepted and stored.
-             * @enum {string}
-             */
-            status: "signature_stored";
-            /** @description The address recovered from the signature — should match `payment.payer`. */
-            recovered_payer: components["schemas"]["Address"];
-        };
-        /** @description A single accepted payment method for a account: one (chain, token, wallet) combination. */
-        PaymentMethod: {
-            /** @example 1 */
-            id: number;
-            /** @example 7 */
-            token_id: number;
-            /** @example 8453 */
-            chain_id: number;
-            /** @example Base */
-            chain_name: string;
-            /** @description ERC-20 token contract address on the chain. */
-            token_address: components["schemas"]["Address"];
-            /** @example USDC */
-            token_symbol: string;
-            /** @example 6 */
-            token_decimals: number;
-            /** @description Account wallet address to use as `payee` in PaymentConfig. */
-            wallet_address: components["schemas"]["Address"];
-            /** @example true */
-            default: boolean;
-        };
-        /** @description Payload sent by the rail0-indexer when an on-chain event is detected for a known transaction. */
-        ConfirmTransactionRequest: {
-            /** @description The rail0_id of the payment this transaction belongs to. */
-            payment_id: components["schemas"]["Bytes32"];
-            /**
-             * @description The on-chain event emitted by the RAIL0 contract.
-             * @enum {string}
-             */
-            event_type: "authorized" | "charged" | "captured" | "voided" | "released" | "refunded";
-            /**
-             * @description Block number in which the transaction was confirmed.
-             * @example 12345678
-             */
-            block_number: number;
-            /** @description Token amount from the on-chain event. Required for `captured` and `refunded` events; optional for others. */
-            amount?: components["schemas"]["Uint256String"] | null;
-        };
-        /** @description A RAIL0 merchant account. */
-        Account: {
+        /** @description A wallet's on-chain balances, one entry per chain. */
+        WalletBalances: {
             /** Format: uuid */
-            id: string;
-            /** @example Acme Corp */
-            name: string;
-            /** @example acme-corp */
-            slug: string;
-            /**
-             * Format: email
-             * @example payments@acme.com
-             */
-            email: string;
-            active: boolean;
+            wallet_id?: string;
+            address?: string;
+            balances?: components["schemas"]["ChainBalance"][];
+        };
+        /** @description Balances on one chain. `native`/`tokens` are null when `error` is present; `error` is null on success. */
+        ChainBalance: {
+            chain_id?: number;
+            network_type?: string;
+            native?: components["schemas"]["AssetBalance"];
+            tokens?: components["schemas"]["AssetBalance"][];
+            error?: components["schemas"]["BalanceError"];
+        };
+        /** @description A single balance line — the native gas token or one ERC-20. */
+        AssetBalance: {
+            symbol?: string;
+            /** @description Token contract address; null for the native balance. */
+            address?: string | null;
+            decimals?: number;
+            /** @description Balance in base units (exact). */
+            raw?: string;
+            /** @description Human-decimal balance. */
+            amount?: string;
+        };
+        /** @description Why a chain's balances couldn't be read. */
+        BalanceError: {
+            /** @enum {string} */
+            code?: "rpc_unavailable" | "rpc_error" | "timeout" | "error";
+            message?: string;
+        };
+        /** @description Generic error envelope. `status` is a machine-readable code; additional context fields (e.g. `message`, `resource`, `param`, `errors`, `chain_id`) may also be present. */
+        Error: {
+            status: string;
+            message?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        Health: {
+            /** @enum {string} */
+            status?: "ok" | "degraded";
+            api_version?: string;
+            contract_version?: string;
+            /** @enum {string} */
+            db?: "ok" | "error";
+            active_chains?: number;
+            active_contracts?: number;
             /** Format: date-time */
-            created_at: string;
+            timestamp?: string;
+        };
+        Nonce: {
+            /** Format: uuid */
+            id?: string;
+            value?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            used?: boolean;
+            /** Format: date-time */
+            created_at?: string;
             /** Format: date-time */
             updated_at?: string;
         };
-        /** @description Condensed payment record returned by GET /payments. */
-        PaymentSummary: {
-            rail0_id: components["schemas"]["Bytes32"];
-            /** @example authorized */
-            status: string;
-            /** @enum {string} */
-            mode: "authorize" | "charge";
-            /** @example 1000000 */
-            amount: string;
-            payer: components["schemas"]["Address"];
-            payee: components["schemas"]["Address"];
-            token: components["schemas"]["Address"];
-            /** @example 1717500000 */
-            authorization_expiry: number;
-            /** @example 1717600000 */
-            refund_expiry: number;
-            /** @example Order #123 — Acme Store */
-            description?: string | null;
-            /**
-             * @example {
-             *       "order_id": "ORD-123"
-             *     }
-             */
-            metadata?: Record<string, never> | null;
-            /** Format: date-time */
-            created_at: string;
-        };
-        /** @description An on-chain transaction attempt associated with a payment. */
-        TransactionRecord: {
+        /** @description Issued after a successful SIWE verification. */
+        Session: {
+            /** @description JWT bearer token. */
+            token?: string;
+            /** @description Resolved wallet address. */
+            address?: string;
             /** Format: uuid */
-            id: string;
+            account_id?: string;
+            /** Format: date-time */
+            expires_at?: string;
+        };
+        /** @description Public blockchain view. */
+        Blockchain: {
+            chain_id?: number;
+            name?: string;
+            native_symbol?: string;
+            network_type?: string;
+            explorer_url?: string;
+        };
+        /** @description Public accepted-token view. */
+        Token: {
+            chain_id?: number;
+            symbol?: string;
+            address?: string;
+            decimals?: number;
+        };
+        Wallet: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            account_id?: string;
+            address?: string;
+            label?: string | null;
+            active?: boolean;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        /** @description A wallet's token holding, with the wallet, token, and blockchain nested via their own schemas. */
+        WalletToken: {
+            default?: boolean;
+            active?: boolean;
+            wallet?: components["schemas"]["Wallet"];
+            token?: components["schemas"]["Token"];
+            blockchain?: components["schemas"]["Blockchain"];
+        };
+        /** @description A wallet's token holding as nested under its wallet (GET /accounts/:id/wallets): the token plus this wallet's per-token flags, without re-nesting the wallet. */
+        WalletTokenHolding: {
+            token?: components["schemas"]["Token"];
+            active?: boolean;
+            default?: boolean;
+        };
+        /** @description A wallet with its token holdings nested inline. `tokens` is empty when the wallet has none — the wallet is still returned, never omitted. */
+        WalletWithTokens: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            account_id?: string;
+            address?: string;
+            label?: string | null;
+            active?: boolean;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+            tokens?: components["schemas"]["WalletTokenHolding"][];
+        };
+        /** @description Base persisted payment fields. */
+        Payment: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            contract_id?: string;
+            /** @description Protocol-level identifier (66-char hex). */
+            rail0_id?: string;
             /** @enum {string} */
-            operation: "authorize" | "charge" | "capture" | "void" | "release" | "refund";
+            status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
             /** @enum {string} */
-            status: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
-            transaction_hash?: components["schemas"]["Bytes32"];
-            /** @example 1000000 */
+            mode?: "authorize" | "charge";
+            amount?: string;
+            /** @description Mirrors on-chain capturableAmount (escrow still held); base units. */
+            capturable_amount?: string;
+            /** @description Mirrors on-chain refundableAmount (held by payee, still refundable); base units. */
+            refundable_amount?: string;
+            config_hash?: string;
+            payer?: string;
+            payee?: string;
+            token?: string;
+            authorization_expiry?: number;
+            refund_expiry?: number;
+            /** @description True while an open dispute exists. */
+            disputed?: boolean;
+            /** @description Decoded reason of the last failed on-chain attempt; null once the payment makes forward progress. Non-null means the latest attempt failed. */
+            last_error_code?: string | null;
+            /** @description Human-readable form of last_error_code. */
+            last_error_message?: string | null;
+            description?: string | null;
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Format: date-time
+             * @description When the payer signature was stored (null while unsigned).
+             */
+            signed_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        /** @description Buyer-driven, signal-only dispute lifecycle (no fund effect). */
+        Dispute: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            payment_id?: string;
+            /** @enum {string} */
+            status?: "open" | "closed";
+            /** @description On-chain bytes32 reason code (hex). */
+            reason?: string;
+            opened_block?: number | null;
+            /** Format: date-time */
+            opened_at?: string;
+            /** @enum {string|null} */
+            closed_by?: "payer" | "payee" | null;
+            close_reason?: string | null;
+            closed_block?: number | null;
+            /** Format: date-time */
+            closed_at?: string | null;
+        };
+        PaymentDetail: components["schemas"]["Payment"] & {
+            chain_id?: number;
+            /** @description Deployed rail0 contract address. */
+            rail0_contract?: string;
+            transactions?: components["schemas"]["Transaction"][];
+            /** @description EIP-3009 payload the payer must sign; present only when the payment is unsigned (may be null on transient RPC failure). */
+            signing_payload?: unknown;
+        };
+        Transaction: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            payment_id?: string;
+            /** @enum {string} */
+            operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund";
+            /** @enum {string} */
+            status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
+            unsigned_transaction?: string | null;
+            transaction_hash?: string | null;
             amount?: string | null;
-            /** @example 12345678 */
             block_number?: number | null;
-            /** @example 0x08c379a0... */
-            error_reason?: string | null;
             /** Format: date-time */
             pending_at?: string | null;
             /** Format: date-time */
             submitted_at?: string | null;
             /** Format: date-time */
             confirmed_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
-        /** @description A wallet token configuration linking a wallet address to a specific token on a chain. */
-        WalletToken: {
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            wallet_id: string;
-            /** @description Ethereum wallet address. */
-            address: components["schemas"]["Address"];
-            /** @example Treasury */
-            label?: string | null;
-            /** @example true */
-            default: boolean;
-            /** @example true */
-            active: boolean;
-            /** Format: uuid */
-            token_id: string;
-            /** @example USDC */
-            token_symbol: string;
-            token_address: components["schemas"]["Address"];
-            /** @example 6 */
-            token_decimals: number;
-            /** @example 8453 */
-            chain_id: number;
-            /** @example Base */
-            chain_name: string;
-            /** @example base */
-            chain_slug: string;
+        AdminPayment: components["schemas"]["Payment"] & {
+            signature?: string | null;
+            last_broadcast_hash?: string | null;
+            last_error_code?: string | null;
+            last_error_message?: string | null;
         };
-        Error: {
-            /**
-             * @description Human-readable error description.
-             * @example Payment cannot be captured in its current state.
-             */
-            message: string;
-            /**
-             * @description Machine-readable error code (snake_case).
-             * @example not_capturable
-             */
-            code: string;
+        AdminTransaction: components["schemas"]["Transaction"] & {
+            signed_transaction?: string | null;
+            error_reason?: string | null;
         };
-        /** @description A blockchain transaction associated with a payment. */
-        Transaction: {
-            /** @description Keccak256 hash of the broadcast transaction. */
-            transaction_hash: components["schemas"]["Bytes32"];
-            /** @description Parent payment identifier. */
-            rail0_id: components["schemas"]["Bytes32"];
-            /**
-             * @description Smart contract operation executed by this transaction.
-             * @enum {string}
-             */
-            operation: "authorize" | "charge" | "capture" | "void" | "refund" | "release";
-            /**
-             * @description `submitted` = broadcast, awaiting confirmation. `confirmed` = mined successfully. `failed` = reverted.
-             * @enum {string}
-             */
-            status: "submitted" | "confirmed" | "failed";
-            /** @description Token amount processed. `null` until confirmed. */
-            amount?: components["schemas"]["Uint256String"] | null;
-            /** @description Block number in which the transaction was mined. `null` until confirmed. */
-            block_number?: number | null;
-            /**
-             * Format: date-time
-             * @description ISO 8601 timestamp when the transaction was broadcast on-chain.
-             */
-            submitted_at: string;
-            /**
-             * Format: date-time
-             * @description ISO 8601 timestamp when the transaction was confirmed. `null` until confirmed.
-             */
-            confirmed_at?: string | null;
+        /** @enum {string} */
+        WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
+        Webhook: {
+            /** Format: uuid */
+            id?: string;
+            name?: string;
+            callback_url?: string;
+            topic?: components["schemas"]["WebhookTopic"];
+            active?: boolean;
+            /** @enum {string} */
+            circuit_state?: "closed" | "open";
+            circuit_failure_count?: number;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        WebhookWithSecret: components["schemas"]["Webhook"] & {
+            shared_secret?: string;
+        };
+        EventCallback: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            webhook_id?: string;
+            /** Format: uuid */
+            payment_id?: string;
+            topic?: string;
+            callback_url?: string;
+            response_code?: string | null;
+            response_message?: string | null;
+            error_reason?: string | null;
+            /** @enum {string} */
+            status?: "pending" | "delivered" | "failed";
+            /** Format: date-time */
+            created_at?: string;
+        };
+        /** @description Sweeper view of a stale submitted transaction. */
+        SyncTransaction: {
+            transaction_hash?: string;
+            operation?: string;
+            /** @description Protocol-level rail0_id. */
+            payment_id?: string;
+            chain_id?: number;
+        };
+        /** @description Per-chain indexer config. */
+        SyncBlockchain: {
+            chain_id?: number;
+            start_block?: number;
+            required_confirmations?: number;
+            /** @description Block explorer base URL; null when the chain has none. */
+            explorer_url?: string | null;
+            /** @description "testnet" or "mainnet"; selects which chains a deployment indexes. */
+            network_type?: string;
+            /** @description Ordered list of public RPC endpoints tried in turn (serial fallback). */
+            rpc_urls?: string[];
+            /** @description Active RAIL0 contract addresses on the chain (all watched versions). */
+            contracts?: string[];
         };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description Resource not found. */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Authentication failed. */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Caller not permitted. */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Validation error. */
+        Validation: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+    };
+    parameters: {
+        /** @description 1-based page number. */
+        Page: number;
+        /** @description Items per page (capped at 100). */
+        PerPage: number;
+        /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+        Sort: string;
+    };
     requestBodies: never;
-    headers: never;
+    headers: {
+        /** @description Total items before pagination. */
+        XTotalCount: number;
+        /** @description Current page. */
+        XPage: number;
+        /** @description Items per page. */
+        XPerPage: number;
+    };
     pathItems: never;
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    getVersion: {
+    getHealth: {
         parameters: {
             query?: never;
             header?: never;
@@ -974,21 +971,27 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Version information. */
+            /** @description Service healthy. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** @example 0.3.0 */
-                        version?: string;
-                    };
+                    "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description Degraded (database unreachable). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Health"];
                 };
             };
         };
     };
-    issueNonce: {
+    createNonce: {
         parameters: {
             query?: never;
             header?: never;
@@ -997,27 +1000,18 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Nonce issued. */
+            /** @description Nonce created. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** @example abc123xyz */
-                        nonce: string;
-                        /**
-                         * Format: date-time
-                         * @description ISO 8601 timestamp when the nonce expires.
-                         * @example 2026-06-03T00:05:00Z
-                         */
-                        expires_at: string;
-                    };
+                    "application/json": components["schemas"]["Nonce"];
                 };
             };
         };
     };
-    authenticate: {
+    verifySiwe: {
         parameters: {
             query?: never;
             header?: never;
@@ -1027,46 +1021,25 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The EIP-4361 SIWE message text that was signed. */
+                    /** @description EIP-4361 SIWE message text. */
                     message: string;
-                    /** @description 65-byte secp256k1 signature over the SIWE message. */
+                    /** @description Wallet signature over the SIWE message (0x…). */
                     signature: string;
                 };
             };
         };
         responses: {
-            /** @description Authentication successful. */
+            /** @description SIWE verified; JWT issued. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** @description JWT bearer token for authenticated requests. */
-                        token: string;
-                        /** @description Ethereum address recovered from the SIWE signature. */
-                        address: string;
-                        /**
-                         * Format: uuid
-                         * @description Account UUID, if the signing address is a known account wallet.
-                         */
-                        account_id?: string | null;
-                        /**
-                         * @description URL-safe account identifier.
-                         * @example acme-corp
-                         */
-                        account_slug?: string | null;
-                        /**
-                         * Format: date-time
-                         * @description ISO 8601 timestamp when the JWT expires.
-                         * @example 2026-06-04T00:00:00Z
-                         */
-                        expires_at?: string;
-                    };
+                    "application/json": components["schemas"]["Session"];
                 };
             };
-            /** @description Invalid signature or expired nonce. */
-            401: {
+            /** @description SIWE verification failed. The `status` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or `address_not_registered`. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1085,102 +1058,242 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Array of supported blockchains. */
+            /** @description Active blockchains. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** @example 8453 */
-                        chain_id: number;
-                        /** @example Base */
-                        name: string;
-                        contract_address?: components["schemas"]["Address"];
-                    }[];
+                    "application/json": components["schemas"]["Blockchain"][];
                 };
             };
         };
     };
     listTokens: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description EVM chain ID to filter tokens. */
+                chain_id?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Array of supported tokens. */
+            /** @description Active tokens. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** @example 7 */
-                        id: number;
-                        /** @example USDC */
-                        symbol: string;
-                        address: components["schemas"]["Address"];
-                        /** @example 6 */
-                        decimals: number;
-                        /** @example 8453 */
-                        chain_id: number;
-                    }[];
+                    "application/json": components["schemas"]["Token"][];
                 };
             };
         };
     };
-    getPaymentMethods: {
+    listAccountWallets: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Restrict nested tokens to this chain ID (does not hide wallets). */
+                chain_id?: number;
+                /** @description Restrict nested tokens to this symbol (does not hide wallets). */
+                token_symbol?: string;
+                /** @description Filter wallets by active status. */
+                active?: boolean;
+            };
             header?: never;
             path: {
-                /** @description Account UUID. */
                 account_id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Array of accepted payment methods, ordered with the default first. */
+            /** @description The account's wallets, each with its token holdings nested under `tokens` (empty when the wallet has none). */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletWithTokens"][];
+                };
+            };
+        };
+    };
+    createWallet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description EVM wallet address (0x, 40 hex). */
+                    address: string;
+                    /** @description Human-readable label. */
+                    label?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Wallet created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Wallet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getWallet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. The address is unique per account, so either resolves to the same wallet. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Wallet. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PaymentMethod"][];
+                    "application/json": components["schemas"]["Wallet"];
                 };
             };
-            /** @description Account not found or has no active payment methods. */
-            404: {
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deactivateWallet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. The address is unique per account, so either resolves to the same wallet. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Wallet deactivated. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateWallet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. The address is unique per account, so either resolves to the same wallet. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description At least one of `label` or `active` must be supplied. */
+        requestBody: {
+            content: {
+                "application/json": {
+                    label?: string;
+                    active?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Wallet updated. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Error"];
+                    "application/json": components["schemas"]["Wallet"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getWalletBalances: {
+        parameters: {
+            query?: {
+                /** @description Restrict to one chain; omit for all active chains. */
+                chain_id?: number;
+                /** @description Restrict tokens to this symbol; omit for all active tokens. */
+                token_symbol?: string;
+            };
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The wallet's balances per chain. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletBalances"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     listPayments: {
         parameters: {
             query?: {
-                /** @description Filter by payment status. */
-                status?: string;
-                /** @description Filter by payment mode. */
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                sort?: components["parameters"]["Sort"];
+                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
                 mode?: "authorize" | "charge";
-                /** @description Filter by payer Ethereum address. */
                 payer?: string;
-                /** @description Filter by payee Ethereum address. */
                 payee?: string;
-                /** @description Filter by token contract address. */
                 token?: string;
-                /** @description Page number (1-based, default 1). */
-                page?: number;
-                /** @description Items per page (default 20, max 100). */
-                per_page?: number;
+                /** @description Filter by the logical on-chain payment id (0x…). */
+                rail0_id?: string;
             };
             header?: never;
             path?: never;
@@ -1188,68 +1301,73 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Paginated list of payments. */
+            /** @description Payments. */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        data: components["schemas"]["PaymentSummary"][];
-                        meta: {
-                            /** @example 1 */
-                            page: number;
-                            /** @example 20 */
-                            per_page: number;
-                            /** @example 42 */
-                            total: number;
-                        };
-                    };
+                    "application/json": components["schemas"]["Payment"][];
                 };
             };
-            /** @description Missing or invalid JWT. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+            401: components["responses"]["Unauthorized"];
         };
     };
     createPayment: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Client-supplied key; replays return the existing payment. */
+                "Idempotency-Key"?: string;
+            };
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreatePaymentRequest"];
+                "application/json": {
+                    /** @description EVM chain id of the target deployment. */
+                    chain_id: number;
+                    /** @enum {string} */
+                    mode: "authorize" | "charge";
+                    /** @description Human decimal amount, e.g. "10.50". */
+                    amount: string;
+                    /** @description Token address (0x, 40 hex). */
+                    token: string;
+                    /** @description Buyer address (0x, 40 hex). */
+                    payer: string;
+                    /** @description Merchant address (0x, 40 hex). */
+                    payee: string;
+                    description?: string;
+                    metadata?: {
+                        [key: string]: unknown;
+                    };
+                };
             };
         };
         responses: {
-            /** @description Payment intent created. Sign the returned `signing_payload` and submit to `PUT /payments/{rail0_id}/sign`. */
+            /** @description Existing payment returned (idempotent replay). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentDetail"];
+                };
+            };
+            /** @description Payment created. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CreatePaymentResponse"];
+                    "application/json": components["schemas"]["PaymentDetail"];
                 };
             };
-            /** @description Missing or invalid request fields. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Validation error (unsupported chain_id, invalid mode, etc.). */
+            /** @description Validation error. `status` is one of `no_active_contract`, `unknown_token`, `invalid_amount`. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1265,23 +1383,53 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
+                id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Current payment state. */
+            /** @description Payment detail. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GetPaymentResponse"];
+                    "application/json": components["schemas"]["PaymentDetail"];
                 };
             };
-            /** @description Payment not found. */
+            404: components["responses"]["NotFound"];
+        };
+    };
+    signPayment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Payer's EIP-3009 signature (0x…, 65 bytes). */
+                    signature: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signature stored. Returns the updated payment, now in the `signed` state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Payment not signable or signer mismatch. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1295,508 +1443,668 @@ export interface operations {
     listPaymentTransactions: {
         parameters: {
             query?: {
-                /** @description Filter by operation type. */
-                operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund";
-                /** @description Filter by transaction status. */
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                sort?: components["parameters"]["Sort"];
+                operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund" | "dispute" | "close_dispute";
                 status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
-                /** @description Page number (1-based, default 1). */
-                page?: number;
-                /** @description Items per page (default 20, max 100). */
-                per_page?: number;
             };
             header?: never;
             path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
+                id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Paginated list of transaction records. */
+            /** @description Transactions. */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"][];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    preparePaymentOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description Payment operation namespace. */
+                operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Amount (required for capture/refund). */
+                    amount?: string;
+                    /** @description Payee's EIP-3009 refund signature (refund phase-2 only). */
+                    signature?: string;
+                    /** @description Submitter address (release; defaults to payer). */
+                    from?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Reused the existing pending transaction (idempotent re-prepare); or, for refund phase-1, the `{ signing_payload }` for the payee to sign off-chain (no transaction created). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"] | {
+                        /** @description EIP-3009 payload for the payee to sign (refund phase-1). */
+                        signing_payload?: unknown;
+                    };
+                };
+            };
+            /** @description Created the pending (unsubmitted) transaction. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description Missing required param (`amount` for capture/refund, `signature` for refund phase-2). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Payment not in a state that permits this operation. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    submitPaymentOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description Payment operation namespace. */
+                operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Signed raw transaction (0x…). */
+                    signed_transaction: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted; broadcast enqueued. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description The signed transaction could not be decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    prepareDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description bytes32 reason code (0x…); defaults to zero. */
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Reused the existing pending dispute transaction. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description Pending dispute transaction with the unsigned payload. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    submitDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Signed raw transaction (0x…). */
+                    signed_transaction: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted — broadcast happens asynchronously. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description The signed transaction could not be decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    prepareCloseDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description bytes32 reason code (0x…); defaults to zero. */
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Pending close-dispute transaction with the unsigned payload (closing acts on the existing dispute, so never 201). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    submitCloseDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Signed raw transaction (0x…). */
+                    signed_transaction: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted — broadcast happens asynchronously. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description The signed transaction could not be decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listDisputes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dispute open/close history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Dispute"][];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listWebhooks: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Filter by topic. */
+                topic?: components["schemas"]["WebhookTopic"];
+                /** @description Filter by active status. */
+                active?: boolean;
+                /** @description Filter by circuit state. */
+                circuit_state?: "closed" | "open";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhooks. */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Human-readable identifier. */
+                    name: string;
+                    /** @description HTTPS destination URL. */
+                    callback_url: string;
+                    topic: components["schemas"]["WebhookTopic"];
+                };
+            };
+        };
+        responses: {
+            /** @description Webhook created. `shared_secret` is returned only on this response and on rotate. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookWithSecret"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    getWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhook. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhook deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    callback_url?: string;
+                    topic?: components["schemas"]["WebhookTopic"];
+                };
+            };
+        };
+        responses: {
+            /** @description Webhook updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    enableWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhook enabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    disableWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Webhook disabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    rotateWebhookSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Secret rotated; the new `shared_secret` is returned once. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookWithSecret"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    resetWebhookCircuit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Circuit reset. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listWebhookEventCallbacks: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Filter by delivery status. */
+                status?: "pending" | "delivered" | "failed";
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Event callbacks. */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventCallback"][];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getSyncInfo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Not implemented yet. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSyncTransactions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stale submitted transactions wrapped under `transactions`. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        data: components["schemas"]["TransactionRecord"][];
-                        meta: {
-                            /** @example 1 */
-                            page: number;
-                            /** @example 20 */
-                            per_page: number;
-                            /** @example 3 */
-                            total: number;
-                        };
+                        transactions?: components["schemas"]["SyncTransaction"][];
                     };
                 };
             };
-            /** @description Payment not found. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+            401: components["responses"]["Unauthorized"];
         };
     };
-    sign: {
+    getSyncBlockchains: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PayerSignatureRequest"];
-            };
-        };
-        responses: {
-            /** @description Signature stored. The payee may now call `POST /payments/{rail0_id}/authorize/prepare`. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PayerSignatureResponse"];
-                };
-            };
-            /** @description Missing or malformed signature. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found, already signed, or signature does not recover to the expected payer address. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    prepareAuthorize: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Unsigned authorization transaction ready to sign. */
+            /** @description Per-chain indexer config. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PrepareTransactionResponse"];
+                    "application/json": components["schemas"]["SyncBlockchain"][];
                 };
             };
-            /** @description Payment not found, payer signature not yet submitted, or payment was created with `mode=charge`. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+            401: components["responses"]["Unauthorized"];
         };
     };
-    submitAuthorize: {
+    syncTransactionCallback: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitTransactionRequest"];
-            };
-        };
-        responses: {
-            /** @description Transaction accepted and enqueued. Poll `GET /payments/{rail0_id}` for the outcome. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubmitTransactionAcceptedResponse"];
-                };
-            };
-            /** @description Missing `signed_transaction`. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found or no pending transaction. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    prepareCharge: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Unsigned charge transaction ready to sign. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PrepareTransactionResponse"];
-                };
-            };
-            /** @description Payment not found, payer signature not yet submitted, or payment was created with `mode=authorize`. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    submitCharge: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitTransactionRequest"];
-            };
-        };
-        responses: {
-            /** @description Transaction accepted and enqueued. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubmitTransactionAcceptedResponse"];
-                };
-            };
-            /** @description Missing `signed_transaction`. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found or no pending transaction. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    prepareCapture: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CapturePaymentRequest"];
-            };
-        };
-        responses: {
-            /** @description Unsigned capture transaction ready to sign. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PrepareTransactionResponse"];
-                };
-            };
-            /** @description Missing `amount` field. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found or not in a capturable state (`authorized` or `captured`). */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    submitCapture: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitTransactionRequest"];
-            };
-        };
-        responses: {
-            /** @description Transaction accepted and enqueued. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubmitTransactionAcceptedResponse"];
-                };
-            };
-            /** @description Missing `signed_transaction`. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found or no pending transaction. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    prepareVoid: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Unsigned void transaction ready to sign. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PrepareTransactionResponse"];
-                };
-            };
-            /** @description Payment not found or not in `authorized` state. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    submitVoid: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitTransactionRequest"];
-            };
-        };
-        responses: {
-            /** @description Transaction accepted and enqueued. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubmitTransactionAcceptedResponse"];
-                };
-            };
-            /** @description Missing `signed_transaction`. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found or no pending transaction. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    prepareRelease: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["ReleaseRequest"];
-            };
-        };
-        responses: {
-            /** @description Unsigned release transaction ready to sign. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PrepareTransactionResponse"];
-                };
-            };
-            /** @description Payment not found or not in a releasable state. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    submitRelease: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitTransactionRequest"];
-            };
-        };
-        responses: {
-            /** @description Transaction accepted and enqueued. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubmitTransactionAcceptedResponse"];
-                };
-            };
-            /** @description Missing `signed_transaction`. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found or no pending transaction. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    prepareRefund: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
+                /** @description EVM chain id the transaction belongs to. */
+                chain_id: number;
+                /** @description On-chain transaction hash. */
+                tx_hash: string;
             };
             cookie?: never;
         };
@@ -1804,170 +2112,46 @@ export interface operations {
             content: {
                 "application/json": {
                     /**
-                     * @description Amount to refund in token base units.
-                     * @example 1000000
+                     * @description "confirm" when mined, "fail" when reverted.
+                     * @enum {string}
                      */
-                    amount: string;
+                    operation: "confirm" | "fail";
                     /**
-                     * @description EIP-3009 signature recovery id (phase 2 only).
-                     * @example 27
+                     * @description Event name (required on confirm).
+                     * @enum {string}
                      */
-                    v?: number;
-                    /** @description EIP-3009 signature r component, 0x-prefixed (phase 2 only). */
-                    r?: string;
-                    /** @description EIP-3009 signature s component, 0x-prefixed (phase 2 only). */
-                    s?: string;
+                    event_type?: "authorized" | "charged" | "captured" | "voided" | "released" | "refunded" | "disputed" | "dispute_closed";
+                    /** @description On-chain amount (confirm only). */
+                    amount?: string;
+                    /** @description Live on-chain capturable balance after the event, base units (confirm only; sent by fund-affecting events, omitted by dispute/dispute_closed). The gateway mirrors it — the indexer is the single source. */
+                    capturable_amount?: string;
+                    /** @description Live on-chain refundable balance after the event, base units (confirm only; sent by fund-affecting events, omitted by dispute/dispute_closed). The gateway mirrors it — the indexer is the single source. */
+                    refundable_amount?: string;
+                    /** @description Block the event was mined in (required on confirm). */
+                    block_number?: number;
+                    /** @description On-chain bytes32 paymentId (diagnostics; recorded on a SyncError). */
+                    payment_id?: string;
+                    /** @description Revert reason / raw error data (fail only). */
+                    revert_reason?: string;
                 };
             };
         };
         responses: {
-            /** @description Phase 1: `{ signing_payload }` for the payee to sign. Phase 2: unsigned transaction ready for the payee to sign and submit. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        signing_payload: components["schemas"]["SigningPayload"];
-                    } | components["schemas"]["PrepareTransactionResponse"];
-                };
-            };
-            /** @description Missing `amount` field. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found or not in a refundable state (`captured`, `refunded`, or `charged`). */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    submitRefund: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Unique payment identifier (bytes32 hex). */
-                rail0_id: components["schemas"]["Bytes32"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitTransactionRequest"];
-            };
-        };
-        responses: {
-            /** @description Transaction accepted and enqueued. */
+            /** @description Callback accepted; Syncer enqueued. */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SubmitTransactionAcceptedResponse"];
-                };
-            };
-            /** @description Missing `signed_transaction`. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Payment not found or no pending transaction. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    listWallets: {
-        parameters: {
-            query?: {
-                /** @description Filter by EVM chain ID. */
-                chain_id?: number;
-                /** @description Filter by chain slug (e.g. "base"). */
-                chain_slug?: string;
-                /** @description Filter by token symbol (e.g. "USDC"). */
-                token_symbol?: string;
-                /** @description Filter by active flag. Omit to return all records. */
-                active?: boolean;
-                /** @description Page number (1-based, default 1). */
-                page?: number;
-                /** @description Items per page (default 20, max 100). */
-                per_page?: number;
-            };
-            header?: never;
-            path: {
-                /** @description Account UUID. */
-                account_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Paginated list of wallet token objects. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
                     "application/json": {
-                        data: components["schemas"]["WalletToken"][];
-                        meta: {
-                            /** @example 1 */
-                            page: number;
-                            /** @example 20 */
-                            per_page: number;
-                            /** @example 42 */
-                            total: number;
-                        };
+                        /** @example accepted */
+                        status?: string;
                     };
                 };
             };
-        };
-    };
-    getWallet: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Account UUID. */
-                account_id: string;
-                /** @description Wallet token UUID. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Wallet token object. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WalletToken"];
-                };
-            };
-            /** @description Wallet token not found. */
-            404: {
+            401: components["responses"]["Unauthorized"];
+            /** @description `invalid_event_type` or `missing_param` (block_number) — a malformed payload. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

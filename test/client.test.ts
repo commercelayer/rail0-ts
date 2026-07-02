@@ -39,9 +39,11 @@ describe('Rail0Client', () => {
   describe('payments.get', () => {
     it('returns payment state and config hash', async () => {
       const mockResponse = {
-        paymentId: mockPaymentId,
-        state: { exists: true, capturableAmount: '1000000', refundableAmount: '0' },
-        configHash: `0x${'ab'.repeat(32)}`,
+        rail0_id: mockPaymentId,
+        status: 'authorized',
+        capturable_amount: '1000000',
+        refundable_amount: '0',
+        config_hash: `0x${'ab'.repeat(32)}`,
       }
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(JSON.stringify(mockResponse), { status: 200 }),
@@ -49,9 +51,9 @@ describe('Rail0Client', () => {
 
       const result = await client.payments.get(mockPaymentId)
 
-      expect(result.paymentId).toBe(mockPaymentId)
-      expect(result.state.exists).toBe(true)
-      expect(result.state.capturableAmount).toBe('1000000')
+      expect(result.rail0_id).toBe(mockPaymentId)
+      expect(result.status).toBe('authorized')
+      expect(result.capturable_amount).toBe('1000000')
     })
 
     it('throws Rail0ApiError on 404', async () => {
@@ -117,15 +119,17 @@ describe('Rail0Client', () => {
       const result = await client.tokens.list()
 
       expect(Array.isArray(result)).toBe(true)
-      expect(result[0].address).toBe(tokenAddress)
+      expect(result[0]?.address).toBe(tokenAddress)
     })
   })
 
   describe('retry', () => {
     const mockResponse = {
-      paymentId: mockPaymentId,
-      state: { exists: true, capturableAmount: '1000000', refundableAmount: '0' },
-      configHash: `0x${'ab'.repeat(32)}`,
+      rail0_id: mockPaymentId,
+      status: 'authorized',
+      capturable_amount: '1000000',
+      refundable_amount: '0',
+      config_hash: `0x${'ab'.repeat(32)}`,
     }
 
     it('succeeds on the third attempt after two network failures', async () => {
@@ -138,7 +142,7 @@ describe('Rail0Client', () => {
       client = new Rail0Client({ baseUrl: BASE_URL, maxRetries: 2, retryDelay: 0 })
       const result = await client.payments.get(mockPaymentId)
 
-      expect(result.paymentId).toBe(mockPaymentId)
+      expect(result.rail0_id).toBe(mockPaymentId)
       expect(fetchSpy).toHaveBeenCalledTimes(3)
     })
 
