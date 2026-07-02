@@ -757,10 +757,6 @@ export interface components {
             payer?: string;
             payee?: string;
             token?: string;
-            /** @description Decimals of the payment's token (from the in-memory Catalog). */
-            token_decimals?: number | null;
-            /** @description Symbol of the payment's token (from the in-memory Catalog). */
-            token_symbol?: string | null;
             authorization_expiry?: number;
             refund_expiry?: number;
             /** @description True while an open dispute exists. */
