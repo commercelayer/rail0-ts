@@ -3,10 +3,10 @@ import { keccak_256 } from '@noble/hashes/sha3.js'
 import { describe, expect, it } from 'vitest'
 import type { PaymentConfig } from '../src/resources/types.js'
 import {
-  type TokenDomain,
   signAuthorize,
   signCharge,
   signTransferWithAuthorization,
+  type TokenDomain,
 } from '../src/signing.js'
 
 // ================================================================
@@ -359,7 +359,8 @@ describe('signTransaction (EIP-1559)', () => {
     // Strip the 0x02 type byte, decode the RLP list.
     const body = raw.slice(4)
     const bytes = new Uint8Array(body.length / 2)
-    for (let i = 0; i < body.length; i += 2) bytes[i >> 1] = Number.parseInt(body.slice(i, i + 2), 16)
+    for (let i = 0; i < body.length; i += 2)
+      bytes[i >> 1] = Number.parseInt(body.slice(i, i + 2), 16)
     const items = rlpDecode(bytes)
 
     // [chainId, nonce, maxPrio, maxFee, gasLimit, to, value, data, accessList, yParity, r, s]

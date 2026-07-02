@@ -70,7 +70,11 @@ export function personalSign(privateKeyHex: string, message: string): string {
 
   const privBytes = hexToBytes(privateKeyHex)
   // format:'recovered' → Uint8Array(65): recovery(1) || r(32) || s(32)
-  const sig = secp256k1.sign(digest, privBytes, { format: 'recovered', lowS: true, prehash: false }) as Uint8Array
+  const sig = secp256k1.sign(digest, privBytes, {
+    format: 'recovered',
+    lowS: true,
+    prehash: false,
+  }) as Uint8Array
   const recovery = sig[0] as number
   const r = sig.slice(1, 33)
   const s = sig.slice(33, 65)
@@ -100,7 +104,13 @@ export class AuthResource {
   /** POST /auth — submit a signed SIWE message and receive a JWT. */
   verify(message: string, signature: string): Promise<AuthResponse> {
     return this.http
-      .post<{ token: string; address: string; account_id: string; name: string; expires_at: string }>('/auth', {
+      .post<{
+        token: string
+        address: string
+        account_id: string
+        name: string
+        expires_at: string
+      }>('/auth', {
         message,
         signature,
       })

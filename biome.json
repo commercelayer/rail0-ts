@@ -1,12 +1,10 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
-  "organizeImports": {
-    "enabled": true
-  },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "correctness": {
         "noUnusedImports": "error",
         "noUnusedVariables": "error"
@@ -31,11 +29,11 @@
     }
   },
   "files": {
-    "ignore": ["dist", "node_modules", "*.d.ts", "src/api.ts"]
+    "includes": ["**", "!**/dist", "!**/node_modules", "!**/*.d.ts", "!**/src/api.ts"]
   },
   "overrides": [
     {
-      "include": ["gen/**"],
+      "includes": ["**/gen/**"],
       "linter": {
         "rules": {
           "correctness": {

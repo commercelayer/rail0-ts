@@ -114,7 +114,9 @@ export class HttpClient {
    * bare JSON array and carries pagination in the `x-total-count` / `x-page` /
    * `x-per-page` response headers, which we fold into `meta` (matching rail0-go).
    */
-  async getPaginated<T>(path: string): Promise<{ data: T[]; meta: { page: number; per_page: number; total: number } }> {
+  async getPaginated<T>(
+    path: string,
+  ): Promise<{ data: T[]; meta: { page: number; per_page: number; total: number } }> {
     const { data, headers } = await this.send<T[]>('GET', path)
     const arr = Array.isArray(data) ? data : []
     const num = (name: string, fallback: number): number => {
@@ -132,7 +134,11 @@ export class HttpClient {
     }
   }
 
-  private async send<T>(method: string, path: string, body?: unknown): Promise<{ data: T; headers: Headers }> {
+  private async send<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ data: T; headers: Headers }> {
     const url = `${this.baseUrl}${path}`
     const maxAttempts = this.maxRetries + 1
     const trackAttempts = this.maxRetries > 0

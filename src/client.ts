@@ -20,12 +20,12 @@ export class Rail0Client {
 
   constructor(options: Rail0ClientOptions) {
     const http = new HttpClient(options)
-    this.auth     = new AuthResource(http)
-    this.chains   = new ChainsResource(http)
-    this.tokens   = new TokensResource(http)
+    this.auth = new AuthResource(http)
+    this.chains = new ChainsResource(http)
+    this.tokens = new TokensResource(http)
     this.payments = new PaymentsResource(http)
-    this.wallets  = new WalletsResource(http)
+    this.wallets = new WalletsResource(http)
     this.webhooks = new WebhooksResource(http)
-    this.health   = new HealthResource(http)
+    this.health = new HealthResource(http)
   }
 }

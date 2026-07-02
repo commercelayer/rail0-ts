@@ -224,8 +224,12 @@ export type StablecoinSymbol<C extends StablecoinChain> = keyof (typeof stableco
   string
 
 /** Returns the registry entry for a chain, or `undefined` if the chain is unknown. */
-export function chainInfo(chain: string): { chainId: number; tokens: Record<string, StablecoinInfo> } | undefined {
-  return (stablecoins as Record<string, { chainId: number; tokens: Record<string, StablecoinInfo> }>)[chain]
+export function chainInfo(
+  chain: string,
+): { chainId: number; tokens: Record<string, StablecoinInfo> } | undefined {
+  return (
+    stablecoins as Record<string, { chainId: number; tokens: Record<string, StablecoinInfo> }>
+  )[chain]
 }
 
 /** Returns all tokens on a chain that support EIP-3009 (transferWithAuthorization). */

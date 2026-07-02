@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Rail0Client } from '../src/client.js'
 import { Rail0ApiError } from '../src/core/error.js'
-import { debugLogger } from '../src/core/http.js'
 import type { LogEntry } from '../src/core/http.js'
+import { debugLogger } from '../src/core/http.js'
 import type { PaymentConfig } from '../src/resources/types.js'
 
 // Known test key (Hardhat account #0)
@@ -18,12 +18,6 @@ const mockPayment: PaymentConfig = {
   amount: '1000000',
   authorization_expiry: 9999999999,
   refund_expiry: 9999999999,
-}
-
-const mockSig = {
-  v: 27 as const,
-  r: '0x1111111111111111111111111111111111111111111111111111111111111111' as const,
-  s: '0x2222222222222222222222222222222222222222222222222222222222222222' as const,
 }
 
 const mockPaymentId = '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab'
@@ -111,7 +105,15 @@ describe('Rail0Client', () => {
       const tokenAddress = mockPayment.token
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(
-          JSON.stringify([{ address: tokenAddress, symbol: 'USDC', chain_id: 8453, chain_slug: 'base', decimals: 6 }]),
+          JSON.stringify([
+            {
+              address: tokenAddress,
+              symbol: 'USDC',
+              chain_id: 8453,
+              chain_slug: 'base',
+              decimals: 6,
+            },
+          ]),
           { status: 200 },
         ),
       )
@@ -205,10 +207,9 @@ describe('Rail0Client', () => {
     describe('auth.getNonce', () => {
       it('returns nonce and expiresAt from POST /nonces', async () => {
         vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({ nonce: 'abc123', expires_at: '2099-01-01T00:00:00Z' }),
-            { status: 200 },
-          ),
+          new Response(JSON.stringify({ nonce: 'abc123', expires_at: '2099-01-01T00:00:00Z' }), {
+            status: 200,
+          }),
         )
 
         const result = await client.auth.getNonce()
@@ -226,9 +227,9 @@ describe('Rail0Client', () => {
           account_id: 'some-uuid',
           expires_at: '2099-01-01T00:00:00Z',
         }
-        const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-          new Response(JSON.stringify(mockAuthResponse), { status: 200 }),
-        )
+        const spy = vi
+          .spyOn(globalThis, 'fetch')
+          .mockResolvedValueOnce(new Response(JSON.stringify(mockAuthResponse), { status: 200 }))
 
         const result = await client.auth.verify('eip4361message', '0xsignature')
 

@@ -17,7 +17,6 @@ const PAYMENT: PaymentConfig = {
   refund_expiry: 9999999999,
 }
 
-const TX_HASH = `0x${'ab'.repeat(32)}`
 const CONFIG_HASH = `0x${'ff'.repeat(32)}`
 
 function client() {
@@ -147,7 +146,12 @@ describe('payments', () => {
         payment: PAYMENT,
         chain_id: 8453,
         rail0_contract: '0x1234567890123456789012345678901234567890',
-        signing_payload: { domain: {}, types: {}, primaryType: 'TransferWithAuthorization', message: {} },
+        signing_payload: {
+          domain: {},
+          types: {},
+          primaryType: 'TransferWithAuthorization',
+          message: {},
+        },
       }),
     )
     const res = await client().payments.create({

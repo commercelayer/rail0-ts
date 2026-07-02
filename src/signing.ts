@@ -125,7 +125,11 @@ function buildDigest(
   typeHash: Uint8Array,
 ): Uint8Array {
   return keccak_256(
-    concat(new Uint8Array([0x19, 0x01]), hashDomainSeparator(domain), hashStruct(transfer, typeHash)),
+    concat(
+      new Uint8Array([0x19, 0x01]),
+      hashDomainSeparator(domain),
+      hashStruct(transfer, typeHash),
+    ),
   )
 }
 
