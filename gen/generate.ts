@@ -1,21 +1,27 @@
 /**
- * Code generation pipeline for the RAIL0 SDK.
+ * Code generation pipeline for the RAIL0 TypeScript SDK.
  *
  * Run with: pnpm generate
  *
  * Steps:
- *   1. Read the OpenAPI schema from the rail0 contract repo
- *   2. Generate TypeScript types via openapi-typescript → src/api.ts
- *   3. Generate src/resources/types.ts — public SDK types
- *   4. Generate src/resources/{accounts,payments,chains,tokens}.ts — resource classes
+ *   1. Read the OpenAPI schema from the rail0-gateway repo
+ *   2. Generate raw TypeScript types via openapi-typescript → src/api.ts
+ *   3. Emit src/resources/types.ts — public SDK types (gateway vocabulary)
+ *   4. Emit src/resources/{payments,wallets,webhooks,chains,tokens,health}.ts
+ *
+ * The type vocabulary mirrors the gateway OpenAPI schemas (Payment, PaymentDetail,
+ * Transaction, Dispute, Wallet, WalletWithTokens, WalletBalances, Webhook,
+ * EventCallback, Health, …), keeping the SDK aligned with rail0-go. The signing
+ * types (EIP712Domain / EIP3009Message / PaymentConfig / SigningPayload) are not
+ * named in the spec, so they are hand-authored here (as in rail0-go).
  *
  * Schema source (in priority order):
- *   1. RAIL0_SCHEMA_URL env var — remote URL (future: published with each release)
+ *   1. RAIL0_SCHEMA_URL env var — remote URL
  *   2. RAIL0_SCHEMA_PATH env var — absolute path to a local openapi.json
- *   3. Default: ../rail0-api/docs/openapi.json (sibling repo on the local filesystem)
+ *   3. Default: ../rail0-gateway/docs/openapi.json (sibling repo, the live API)
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import openapiTS, { astToString } from 'openapi-typescript'
@@ -24,15 +30,14 @@ const genDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(genDir, '..')
 
 const GENERATED_FILE = resolve(root, 'src/api.ts')
-const RESOURCES_DIR  = resolve(root, 'src/resources')
+const RESOURCES_DIR = resolve(root, 'src/resources')
 
 const FILE_HEADER = '// GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.'
 
-function resolveSchemaSource(): URL {
-  if (process.env.RAIL0_SCHEMA_URL) {
-    return new URL(process.env.RAIL0_SCHEMA_URL)
-  }
-  const localPath = process.env.RAIL0_SCHEMA_PATH ?? resolve(root, '..', 'rail0-api', 'docs', 'openapi.json')
+function schemaSource(): URL {
+  if (process.env.RAIL0_SCHEMA_URL) return new URL(process.env.RAIL0_SCHEMA_URL)
+  const localPath =
+    process.env.RAIL0_SCHEMA_PATH ?? resolve(root, '..', 'rail0-gateway', 'docs', 'openapi.json')
   return new URL(`file://${localPath}`)
 }
 
@@ -40,266 +45,661 @@ function resolveSchemaSource(): URL {
 // Step 1 — openapi-typescript → src/api.ts
 // ---------------------------------------------------------------------------
 
-async function generateTypes(): Promise<void> {
-  const schemaUrl = resolveSchemaSource()
-  console.log(`Reading schema: ${schemaUrl}`)
-  const ast = await openapiTS(schemaUrl)
-  const content = astToString(ast)
-
+async function generateApiTypes(): Promise<void> {
+  const url = schemaSource()
+  console.log(`Reading schema: ${url}`)
+  const ast = await openapiTS(url)
   await mkdir(resolve(root, 'src'), { recursive: true })
-  await writeFile(GENERATED_FILE, content, 'utf-8')
+  await writeFile(GENERATED_FILE, astToString(ast), 'utf-8')
   console.log(`Generated: ${GENERATED_FILE}`)
 }
 
 // ---------------------------------------------------------------------------
-// Step 2 — src/resources/types.ts
+// Step 2 — src/resources/types.ts (hand-authored, gateway vocabulary)
 // ---------------------------------------------------------------------------
 
-async function generateResourceTypes(schema: Record<string, unknown>): Promise<void> {
-  const schemas = (schema as any).components?.schemas ?? {}
+const TYPES = `${FILE_HEADER}
 
-  // Helper: map OpenAPI property def to TS type string
-  function propToTsType(propDef: any): string {
-    if (propDef.$ref) {
-      return propDef.$ref.split('/').pop()!
-    }
-    if (propDef.allOf) {
-      const refEntry = propDef.allOf.find((e: any) => e.$ref)
-      if (refEntry) return refEntry.$ref.split('/').pop()!
-    }
-    const nullable = propDef.nullable ? ' | null' : ''
-    switch (propDef.type) {
-      case 'integer': return `number${nullable}`
-      case 'boolean': return `boolean${nullable}`
-      case 'string':  return `string${nullable}`
-      case 'array':   return `unknown[]${nullable}`
-      case 'object':  return `Record<string, unknown>${nullable}`
-      default:        return `unknown${nullable}`
-    }
-  }
+// Raw generated types for advanced use.
+export type { components, operations } from '../api.js'
 
-  // Generate an interface from a schema definition
-  function schemaToInterface(name: string, def: any, extra?: string): string {
-    const props = def.properties ?? {}
-    const required: string[] = def.required ?? []
-    const lines: string[] = []
-    if (def.description) {
-      lines.push(`/** ${def.description} */`)
-    }
-    lines.push(`export interface ${name} {`)
-    for (const [key, propDef] of Object.entries<any>(props)) {
-      const opt = required.includes(key) ? '' : '?'
-      const tsType = propToTsType(propDef)
-      if (propDef.description) {
-        lines.push(`  /** ${propDef.description} */`)
-      }
-      lines.push(`  ${key}${opt}: ${tsType}`)
-    }
-    if (extra) lines.push(extra)
-    lines.push(`}`)
-    return lines.join('\n')
-  }
+// ── Primitive aliases ────────────────────────────────────────────────
+/** Checksummed or lowercase Ethereum address (42 chars, 0x-prefixed). */
+export type Address = string
+/** 32-byte value, hex-encoded (66 chars, 0x-prefixed). */
+export type Bytes32 = string
+/** Unsigned 256-bit integer serialised as a decimal string. */
+export type Uint256String = string
 
-  const parts: string[] = [
-    FILE_HEADER,
-    `import type { components } from '../api.js'`,
-    ``,
-    `// Re-export raw generated types for advanced use`,
-    `export type { components, operations } from '../api.js'`,
-    ``,
-    `// ── Primitive aliases ────────────────────────────────────────────────`,
-    `/** Checksummed or lowercase Ethereum address (42 chars, 0x-prefixed). */`,
-    `export type Address = components['schemas']['Address']`,
-    `/** 32-byte value, hex-encoded (66 chars, 0x-prefixed). */`,
-    `export type Bytes32 = components['schemas']['Bytes32']`,
-    `/** Unsigned 256-bit integer serialised as a decimal string. */`,
-    `export type Uint256String = components['schemas']['Uint256String']`,
-    ``,
-    `// ── Request body types ───────────────────────────────────────────────`,
-    `export type CreatePaymentRequest    = components['schemas']['CreatePaymentRequest']`,
-    `export type CapturePaymentRequest   = components['schemas']['CapturePaymentRequest']`,
-    `export type PayerSignatureRequest   = components['schemas']['PayerSignatureRequest']`,
-    `export type SubmitTransactionRequest = components['schemas']['SubmitTransactionRequest']`,
-    ``,
-    `// ── Pagination ───────────────────────────────────────────────────────`,
-    `export interface PageMeta {`,
-    `  page: number`,
-    `  per_page: number`,
-    `  total: number`,
-    `}`,
-    ``,
-    `export interface PaginatedResponse<T> {`,
-    `  data: T[]`,
-    `  meta: PageMeta`,
-    `}`,
-    ``,
-    `// ── Inline types (not named schemas in the spec) ──────────────────────`,
-    `export interface Blockchain {`,
-    `  chain_id: number`,
-    `  name: string`,
-    `  slug: string`,
-    `  network_type: string`,
-    `  explorer_url: string`,
-    `}`,
-    ``,
-    `export interface Token {`,
-    `  chain_id: number`,
-    `  chain_slug: string`,
-    `  symbol: string`,
-    `  address: string`,
-    `  decimals: number`,
-    `}`,
-    ``,
-    `export interface PaymentMethod {`,
-    `  id: string`,
-    `  token_id: string`,
-    `  chain_id: number`,
-    `  chain_name: string`,
-    `  chain_slug: string`,
-    `  explorer_url: string`,
-    `  token_address: string`,
-    `  token_symbol: string`,
-    `  token_decimals: number`,
-    `  wallet_address: string`,
-    `  default: boolean`,
-    `}`,
-    ``,
-    `// ── Named response schemas ────────────────────────────────────────────`,
-  ]
+// ── Enums ────────────────────────────────────────────────────────────
+export type PaymentMode = 'authorize' | 'charge'
+export type PaymentStatus =
+  | 'unsigned'
+  | 'signed'
+  | 'authorized'
+  | 'charged'
+  | 'captured'
+  | 'partially_captured'
+  | 'voided'
+  | 'released'
+  | 'refunded'
+  | 'partially_refunded'
+export type TransactionOperation = 'authorize' | 'charge' | 'capture' | 'void' | 'release' | 'refund'
+export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
+export type DisputeStatus = 'open' | 'closed'
+export type CircuitState = 'closed' | 'open'
+export type EventCallbackStatus = 'pending' | 'delivered' | 'failed'
+export type HealthStatus = 'ok' | 'degraded'
+/** Webhook event topics. Mirrors the gateway's WebhookTopic enum. */
+export type WebhookTopic =
+  | 'payments.created'
+  | 'payments.signed'
+  | 'payments.authorized'
+  | 'payments.charged'
+  | 'payments.captured'
+  | 'payments.voided'
+  | 'payments.released'
+  | 'payments.refunded'
+  | 'payments.failed'
+  | 'payments.disputed'
+  | 'payments.dispute_closed'
 
-  // Named schemas to generate (in dependency order)
-  const namedSchemas = [
-    'EIP712Domain',
-    'EIP3009Message',
-    'PaymentConfig',
-    'SigningPayload',
-    'CreatePaymentResponse',
-    'PayerSignatureResponse',
-    'PrepareTransactionResponse',
-    'SubmitTransactionAcceptedResponse',
-  ]
-
-  for (const name of namedSchemas) {
-    const def = schemas[name]
-    if (!def) { console.warn(`Warning: schema ${name} not found`); continue }
-    parts.push(schemaToInterface(name, def))
-    parts.push(``)
-  }
-
-  // Inline schemas not present as named components in the spec
-  parts.push(`/** A wallet token configuration linking a wallet address to a specific token on a chain. */`)
-  parts.push(`export interface WalletToken {`)
-  parts.push(`  id: string`)
-  parts.push(`  wallet_id: string`)
-  parts.push(`  address: string`)
-  parts.push(`  default: boolean`)
-  parts.push(`  active: boolean`)
-  parts.push(`  token_id: string`)
-  parts.push(`  token_symbol: string`)
-  parts.push(`  token_address: string`)
-  parts.push(`  token_decimals: number`)
-  parts.push(`  chain_id: number`)
-  parts.push(`  chain_name: string`)
-  parts.push(`  chain_slug: string`)
-  parts.push(`}`)
-  parts.push(``)
-  parts.push(`/** Condensed payment record returned by GET /payments. */`)
-  parts.push(`export interface PaymentSummary {`)
-  parts.push(`  rail0_id: string`)
-  parts.push(`  status: string`)
-  parts.push(`  mode: 'authorize' | 'charge'`)
-  parts.push(`  amount: string`)
-  parts.push(`  payer: string`)
-  parts.push(`  payee: string`)
-  parts.push(`  token: string`)
-  parts.push(`  authorization_expiry: number`)
-  parts.push(`  refund_expiry: number`)
-  parts.push(`  metadata?: Record<string, unknown> | null`)
-  parts.push(`  created_at: string`)
-  parts.push(`}`)
-  parts.push(``)
-  parts.push(`/** An on-chain transaction attempt associated with a payment. */`)
-  parts.push(`export interface TransactionRecord {`)
-  parts.push(`  id: string`)
-  parts.push(`  operation: 'authorize' | 'charge' | 'capture' | 'void' | 'release' | 'refund'`)
-  parts.push(`  status: 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'`)
-  parts.push(`  transaction_hash?: string | null`)
-  parts.push(`  amount?: string | null`)
-  parts.push(`  fee_amount: string`)
-  parts.push(`  block_number?: number | null`)
-  parts.push(`  error_reason?: string | null`)
-  parts.push(`  pending_at?: string | null`)
-  parts.push(`  submitted_at?: string | null`)
-  parts.push(`  confirmed_at?: string | null`)
-  parts.push(`}`)
-  parts.push(``)
-
-  // GetPaymentResponse — inline on_chain as OnChainState
-  parts.push(`export interface OnChainState {`)
-  parts.push(`  exists: boolean`)
-  parts.push(`  capturable_amount: Uint256String`)
-  parts.push(`  refundable_amount: Uint256String`)
-  parts.push(`}`)
-  parts.push(``)
-  parts.push(schemaToInterface('GetPaymentResponse', schemas['GetPaymentResponse'] ?? {
-    description: 'Current state of a payment record.',
-    required: ['rail0_id','status','mode','amount','payer','payee','token','chain_id','authorization_expiry','refund_expiry'],
-    properties: {
-      rail0_id: { allOf: [{ $ref: '#/components/schemas/Bytes32' }] },
-      status: { type: 'string' },
-      mode: { type: 'string' },
-      amount: { allOf: [{ $ref: '#/components/schemas/Uint256String' }] },
-      payer: { allOf: [{ $ref: '#/components/schemas/Address' }] },
-      payee: { allOf: [{ $ref: '#/components/schemas/Address' }] },
-      token: { allOf: [{ $ref: '#/components/schemas/Address' }] },
-      chain_id: { type: 'integer' },
-      authorization_expiry: { type: 'integer' },
-      refund_expiry: { type: 'integer' },
-      metadata: { type: 'object', nullable: true },
-      on_chain: { type: 'object', nullable: true },
-      last_broadcast_hash: { allOf: [{ $ref: '#/components/schemas/Bytes32' }] },
-      failure_code: { type: 'string' },
-      failure_message: { type: 'string' },
-    }
-  }))
-  // Override on_chain type
-  parts[parts.length - 1] = parts[parts.length - 1].replace(
-    'on_chain?: Record<string, unknown> | null',
-    'on_chain?: OnChainState | null'
-  )
-  parts.push(``)
-
-  // PrepareRefundResponse union
-  parts.push(`/** Union return type for refund prepare (phase 1 returns signing_payload, phase 2 returns PrepareTransactionResponse). */`)
-  parts.push(`export type PrepareRefundResponse = PrepareTransactionResponse | { signing_payload: unknown }`)
-  parts.push(``)
-
-  // Compatibility aliases for types that index.ts and signing.ts reference but are not in the spec
-  parts.push(`// ── Compatibility type aliases ────────────────────────────────────────`)
-  parts.push(`export type ReleaseRequest = Record<string, unknown>`)
-  parts.push(`export type AuthorizePaymentResponse = SubmitTransactionAcceptedResponse`)
-  parts.push(`export type ChargePaymentResponse = SubmitTransactionAcceptedResponse`)
-  parts.push(`export type CapturePaymentResponse = SubmitTransactionAcceptedResponse`)
-  parts.push(`export type VoidPaymentResponse = SubmitTransactionAcceptedResponse`)
-  parts.push(`export type ReleasePaymentResponse = SubmitTransactionAcceptedResponse`)
-  parts.push(`export type RefundPaymentResponse = SubmitTransactionAcceptedResponse`)
-  parts.push(`export type PaymentResponse = GetPaymentResponse`)
-  parts.push(`export type ApiErrorBody = components['schemas']['Error']`)
-  parts.push(`export type PaymentMode = 'authorize' | 'charge'`)
-  parts.push(`export type SignatureStatus = 'signature_stored'`)
-  parts.push(``)
-
-  const outPath = resolve(RESOURCES_DIR, 'types.ts')
-  await writeFile(outPath, parts.join('\n'), 'utf-8')
-  console.log(`Generated: ${outPath}`)
+// ── Signing types (not named in the spec; hand-authored, as in rail0-go) ──
+export interface EIP712Domain {
+  name: string
+  version: string
+  chainId: number
+  verifyingContract: Address
 }
+export interface EIP3009Message {
+  from: Address
+  to: Address
+  value: Uint256String
+  validAfter: Uint256String
+  validBefore: Uint256String
+  nonce: Bytes32
+}
+/** Immutable payment configuration returned inside a payment record. */
+export interface PaymentConfig {
+  payer: Address
+  payee: Address
+  token: Address
+  amount: Uint256String
+  authorization_expiry: number
+  refund_expiry: number
+}
+/** EIP-712 typed-data payload to pass to eth_signTypedData_v4 (or the SDK signer). */
+export interface SigningPayload {
+  domain: EIP712Domain
+  types: Record<string, unknown>
+  primaryType: string
+  message: EIP3009Message
+}
+
+// ── Request bodies ───────────────────────────────────────────────────
+export interface CreatePaymentRequest {
+  chain_id: number
+  mode: PaymentMode
+  amount: string
+  token: Address
+  payer: Address
+  payee: Address
+  description?: string
+  metadata?: Record<string, unknown>
+}
+export interface PayerSignatureRequest {
+  signature: string
+}
+export interface SubmitTransactionRequest {
+  signed_transaction: string
+}
+/** Body for the generic prepare endpoints. amount → capture/refund; signature → refund phase-2; from → release. */
+export interface PrepareRequest {
+  amount?: string
+  signature?: string
+  from?: Address
+}
+export interface CreateWalletRequest {
+  address: string
+  label?: string
+}
+export interface UpdateWalletRequest {
+  label?: string
+  active?: boolean
+}
+export interface CreateWebhookRequest {
+  name: string
+  callback_url: string
+  topic: WebhookTopic
+}
+export interface UpdateWebhookRequest {
+  name?: string
+  callback_url?: string
+  topic?: WebhookTopic
+}
+
+// ── Domain models (gateway vocabulary) ───────────────────────────────
+/** Condensed payment record (GET /payments list item). */
+// Fields always present on a fetched payment are required for ergonomics
+// (the gateway serialises them on every read); bookkeeping/nullable fields stay optional.
+export interface Payment {
+  id?: string
+  contract_id?: string
+  rail0_id: Bytes32
+  status: PaymentStatus
+  mode: PaymentMode
+  amount: Uint256String
+  capturable_amount?: Uint256String
+  refundable_amount?: Uint256String
+  config_hash?: Bytes32
+  payer: Address
+  payee: Address
+  token: Address
+  authorization_expiry: number
+  refund_expiry: number
+  disputed?: boolean
+  last_error_code?: string | null
+  last_error_message?: string | null
+  description?: string | null
+  metadata?: Record<string, unknown> | null
+  signed_at?: string | null
+  created_at: string
+  updated_at?: string
+}
+/** Single-payment view: adds chain context, embedded transactions, and (when unsigned) the signing payload. */
+export interface PaymentDetail extends Payment {
+  chain_id: number
+  rail0_contract?: Address
+  transactions?: Transaction[]
+  signing_payload?: SigningPayload | null
+}
+export interface Transaction {
+  id: string
+  payment_id?: string
+  operation: TransactionOperation
+  status: TransactionStatus
+  unsigned_transaction?: string | null
+  transaction_hash?: string | null
+  amount?: Uint256String | null
+  block_number?: number | null
+  /** Present for refund prepare phase-1: the EIP-3009 payload for the payee to sign. */
+  signing_payload?: SigningPayload | null
+  pending_at?: string | null
+  submitted_at?: string | null
+  confirmed_at?: string | null
+  created_at?: string
+  updated_at?: string
+}
+export interface Dispute {
+  id?: string
+  payment_id?: string
+  status?: DisputeStatus
+  reason?: string
+  opened_block?: number | null
+  opened_at?: string
+  closed_by?: 'payer' | 'payee' | null
+  close_reason?: string | null
+  closed_block?: number | null
+  closed_at?: string | null
+}
+export interface Wallet {
+  id?: string
+  account_id?: string
+  address?: string
+  label?: string | null
+  active?: boolean
+  created_at?: string
+  updated_at?: string
+}
+export interface WalletTokenHolding {
+  token?: Token
+  active?: boolean
+  default?: boolean
+}
+/** A wallet with its token holdings nested inline (GET /accounts/:id/wallets). */
+export interface WalletWithTokens extends Wallet {
+  tokens?: WalletTokenHolding[]
+}
+export interface Token {
+  chain_id?: number
+  symbol?: string
+  address?: string
+  decimals?: number
+}
+export interface Blockchain {
+  chain_id?: number
+  name?: string
+  native_symbol?: string
+  network_type?: string
+  explorer_url?: string
+}
+export interface AssetBalance {
+  symbol?: string
+  address?: string | null
+  decimals?: number
+  raw?: string
+  amount?: string
+}
+export interface BalanceError {
+  code?: 'rpc_unavailable' | 'rpc_error' | 'timeout' | 'error'
+  message?: string
+}
+export interface ChainBalance {
+  chain_id?: number
+  network_type?: string
+  native?: AssetBalance
+  tokens?: AssetBalance[]
+  error?: BalanceError
+}
+export interface WalletBalances {
+  wallet_id?: string
+  address?: string
+  balances?: ChainBalance[]
+}
+export interface Nonce {
+  id?: string
+  value?: string
+  expires_at?: string
+  used?: boolean
+  created_at?: string
+  updated_at?: string
+}
+export interface Session {
+  token?: string
+  address?: string
+  account_id?: string
+  expires_at?: string
+}
+export interface Webhook {
+  id?: string
+  name?: string
+  callback_url?: string
+  topic?: WebhookTopic
+  active?: boolean
+  circuit_state?: CircuitState
+  circuit_failure_count?: number
+  created_at?: string
+  updated_at?: string
+}
+/** Webhook view including the shared secret. Returned only on create and rotate_secret. */
+export interface WebhookWithSecret extends Webhook {
+  shared_secret?: string
+}
+export interface EventCallback {
+  id?: string
+  webhook_id?: string
+  payment_id?: string
+  topic?: string
+  callback_url?: string
+  response_code?: string | null
+  response_message?: string | null
+  error_reason?: string | null
+  status?: EventCallbackStatus
+  created_at?: string
+}
+export interface Health {
+  status?: HealthStatus
+  api_version?: string
+  contract_version?: string
+  db?: 'ok' | 'error'
+  active_chains?: number
+  active_contracts?: number
+  timestamp?: string
+}
+
+/** A (wallet, token, chain) a payee accepts payment on. Client-side convenience (flattened from active wallets), as in rail0-go. */
+export interface PaymentMethod {
+  address: string
+  chain_id: number
+  token: Token
+}
+
+// ── Pagination ───────────────────────────────────────────────────────
+export interface PageMeta {
+  page: number
+  per_page: number
+  total: number
+}
+export interface PaginatedResponse<T> {
+  data: T[]
+  meta: PageMeta
+}
+
+// ── Error ────────────────────────────────────────────────────────────
+export interface ApiErrorBody {
+  status: string
+  message?: string
+}
+`
 
 // ---------------------------------------------------------------------------
 // Step 3 — Resource files
 // ---------------------------------------------------------------------------
 
-async function generateChainsResource(): Promise<void> {
-  const content = `${FILE_HEADER}
+const BUILD_QUERY = `
+function buildQuery(params?: object): string {
+  if (!params) return ''
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
+  if (entries.length === 0) return ''
+  return '?' + entries.map(([k, v]) => \`\${k}=\${encodeURIComponent(String(v))}\`).join('&')
+}
+`
+
+const PAYMENTS = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import type {
+  Bytes32,
+  CreatePaymentRequest,
+  Dispute,
+  PaginatedResponse,
+  Payment,
+  PaymentDetail,
+  PayerSignatureRequest,
+  PrepareRequest,
+  SubmitTransactionRequest,
+  Transaction,
+  TransactionOperation,
+} from './types.js'
+
+export interface ListPaymentsParams {
+  status?: string
+  mode?: string
+  payer?: string
+  payee?: string
+  token?: string
+  rail0_id?: string
+  sort?: string
+  page?: number
+  per_page?: number
+}
+
+export interface ListTransactionsParams {
+  operation?: string
+  status?: string
+  sort?: string
+  page?: number
+  per_page?: number
+}
+
+export class PaymentsResource {
+  constructor(private readonly http: HttpClient) {}
+
+  /** Create a payment. Returns the PaymentDetail, including the EIP-712 signing_payload for the payer. */
+  create(params: CreatePaymentRequest): Promise<PaymentDetail> {
+    return this.http.post('/payments', params)
+  }
+
+  /** List payments for the authenticated wallet (payer or payee). Requires a JWT. */
+  list(params?: ListPaymentsParams): Promise<PaginatedResponse<Payment>> {
+    return this.http.getPaginated(\`/payments\${buildQuery(params)}\`)
+  }
+
+  /** Fetch a payment's current state (DB status + live on-chain balances + transactions). */
+  get(id: Bytes32): Promise<PaymentDetail> {
+    return this.http.get(\`/payments/\${id}\`)
+  }
+
+  /** List a payment's on-chain transactions. */
+  transactions(id: Bytes32, params?: ListTransactionsParams): Promise<PaginatedResponse<Transaction>> {
+    return this.http.getPaginated(\`/payments/\${id}/transactions\${buildQuery(params)}\`)
+  }
+
+  /** Store the payer's EIP-3009 signature (moves the payment to \`signed\`). */
+  sign(id: Bytes32, params: PayerSignatureRequest): Promise<PaymentDetail> {
+    return this.http.put(\`/payments/\${id}/sign\`, params)
+  }
+
+  /** List the payment's dispute open/close history. */
+  disputes(id: Bytes32): Promise<Dispute[]> {
+    return this.http.get(\`/payments/\${id}/disputes\`)
+  }
+
+  // ── Generic prepare/submit ─────────────────────────────────────────
+  /** Build the unsigned transaction for an operation. */
+  prepare(id: Bytes32, operation: TransactionOperation | 'dispute' | 'close_dispute', body?: PrepareRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/\${operation}/prepare\`, body)
+  }
+
+  /** Broadcast a signed transaction for an operation (HTTP 202, async). */
+  submit(id: Bytes32, operation: TransactionOperation | 'dispute' | 'close_dispute', params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/\${operation}\`, params)
+  }
+
+  // ── Operation-specific pairs (payee unless noted) ──────────────────
+  authorizePrepare(id: Bytes32): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/authorize/prepare\`)
+  }
+  authorize(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/authorize\`, params)
+  }
+
+  chargePrepare(id: Bytes32): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/charge/prepare\`)
+  }
+  charge(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/charge\`, params)
+  }
+
+  capturePrepare(id: Bytes32, amount: string): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/capture/prepare\`, { amount })
+  }
+  capture(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/capture\`, params)
+  }
+
+  voidPrepare(id: Bytes32): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/void/prepare\`)
+  }
+  void(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/void\`, params)
+  }
+
+  /** Release an expired escrow (permissionless). \`from\` defaults to the payer. */
+  releasePrepare(id: Bytes32, from?: string): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/release/prepare\`, from ? { from } : undefined)
+  }
+  release(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/release\`, params)
+  }
+
+  /**
+   * Refund prepare — two-phase EIP-3009 flow.
+   * Phase 1: \`{ amount }\` → Transaction carrying a signing_payload for the payee to sign.
+   * Phase 2: \`{ amount, signature }\` → the unsigned on-chain refund transaction.
+   */
+  refundPrepare(id: Bytes32, body: PrepareRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/refund/prepare\`, body)
+  }
+  refund(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/refund\`, params)
+  }
+
+  /** Open a dispute (payer, signal-only). Optional bytes32 reason code. */
+  disputePrepare(id: Bytes32, reason?: string): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/dispute/prepare\`, reason ? { reason } : undefined)
+  }
+  dispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/dispute\`, params)
+  }
+
+  /** Close a dispute (payer). Optional bytes32 reason code. */
+  closeDisputePrepare(id: Bytes32, reason?: string): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/dispute/close/prepare\`, reason ? { reason } : undefined)
+  }
+  closeDispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/dispute/close\`, params)
+  }
+}
+${BUILD_QUERY}`
+
+const WALLETS = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import type {
+  CreateWalletRequest,
+  PaginatedResponse,
+  PaymentMethod,
+  UpdateWalletRequest,
+  Wallet,
+  WalletBalances,
+  WalletWithTokens,
+} from './types.js'
+
+export interface ListWalletsParams {
+  chain_id?: number
+  token_symbol?: string
+  active?: boolean
+  sort?: string
+  page?: number
+  per_page?: number
+}
+
+export interface WalletBalancesParams {
+  chain_id?: number
+  token_symbol?: string
+}
+
+export interface PaymentMethodsParams {
+  chain_id?: number
+  token_symbol?: string
+}
+
+/**
+ * Wallets and their token holdings, scoped to an account. Mirrors rail0-go's
+ * WalletsService. The list endpoint is public (no JWT); mutations require a JWT.
+ */
+export class WalletsResource {
+  constructor(private readonly http: HttpClient) {}
+
+  /** List an account's wallets, each with its token holdings nested. */
+  list(account_id: string, params?: ListWalletsParams): Promise<PaginatedResponse<WalletWithTokens>> {
+    return this.http.getPaginated(\`/accounts/\${account_id}/wallets\${buildQuery(params)}\`)
+  }
+
+  /** Fetch a single wallet by UUID or 0x address. */
+  get(account_id: string, id_or_address: string): Promise<Wallet> {
+    return this.http.get(\`/accounts/\${account_id}/wallets/\${id_or_address}\`)
+  }
+
+  /** Add a wallet to the account. */
+  create(account_id: string, params: CreateWalletRequest): Promise<Wallet> {
+    return this.http.post(\`/accounts/\${account_id}/wallets\`, params)
+  }
+
+  /** Update a wallet's label or active flag. */
+  update(account_id: string, id: string, params: UpdateWalletRequest): Promise<Wallet> {
+    return this.http.patch(\`/accounts/\${account_id}/wallets/\${id}\`, params)
+  }
+
+  /** Soft-delete (deactivate) a wallet. */
+  delete(account_id: string, id: string): Promise<void> {
+    return this.http.delete(\`/accounts/\${account_id}/wallets/\${id}\`)
+  }
+
+  /** Read a wallet's live on-chain balances (native + tokens). */
+  balances(account_id: string, id: string, params?: WalletBalancesParams): Promise<WalletBalances> {
+    return this.http.get(\`/accounts/\${account_id}/wallets/\${id}/balances\${buildQuery(params)}\`)
+  }
+
+  /**
+   * Convenience (client-side): the account's active wallets flattened to
+   * (address, chain_id, token) payment methods — the same shape rail0-go returns.
+   * There is no dedicated gateway endpoint; this lists active wallets and flattens.
+   */
+  async paymentMethods(account_id: string, params?: PaymentMethodsParams): Promise<PaymentMethod[]> {
+    const { data } = await this.list(account_id, { active: true })
+    const methods: PaymentMethod[] = []
+    for (const w of data) {
+      for (const holding of w.tokens ?? []) {
+        if (holding.active === false || !holding.token) continue
+        const t = holding.token
+        if (params?.chain_id && t.chain_id !== params.chain_id) continue
+        if (params?.token_symbol && t.symbol?.toUpperCase() !== params.token_symbol.toUpperCase()) continue
+        methods.push({ address: w.address ?? '', chain_id: t.chain_id ?? 0, token: t })
+      }
+    }
+    return methods
+  }
+}
+${BUILD_QUERY}`
+
+const WEBHOOKS = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import type {
+  CreateWebhookRequest,
+  EventCallback,
+  PaginatedResponse,
+  UpdateWebhookRequest,
+  Webhook,
+  WebhookWithSecret,
+} from './types.js'
+
+export interface ListWebhooksParams {
+  topic?: string
+  active?: boolean
+  circuit_state?: 'closed' | 'open'
+  sort?: string
+  page?: number
+  per_page?: number
+}
+
+export interface ListEventCallbacksParams {
+  status?: 'pending' | 'delivered' | 'failed'
+  sort?: string
+  page?: number
+  per_page?: number
+}
+
+/** Webhook subscriptions for the authenticated account. All methods require a JWT. */
+export class WebhooksResource {
+  constructor(private readonly http: HttpClient) {}
+
+  list(params?: ListWebhooksParams): Promise<PaginatedResponse<Webhook>> {
+    return this.http.getPaginated(\`/webhooks\${buildQuery(params)}\`)
+  }
+
+  /** Register a webhook. The response includes the shared_secret — shown only here and on rotateSecret. */
+  create(params: CreateWebhookRequest): Promise<WebhookWithSecret> {
+    return this.http.post('/webhooks', params)
+  }
+
+  get(id: string): Promise<Webhook> {
+    return this.http.get(\`/webhooks/\${id}\`)
+  }
+
+  update(id: string, params: UpdateWebhookRequest): Promise<Webhook> {
+    return this.http.patch(\`/webhooks/\${id}\`, params)
+  }
+
+  enable(id: string): Promise<Webhook> {
+    return this.http.put(\`/webhooks/\${id}/enable\`)
+  }
+
+  disable(id: string): Promise<Webhook> {
+    return this.http.put(\`/webhooks/\${id}/disable\`)
+  }
+
+  /** Rotate the shared secret — returned once in the response. */
+  rotateSecret(id: string): Promise<WebhookWithSecret> {
+    return this.http.put(\`/webhooks/\${id}/rotate_secret\`)
+  }
+
+  /** Reset the delivery circuit breaker and re-enable the webhook. */
+  resetCircuit(id: string): Promise<Webhook> {
+    return this.http.put(\`/webhooks/\${id}/reset_circuit\`)
+  }
+
+  /** List delivery attempts for a webhook. */
+  eventCallbacks(id: string, params?: ListEventCallbacksParams): Promise<PaginatedResponse<EventCallback>> {
+    return this.http.getPaginated(\`/webhooks/\${id}/event_callbacks\${buildQuery(params)}\`)
+  }
+
+  delete(id: string): Promise<void> {
+    return this.http.delete(\`/webhooks/\${id}\`)
+  }
+}
+${BUILD_QUERY}`
+
+const CHAINS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
 import type { Blockchain } from './types.js'
 
@@ -314,13 +714,8 @@ export class ChainsResource {
   }
 }
 `
-  const outPath = resolve(RESOURCES_DIR, 'chains.ts')
-  await writeFile(outPath, content, 'utf-8')
-  console.log(`Generated: ${outPath}`)
-}
 
-async function generateTokensResource(): Promise<void> {
-  const content = `${FILE_HEADER}
+const TOKENS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
 import type { Token } from './types.js'
 
@@ -339,239 +734,42 @@ export class TokensResource {
   }
 }
 `
-  const outPath = resolve(RESOURCES_DIR, 'tokens.ts')
-  await writeFile(outPath, content, 'utf-8')
-  console.log(`Generated: ${outPath}`)
-}
 
-async function generateAccountsResource(): Promise<void> {
-  const content = `${FILE_HEADER}
+const HEALTH = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
-import type { PaginatedResponse, PaymentMethod, WalletToken } from './types.js'
+import type { Health } from './types.js'
 
-export interface ListWalletsParams {
-  chain_id?: number
-  chain_slug?: string
-  token_symbol?: string
-  active?: boolean
-  page?: number
-  per_page?: number
-}
+export type { Health } from './types.js'
 
-export class AccountsResource {
+export class HealthResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** Return the active payment methods (chain + token + wallet) for the given account. */
-  paymentMethods(account_id: string): Promise<PaymentMethod[]> {
-    return this.http.get(\`/accounts/\${account_id}/payment-methods\`)
+  /** Report gateway liveness/readiness (DB, chain/contract counts). */
+  get(): Promise<Health> {
+    return this.http.get('/health')
   }
-
-  /**
-   * Return paginated wallet tokens for the given account. Public — no JWT required.
-   * @example
-   * const { data, meta } = await client.accounts.wallets(accountId, { token_symbol: 'USDC', active: true })
-   */
-  wallets(account_id: string, params?: ListWalletsParams): Promise<PaginatedResponse<WalletToken>> {
-    return this.http.get(\`/accounts/\${account_id}/wallets\${buildQuery(params)}\`)
-  }
-
-  /** Return a single wallet token by id. Public — no JWT required. */
-  wallet(account_id: string, id: string): Promise<WalletToken> {
-    return this.http.get(\`/accounts/\${account_id}/wallets/\${id}\`)
-  }
-}
-
-function buildQuery(params?: object): string {
-  if (!params) return ''
-  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
-  if (entries.length === 0) return ''
-  return '?' + entries.map(([k, v]) => \`\${k}=\${encodeURIComponent(String(v))}\`).join('&')
 }
 `
-  const outPath = resolve(RESOURCES_DIR, 'accounts.ts')
-  await writeFile(outPath, content, 'utf-8')
-  console.log(`Generated: ${outPath}`)
-}
-
-async function generatePaymentsResource(): Promise<void> {
-  const content = `${FILE_HEADER}
-import type { HttpClient } from '../core/http.js'
-import type {
-  Bytes32,
-  CapturePaymentRequest,
-  CreatePaymentRequest,
-  CreatePaymentResponse,
-  GetPaymentResponse,
-  PaginatedResponse,
-  PayerSignatureRequest,
-  PayerSignatureResponse,
-  PaymentSummary,
-  PrepareRefundResponse,
-  PrepareTransactionResponse,
-  SubmitTransactionAcceptedResponse,
-  SubmitTransactionRequest,
-  TransactionRecord,
-} from './types.js'
-
-export interface ListPaymentsParams {
-  status?: string
-  mode?: string
-  payer?: string
-  payee?: string
-  token?: string
-  page?: number
-  per_page?: number
-}
-
-export interface ListTransactionsParams {
-  operation?: string
-  status?: string
-  page?: number
-  per_page?: number
-}
-
-export interface RefundPrepareParams {
-  amount: string
-  v?: number
-  r?: string
-  s?: string
-}
-
-/** @deprecated Use RefundPrepareParams */
-export type RefundPayloadParams = RefundPrepareParams
-
-export class PaymentsResource {
-  constructor(private readonly http: HttpClient) {}
-
-  /**
-   * List payments for the authenticated wallet. Requires a JWT.
-   * Returns a paginated response — access items via \`.data\` and pagination info via \`.meta\`.
-   */
-  list(params?: ListPaymentsParams): Promise<PaginatedResponse<PaymentSummary>> {
-    return this.http.get(\`/payments\${buildQuery(params)}\`)
-  }
-
-  /** Create a payment intent. Returns the EIP-712 signingPayload for the payer to sign. */
-  create(params: CreatePaymentRequest): Promise<CreatePaymentResponse> {
-    return this.http.post('/payments', params)
-  }
-
-  /** Fetch current payment state (DB status + live on-chain escrow balances). */
-  get(rail0_id: Bytes32): Promise<GetPaymentResponse> {
-    return this.http.get(\`/payments/\${rail0_id}\`)
-  }
-
-  /**
-   * List on-chain transactions for a payment.
-   * Returns a paginated response — access items via \`.data\` and pagination info via \`.meta\`.
-   */
-  transactions(rail0_id: Bytes32, params?: ListTransactionsParams): Promise<PaginatedResponse<TransactionRecord>> {
-    return this.http.get(\`/payments/\${rail0_id}/transactions\${buildQuery(params)}\`)
-  }
-
-  /** Submit the payer's EIP-712 signature (v, r, s). */
-  sign(rail0_id: Bytes32, params: PayerSignatureRequest): Promise<PayerSignatureResponse> {
-    return this.http.put(\`/payments/\${rail0_id}/sign\`, params)
-  }
-
-  /** Prepare the unsigned authorize() transaction. Called by the payee. */
-  authorizePrepare(rail0_id: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/authorize/prepare\`)
-  }
-
-  /**
-   * Submit the signed authorize transaction (HTTP 202, async).
-   * Poll \`get()\` until status leaves "submitting".
-   */
-  authorize(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/authorize\`, params)
-  }
-
-  /** Prepare the unsigned charge() transaction (one-shot, no escrow). */
-  chargePrepare(rail0_id: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/charge/prepare\`)
-  }
-
-  /**
-   * Submit the signed charge transaction (HTTP 202, async).
-   * Poll \`get()\` until status leaves "submitting".
-   */
-  charge(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/charge\`, params)
-  }
-
-  /** Build the unsigned capture() transaction. Called by the payee. */
-  capturePrepare(rail0_id: Bytes32, params: CapturePaymentRequest): Promise<PrepareTransactionResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/capture/prepare\`, params)
-  }
-
-  /** Submit the signed capture transaction (HTTP 202, async). */
-  capture(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/capture\`, params)
-  }
-
-  /** Build the unsigned void() transaction. Called by the payee. */
-  voidPrepare(rail0_id: Bytes32): Promise<PrepareTransactionResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/void/prepare\`)
-  }
-
-  /** Submit the signed void transaction (HTTP 202, async). */
-  void(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/void\`, params)
-  }
-
-  /** Build the unsigned release() transaction. */
-  releasePrepare(rail0_id: Bytes32, params?: Record<string, unknown>): Promise<PrepareTransactionResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/release/prepare\`, params)
-  }
-
-  /** Submit the signed release transaction (HTTP 202, async). */
-  release(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/release\`, params)
-  }
-
-  /**
-   * Refund prepare — two-phase EIP-3009 flow.
-   * Phase 1: call with \`{ amount }\` only — returns a signing payload.
-   * Phase 2: call with \`{ amount, v, r, s }\` — returns the unsigned on-chain refund transaction.
-   */
-  refundPrepare(rail0_id: Bytes32, params: RefundPrepareParams): Promise<PrepareRefundResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/refund/prepare\`, params)
-  }
-
-  /** Submit the signed refund transaction (HTTP 202, async). */
-  refund(rail0_id: Bytes32, params: SubmitTransactionRequest): Promise<SubmitTransactionAcceptedResponse> {
-    return this.http.post(\`/payments/\${rail0_id}/refund\`, params)
-  }
-}
-
-function buildQuery(params?: object): string {
-  if (!params) return ''
-  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
-  if (entries.length === 0) return ''
-  return '?' + entries.map(([k, v]) => \`\${k}=\${encodeURIComponent(String(v))}\`).join('&')
-}
-`
-  const outPath = resolve(RESOURCES_DIR, 'payments.ts')
-  await writeFile(outPath, content, 'utf-8')
-  console.log(`Generated: ${outPath}`)
-}
 
 // ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
 
-await generateTypes()
+async function writeResource(name: string, content: string): Promise<void> {
+  const outPath = resolve(RESOURCES_DIR, name)
+  await writeFile(outPath, content, 'utf-8')
+  console.log(`Generated: ${outPath}`)
+}
 
-// Read schema for resource generation
-const schemaPath = process.env.RAIL0_SCHEMA_PATH ?? resolve(root, '..', 'rail0-api', 'docs', 'openapi.json')
-const schema = JSON.parse(await readFile(schemaPath, 'utf-8'))
-
+await generateApiTypes()
 await mkdir(RESOURCES_DIR, { recursive: true })
-await generateResourceTypes(schema)
-await generateChainsResource()
-await generateTokensResource()
-await generateAccountsResource()
-await generatePaymentsResource()
+await writeFile(resolve(RESOURCES_DIR, 'types.ts'), TYPES, 'utf-8')
+console.log(`Generated: ${resolve(RESOURCES_DIR, 'types.ts')}`)
+await writeResource('payments.ts', PAYMENTS)
+await writeResource('wallets.ts', WALLETS)
+await writeResource('webhooks.ts', WEBHOOKS)
+await writeResource('chains.ts', CHAINS)
+await writeResource('tokens.ts', TOKENS)
+await writeResource('health.ts', HEALTH)
 
 console.log('Done.')

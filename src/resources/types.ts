@@ -1,109 +1,74 @@
 // GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.
-import type { components } from '../api.js'
 
-// Re-export raw generated types for advanced use
+// Raw generated types for advanced use.
 export type { components, operations } from '../api.js'
 
 // ── Primitive aliases ────────────────────────────────────────────────
 /** Checksummed or lowercase Ethereum address (42 chars, 0x-prefixed). */
-export type Address = components['schemas']['Address']
+export type Address = string
 /** 32-byte value, hex-encoded (66 chars, 0x-prefixed). */
-export type Bytes32 = components['schemas']['Bytes32']
+export type Bytes32 = string
 /** Unsigned 256-bit integer serialised as a decimal string. */
-export type Uint256String = components['schemas']['Uint256String']
+export type Uint256String = string
 
-// ── Request body types ───────────────────────────────────────────────
-export type CreatePaymentRequest    = components['schemas']['CreatePaymentRequest']
-export type CapturePaymentRequest   = components['schemas']['CapturePaymentRequest']
-export type PayerSignatureRequest   = components['schemas']['PayerSignatureRequest']
-export type SubmitTransactionRequest = components['schemas']['SubmitTransactionRequest']
+// ── Enums ────────────────────────────────────────────────────────────
+export type PaymentMode = 'authorize' | 'charge'
+export type PaymentStatus =
+  | 'unsigned'
+  | 'signed'
+  | 'authorized'
+  | 'charged'
+  | 'captured'
+  | 'partially_captured'
+  | 'voided'
+  | 'released'
+  | 'refunded'
+  | 'partially_refunded'
+export type TransactionOperation = 'authorize' | 'charge' | 'capture' | 'void' | 'release' | 'refund'
+export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
+export type DisputeStatus = 'open' | 'closed'
+export type CircuitState = 'closed' | 'open'
+export type EventCallbackStatus = 'pending' | 'delivered' | 'failed'
+export type HealthStatus = 'ok' | 'degraded'
+/** Webhook event topics. Mirrors the gateway's WebhookTopic enum. */
+export type WebhookTopic =
+  | 'payments.created'
+  | 'payments.signed'
+  | 'payments.authorized'
+  | 'payments.charged'
+  | 'payments.captured'
+  | 'payments.voided'
+  | 'payments.released'
+  | 'payments.refunded'
+  | 'payments.failed'
+  | 'payments.disputed'
+  | 'payments.dispute_closed'
 
-// ── Pagination ───────────────────────────────────────────────────────
-export interface PageMeta {
-  page: number
-  per_page: number
-  total: number
-}
-
-export interface PaginatedResponse<T> {
-  data: T[]
-  meta: PageMeta
-}
-
-// ── Inline types (not named schemas in the spec) ──────────────────────
-export interface Blockchain {
-  chain_id: number
-  name: string
-  slug: string
-  /** Symbol of the native gas token (e.g. "ETH", "MATIC", "USDC" on Arc). */
-  native_symbol: string
-  network_type: string
-  explorer_url: string
-}
-
-export interface Token {
-  chain_id: number
-  chain_slug: string
-  symbol: string
-  address: string
-  decimals: number
-}
-
-export interface PaymentMethod {
-  id: string
-  token_id: string
-  chain_id: number
-  chain_name: string
-  chain_slug: string
-  explorer_url: string
-  token_address: string
-  token_symbol: string
-  token_decimals: number
-  wallet_address: string
-  default: boolean
-}
-
-// ── Named response schemas ────────────────────────────────────────────
-/** EIP-712 domain for the token contract. */
+// ── Signing types (not named in the spec; hand-authored, as in rail0-go) ──
 export interface EIP712Domain {
   name: string
   version: string
   chainId: number
-  /** Token contract address. */
   verifyingContract: Address
 }
-
-/** Message fields for the EIP-3009 TransferWithAuthorization signature. */
 export interface EIP3009Message {
   from: Address
-  /** RAIL0 contract address. */
   to: Address
   value: Uint256String
-  /** Always '0' for RAIL0 flows. */
   validAfter: Uint256String
-  /** Equals authorization_expiry. */
   validBefore: Uint256String
-  /** keccak256(NONCE_PREFIX, rail0_id, config_hash). Binds the signature to the exact config and operation type. */
   nonce: Bytes32
 }
-
-/** Immutable payment configuration that maps 1-to-1 to the RAIL0 `Payment` Solidity struct. */
+/** Immutable payment configuration returned inside a payment record. */
 export interface PaymentConfig {
-  /** Buyer address. Funds are pulled from this address. */
   payer: Address
-  /** Account address. Authorized to capture, void, and refund. */
   payee: Address
-  /** EIP-3009-capable ERC-20 token address (must be accepted by the RAIL0 deployment). */
   token: Address
-  /** Exact amount the payer commits to pay (in token base units). */
   amount: Uint256String
-  /** Unix timestamp (seconds). Capture must happen before this; release opens after. */
   authorization_expiry: number
-  /** Unix timestamp (seconds). Refund must happen before this. Must be >= authorization_expiry. */
   refund_expiry: number
 }
-
-/** EIP-712 typed-data structure that the payer (or payee for refund) must sign. Pass verbatim to `eth_signTypedData_v4`. */
+/** EIP-712 typed-data payload to pass to eth_signTypedData_v4 (or the SDK signer). */
 export interface SigningPayload {
   domain: EIP712Domain
   types: Record<string, unknown>
@@ -111,146 +76,237 @@ export interface SigningPayload {
   message: EIP3009Message
 }
 
-export interface CreatePaymentResponse {
-  /** Unique identifier for this payment. */
-  rail0_id: Bytes32
-  /** EIP-712 hash of the Payment struct. Commits the signature to the exact payment terms. */
-  config_hash: Bytes32
-  payment: PaymentConfig
+// ── Request bodies ───────────────────────────────────────────────────
+export interface CreatePaymentRequest {
   chain_id: number
-  /** Address of the RAIL0 contract on the target chain. */
-  rail0_contract: Address
-  signing_payload: SigningPayload
-  /** Optional human-readable payment label. */
-  description?: string | null
-  /** Arbitrary key-value data attached at creation for custom reconciliation. */
-  metadata?: Record<string, unknown> | null
-}
-
-export interface PayerSignatureResponse {
-  rail0_id: Bytes32
-  /** Confirms the signature was accepted and stored. */
-  status: string
-  /** The address recovered from the signature — should match `payment.payer`. */
-  recovered_payer: Address
-}
-
-/** An unsigned EIP-1559 transaction ready for the payee to sign. */
-export interface PrepareTransactionResponse {
-  /** RLP-encoded unsigned EIP-1559 transaction (type 2). */
-  unsigned_transaction: string
-  /** Server-side Transaction row ID. Passed back in the submit body to link the signed tx to the prepare step. */
-  transaction_id: string
-  /** Target contract address (informational). */
-  to: Address
-  /** ABI-encoded calldata (informational). */
-  data: string
-  chainId: number
-  nonce: number
-  maxFeePerGas: Uint256String
-  maxPriorityFeePerGas: Uint256String
-  gasLimit: Uint256String
-}
-
-/** Acknowledgement that the transaction has been enqueued. Poll `GET /payments/{rail0_id}` for the final outcome. */
-export interface SubmitTransactionAcceptedResponse {
-  /** Payment identifier. */
-  rail0_id: Bytes32
-  /** Always `submitting` — the worker has not yet received the on-chain receipt. */
-  status: string
-}
-
-/** A wallet token configuration linking a wallet address to a specific token on a chain. */
-export interface WalletToken {
-  id: string
-  wallet_id: string
-  address: string
-  default: boolean
-  active: boolean
-  token_id: string
-  token_symbol: string
-  token_address: string
-  token_decimals: number
-  chain_id: number
-  chain_name: string
-  chain_slug: string
-}
-
-/** Condensed payment record returned by GET /payments. */
-export interface PaymentSummary {
-  rail0_id: string
-  status: string
-  mode: 'authorize' | 'charge'
+  mode: PaymentMode
   amount: string
-  payer: string
-  payee: string
-  token: string
-  authorization_expiry: number
-  refund_expiry: number
-  metadata?: Record<string, unknown> | null
-  created_at: string
+  token: Address
+  payer: Address
+  payee: Address
+  description?: string
+  metadata?: Record<string, unknown>
+}
+export interface PayerSignatureRequest {
+  signature: string
+}
+export interface SubmitTransactionRequest {
+  signed_transaction: string
+}
+/** Body for the generic prepare endpoints. amount → capture/refund; signature → refund phase-2; from → release. */
+export interface PrepareRequest {
+  amount?: string
+  signature?: string
+  from?: Address
+}
+export interface CreateWalletRequest {
+  address: string
+  label?: string
+}
+export interface UpdateWalletRequest {
+  label?: string
+  active?: boolean
+}
+export interface CreateWebhookRequest {
+  name: string
+  callback_url: string
+  topic: WebhookTopic
+}
+export interface UpdateWebhookRequest {
+  name?: string
+  callback_url?: string
+  topic?: WebhookTopic
 }
 
-/** An on-chain transaction attempt associated with a payment. */
-export interface TransactionRecord {
-  id: string
-  operation: 'authorize' | 'charge' | 'capture' | 'void' | 'release' | 'refund'
-  status: 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
-  transaction_hash?: string | null
-  amount?: string | null
-  fee_amount: string
-  block_number?: number | null
-  error_reason?: string | null
-  pending_at?: string | null
-  submitted_at?: string | null
-  confirmed_at?: string | null
-}
-
-export interface OnChainState {
-  exists: boolean
-  capturable_amount: Uint256String
-  refundable_amount: Uint256String
-}
-
-/** Current state of a payment record. */
-export interface GetPaymentResponse {
+// ── Domain models (gateway vocabulary) ───────────────────────────────
+/** Condensed payment record (GET /payments list item). */
+// Fields always present on a fetched payment are required for ergonomics
+// (the gateway serialises them on every read); bookkeeping/nullable fields stay optional.
+export interface Payment {
+  id?: string
+  contract_id?: string
   rail0_id: Bytes32
-  /** Current lifecycle state. */
-  status: string
-  mode: string
+  status: PaymentStatus
+  mode: PaymentMode
   amount: Uint256String
+  capturable_amount?: Uint256String
+  refundable_amount?: Uint256String
+  config_hash?: Bytes32
   payer: Address
   payee: Address
   token: Address
-  chain_id: number
   authorization_expiry: number
   refund_expiry: number
-  /** Optional human-readable payment label. */
+  disputed?: boolean
+  last_error_code?: string | null
+  last_error_message?: string | null
   description?: string | null
-  /** Arbitrary key-value data attached at creation for custom reconciliation. */
   metadata?: Record<string, unknown> | null
-  /** Live on-chain amounts. Present when status is authorized, captured, voided, released, charged, or refunded. */
-  on_chain?: OnChainState | null
-  /** Hash of the most recently broadcast transaction. */
-  last_broadcast_hash?: Bytes32
-  /** Machine-readable failure reason. Present only when status=failed. */
-  failure_code?: string
-  /** Human-readable failure description. Present only when status=failed. */
-  failure_message?: string
+  signed_at?: string | null
+  created_at: string
+  updated_at?: string
+}
+/** Single-payment view: adds chain context, embedded transactions, and (when unsigned) the signing payload. */
+export interface PaymentDetail extends Payment {
+  chain_id: number
+  rail0_contract?: Address
+  transactions?: Transaction[]
+  signing_payload?: SigningPayload | null
+}
+export interface Transaction {
+  id: string
+  payment_id?: string
+  operation: TransactionOperation
+  status: TransactionStatus
+  unsigned_transaction?: string | null
+  transaction_hash?: string | null
+  amount?: Uint256String | null
+  block_number?: number | null
+  /** Present for refund prepare phase-1: the EIP-3009 payload for the payee to sign. */
+  signing_payload?: SigningPayload | null
+  pending_at?: string | null
+  submitted_at?: string | null
+  confirmed_at?: string | null
+  created_at?: string
+  updated_at?: string
+}
+export interface Dispute {
+  id?: string
+  payment_id?: string
+  status?: DisputeStatus
+  reason?: string
+  opened_block?: number | null
+  opened_at?: string
+  closed_by?: 'payer' | 'payee' | null
+  close_reason?: string | null
+  closed_block?: number | null
+  closed_at?: string | null
+}
+export interface Wallet {
+  id?: string
+  account_id?: string
+  address?: string
+  label?: string | null
+  active?: boolean
+  created_at?: string
+  updated_at?: string
+}
+export interface WalletTokenHolding {
+  token?: Token
+  active?: boolean
+  default?: boolean
+}
+/** A wallet with its token holdings nested inline (GET /accounts/:id/wallets). */
+export interface WalletWithTokens extends Wallet {
+  tokens?: WalletTokenHolding[]
+}
+export interface Token {
+  chain_id?: number
+  symbol?: string
+  address?: string
+  decimals?: number
+}
+export interface Blockchain {
+  chain_id?: number
+  name?: string
+  native_symbol?: string
+  network_type?: string
+  explorer_url?: string
+}
+export interface AssetBalance {
+  symbol?: string
+  address?: string | null
+  decimals?: number
+  raw?: string
+  amount?: string
+}
+export interface BalanceError {
+  code?: 'rpc_unavailable' | 'rpc_error' | 'timeout' | 'error'
+  message?: string
+}
+export interface ChainBalance {
+  chain_id?: number
+  network_type?: string
+  native?: AssetBalance
+  tokens?: AssetBalance[]
+  error?: BalanceError
+}
+export interface WalletBalances {
+  wallet_id?: string
+  address?: string
+  balances?: ChainBalance[]
+}
+export interface Nonce {
+  id?: string
+  value?: string
+  expires_at?: string
+  used?: boolean
+  created_at?: string
+  updated_at?: string
+}
+export interface Session {
+  token?: string
+  address?: string
+  account_id?: string
+  expires_at?: string
+}
+export interface Webhook {
+  id?: string
+  name?: string
+  callback_url?: string
+  topic?: WebhookTopic
+  active?: boolean
+  circuit_state?: CircuitState
+  circuit_failure_count?: number
+  created_at?: string
+  updated_at?: string
+}
+/** Webhook view including the shared secret. Returned only on create and rotate_secret. */
+export interface WebhookWithSecret extends Webhook {
+  shared_secret?: string
+}
+export interface EventCallback {
+  id?: string
+  webhook_id?: string
+  payment_id?: string
+  topic?: string
+  callback_url?: string
+  response_code?: string | null
+  response_message?: string | null
+  error_reason?: string | null
+  status?: EventCallbackStatus
+  created_at?: string
+}
+export interface Health {
+  status?: HealthStatus
+  api_version?: string
+  contract_version?: string
+  db?: 'ok' | 'error'
+  active_chains?: number
+  active_contracts?: number
+  timestamp?: string
 }
 
-/** Union return type for refund prepare (phase 1 returns signing_payload, phase 2 returns PrepareTransactionResponse). */
-export type PrepareRefundResponse = PrepareTransactionResponse | { signing_payload: unknown }
+/** A (wallet, token, chain) a payee accepts payment on. Client-side convenience (flattened from active wallets), as in rail0-go. */
+export interface PaymentMethod {
+  address: string
+  chain_id: number
+  token: Token
+}
 
-// ── Compatibility type aliases ────────────────────────────────────────
-export type ReleaseRequest = Record<string, unknown>
-export type AuthorizePaymentResponse = SubmitTransactionAcceptedResponse
-export type ChargePaymentResponse = SubmitTransactionAcceptedResponse
-export type CapturePaymentResponse = SubmitTransactionAcceptedResponse
-export type VoidPaymentResponse = SubmitTransactionAcceptedResponse
-export type ReleasePaymentResponse = SubmitTransactionAcceptedResponse
-export type RefundPaymentResponse = SubmitTransactionAcceptedResponse
-export type PaymentResponse = GetPaymentResponse
-export type ApiErrorBody = components['schemas']['Error']
-export type PaymentMode = 'authorize' | 'charge'
-export type SignatureStatus = 'signature_stored'
+// ── Pagination ───────────────────────────────────────────────────────
+export interface PageMeta {
+  page: number
+  per_page: number
+  total: number
+}
+export interface PaginatedResponse<T> {
+  data: T[]
+  meta: PageMeta
+}
+
+// ── Error ────────────────────────────────────────────────────────────
+export interface ApiErrorBody {
+  status: string
+  message?: string
+}

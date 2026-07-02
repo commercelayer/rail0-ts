@@ -90,18 +90,49 @@ export class HttpClient {
   }
 
   async get<T>(path: string): Promise<T> {
-    return this.request<T>('GET', path)
+    return (await this.send<T>('GET', path)).data
   }
 
   async put<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>('PUT', path, body)
+    return (await this.send<T>('PUT', path, body)).data
   }
 
   async post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>('POST', path, body)
+    return (await this.send<T>('POST', path, body)).data
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async patch<T>(path: string, body?: unknown): Promise<T> {
+    return (await this.send<T>('PATCH', path, body)).data
+  }
+
+  async delete<T = void>(path: string): Promise<T> {
+    return (await this.send<T>('DELETE', path)).data
+  }
+
+  /**
+   * GET a list endpoint into a `{ data, meta }` envelope. The gateway returns a
+   * bare JSON array and carries pagination in the `x-total-count` / `x-page` /
+   * `x-per-page` response headers, which we fold into `meta` (matching rail0-go).
+   */
+  async getPaginated<T>(path: string): Promise<{ data: T[]; meta: { page: number; per_page: number; total: number } }> {
+    const { data, headers } = await this.send<T[]>('GET', path)
+    const arr = Array.isArray(data) ? data : []
+    const num = (name: string, fallback: number): number => {
+      const raw = headers.get(name)
+      const n = raw == null ? Number.NaN : Number(raw)
+      return Number.isFinite(n) ? n : fallback
+    }
+    return {
+      data: arr,
+      meta: {
+        page: num('x-page', 1),
+        per_page: num('x-per-page', arr.length),
+        total: num('x-total-count', arr.length),
+      },
+    }
+  }
+
+  private async send<T>(method: string, path: string, body?: unknown): Promise<{ data: T; headers: Headers }> {
     const url = `${this.baseUrl}${path}`
     const maxAttempts = this.maxRetries + 1
     const trackAttempts = this.maxRetries > 0
@@ -158,7 +189,10 @@ export class HttpClient {
         throw apiError
       }
 
-      const data = (await response.json()) as T
+      // 204 (and other empty bodies, e.g. DELETE) parse to `undefined` rather
+      // than throwing on an empty JSON body.
+      const text = await response.text()
+      const data = (text ? JSON.parse(text) : undefined) as T
       this.logger?.({
         method,
         url,
@@ -168,7 +202,7 @@ export class HttpClient {
         responseBody: data,
         ...(trackAttempts ? { attempt } : {}),
       })
-      return data
+      return { data, headers: response.headers }
     }
 
     // maxAttempts >= 1, so the loop always executes at least once and either

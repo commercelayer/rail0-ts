@@ -1,8 +1,13 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { describe, expect, it } from 'vitest'
-import type { Payment, TokenDomain } from '../src/index.js'
-import { signAuthorize, signCharge, signTransferWithAuthorization } from '../src/signing.js'
+import type { PaymentConfig } from '../src/resources/types.js'
+import {
+  type TokenDomain,
+  signAuthorize,
+  signCharge,
+  signTransferWithAuthorization,
+} from '../src/signing.js'
 
 // ================================================================
 //  Test fixtures
@@ -24,15 +29,13 @@ const TOKEN_DOMAIN: TokenDomain = {
   verifyingContract: TOKEN_ADDRESS,
 }
 
-const PAYMENT: Payment = {
+const PAYMENT: PaymentConfig = {
   payer: PAYER,
   payee: '0x2222222222222222222222222222222222222222',
   token: TOKEN_ADDRESS,
-  maxAmount: '100000000',
-  authorizationExpiry: 9999999999,
-  refundExpiry: 9999999999 + 60 * 60 * 24 * 7,
-  feeBps: 0,
-  feeReceiver: '0x0000000000000000000000000000000000000000',
+  amount: '50000000',
+  authorization_expiry: 9999999999,
+  refund_expiry: 9999999999 + 60 * 60 * 24 * 7,
 }
 
 const NONCE = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const
@@ -212,11 +215,10 @@ describe('signTransferWithAuthorization', () => {
 // ================================================================
 
 describe('signAuthorize', () => {
-  it('returns a valid signature using payment.authorizationExpiry as default validBefore', () => {
+  it('returns a valid signature using payment.authorization_expiry as default validBefore', () => {
     const sig = signAuthorize({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 50_000_000n,
       nonce: NONCE,
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
@@ -231,15 +233,14 @@ describe('signAuthorize', () => {
     const manual = signTransferWithAuthorization(PRIVATE_KEY, TOKEN_DOMAIN, {
       from: PAYMENT.payer,
       to: CONTRACT_ADDRESS,
-      value: 50_000_000n,
+      value: BigInt(PAYMENT.amount),
       validAfter: 0n,
-      validBefore: BigInt(PAYMENT.authorizationExpiry),
+      validBefore: BigInt(PAYMENT.authorization_expiry),
       nonce: NONCE,
     })
     const auto = signAuthorize({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 50_000_000n,
       nonce: NONCE,
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
@@ -256,7 +257,6 @@ describe('signCharge', () => {
     const sig = signCharge({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 25_000_000n,
       nonce: chargeNonce,
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
@@ -270,7 +270,6 @@ describe('signCharge', () => {
     const authSig = signAuthorize({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 50_000_000n,
       nonce: NONCE,
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
@@ -278,12 +277,101 @@ describe('signCharge', () => {
     const chargeSig = signCharge({
       privateKey: PRIVATE_KEY,
       payment: PAYMENT,
-      amount: 50_000_000n,
       nonce: '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
       contractAddress: CONTRACT_ADDRESS,
       tokenDomain: TOKEN_DOMAIN,
     })
 
     expect(authSig.r).not.toBe(chargeSig.r)
+  })
+})
+
+// ================================================================
+//  signTransaction (EIP-1559)
+// ================================================================
+
+// Minimal RLP list decoder — enough to verify the type-2 transaction layout.
+function rlpDecode(buf: Uint8Array): Uint8Array[] {
+  const first = buf[0] as number
+  if (first < 0xc0) throw new Error('not a list')
+  let start: number
+  let end: number
+  if (first < 0xf8) {
+    start = 1
+    end = 1 + (first - 0xc0)
+  } else {
+    const ll = first - 0xf7
+    let len = 0
+    for (let i = 1; i <= ll; i++) len = len * 256 + (buf[i] as number)
+    start = 1 + ll
+    end = start + len
+  }
+  const items: Uint8Array[] = []
+  let p = start
+  while (p < end) {
+    const b = buf[p] as number
+    if (b < 0x80) {
+      items.push(buf.slice(p, p + 1))
+      p += 1
+    } else if (b < 0xb8) {
+      const len = b - 0x80
+      items.push(buf.slice(p + 1, p + 1 + len))
+      p += 1 + len
+    } else if (b < 0xc0) {
+      const ll = b - 0xb7
+      let len = 0
+      for (let i = 1; i <= ll; i++) len = len * 256 + (buf[p + i] as number)
+      items.push(buf.slice(p + 1 + ll, p + 1 + ll + len))
+      p += 1 + ll + len
+    } else {
+      // nested list (the access list) — capture its raw bytes as one item
+      const listLen = b < 0xf8 ? b - 0xc0 : 0
+      items.push(buf.slice(p, p + 1 + listLen))
+      p += 1 + listLen
+    }
+  }
+  return items
+}
+
+function toHex(b: Uint8Array): string {
+  return `0x${Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')}`
+}
+
+describe('signTransaction (EIP-1559)', () => {
+  const unsigned = JSON.stringify({
+    chain_id: 8453,
+    from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+    to: '0x1234567890123456789012345678901234567890',
+    value: 0,
+    data: '0xabcdef',
+    nonce: 5,
+    gas_limit: 120000,
+    max_priority_fee_per_gas: 1000000,
+    max_fee_per_gas: 2000000000,
+  })
+
+  it('produces a type-2 transaction with the correct field layout', async () => {
+    const { signTransaction } = await import('../src/signing.js')
+    const raw = signTransaction(unsigned, PRIVATE_KEY)
+
+    expect(raw.startsWith('0x02')).toBe(true)
+
+    // Strip the 0x02 type byte, decode the RLP list.
+    const body = raw.slice(4)
+    const bytes = new Uint8Array(body.length / 2)
+    for (let i = 0; i < body.length; i += 2) bytes[i >> 1] = Number.parseInt(body.slice(i, i + 2), 16)
+    const items = rlpDecode(bytes)
+
+    // [chainId, nonce, maxPrio, maxFee, gasLimit, to, value, data, accessList, yParity, r, s]
+    expect(items).toHaveLength(12)
+    expect(toHex(items[0] as Uint8Array)).toBe('0x2105') // chain id 8453
+    expect(toHex(items[1] as Uint8Array)).toBe('0x05') // nonce
+    expect(toHex(items[4] as Uint8Array)).toBe('0x01d4c0') // gas limit 120000
+    expect(toHex(items[5] as Uint8Array)).toBe('0x1234567890123456789012345678901234567890') // to
+    expect((items[6] as Uint8Array).length).toBe(0) // value 0 → empty
+    expect(toHex(items[7] as Uint8Array)).toBe('0xabcdef') // data
+    expect((items[8] as Uint8Array).length).toBe(1) // empty access list → 0xc0
+    expect((items[10] as Uint8Array).length).toBeLessThanOrEqual(32) // r
+    expect((items[11] as Uint8Array).length).toBeLessThanOrEqual(32) // s
   })
 })
