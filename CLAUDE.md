@@ -12,14 +12,13 @@ rail0 is a multi-repo project. All repositories prefixed with `rail0-` are part 
 | `rail0-gateway` | Backend API (Ruby/Grape) |
 | `rail0-indexer` | On-chain event indexer (TypeScript/Envio) |
 | `rail0-admin` | Admin UI |
-| `rail0-api` | Legacy API (superseded by rail0-gateway) |
 | `rail0-cli` | CLI tool |
 | `rail0-ruby` | Ruby SDK |
 | `rail0-go` | Go SDK |
 | `rail0-ts` | TypeScript SDK |
-| `rail0-py` | Python SDK |
-| `rail0-rust` | Rust SDK |
 | `rail0-test` | Integration and cross-SDK tests |
+
+> Note: `rail0-api`, `rail0-py`, and `rail0-rust` are temporarily out of scope.
 
 When a change in one repo affects the contract, the indexer, or any SDK, flag it explicitly and propose coordinated changes across the relevant repos.
 
