@@ -65,10 +65,7 @@ export class WebhooksResource {
   }
 
   /** List delivery attempts for a webhook. */
-  eventCallbacks(
-    id: string,
-    params?: ListEventCallbacksParams,
-  ): Promise<PaginatedResponse<EventCallback>> {
+  eventCallbacks(id: string, params?: ListEventCallbacksParams): Promise<PaginatedResponse<EventCallback>> {
     return this.http.getPaginated(`/webhooks/${id}/event_callbacks${buildQuery(params)}`)
   }
 

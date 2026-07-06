@@ -24,13 +24,7 @@ export type PaymentStatus =
   | 'released'
   | 'refunded'
   | 'partially_refunded'
-export type TransactionOperation =
-  | 'authorize'
-  | 'charge'
-  | 'capture'
-  | 'void'
-  | 'release'
-  | 'refund'
+export type TransactionOperation = 'authorize' | 'charge' | 'capture' | 'void' | 'release' | 'refund'
 export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
 export type DisputeStatus = 'open' | 'closed'
 export type CircuitState = 'closed' | 'open'
@@ -164,6 +158,10 @@ export interface Transaction {
   payment_id?: string
   operation: TransactionOperation
   status: TransactionStatus
+  /** Decoded on-chain failure (null unless status is "failed"): the RAIL0 custom error in snake_case, or "revert" when unknown. */
+  error_code?: string | null
+  /** Human-readable form of error_code (e.g. "NotPayee"); null unless status is "failed". */
+  error_message?: string | null
   unsigned_transaction?: string | null
   transaction_hash?: string | null
   amount?: Uint256String | null

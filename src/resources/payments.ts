@@ -5,9 +5,9 @@ import type {
   CreatePaymentRequest,
   Dispute,
   PaginatedResponse,
-  PayerSignatureRequest,
   Payment,
   PaymentDetail,
+  PayerSignatureRequest,
   PrepareRequest,
   SubmitTransactionRequest,
   Transaction,
@@ -53,10 +53,7 @@ export class PaymentsResource {
   }
 
   /** List a payment's on-chain transactions. */
-  transactions(
-    id: Bytes32,
-    params?: ListTransactionsParams,
-  ): Promise<PaginatedResponse<Transaction>> {
+  transactions(id: Bytes32, params?: ListTransactionsParams): Promise<PaginatedResponse<Transaction>> {
     return this.http.getPaginated(`/payments/${id}/transactions${buildQuery(params)}`)
   }
 
@@ -72,20 +69,12 @@ export class PaymentsResource {
 
   // ── Generic prepare/submit ─────────────────────────────────────────
   /** Build the unsigned transaction for an operation. */
-  prepare(
-    id: Bytes32,
-    operation: TransactionOperation | 'dispute' | 'close_dispute',
-    body?: PrepareRequest,
-  ): Promise<Transaction> {
+  prepare(id: Bytes32, operation: TransactionOperation | 'dispute' | 'close_dispute', body?: PrepareRequest): Promise<Transaction> {
     return this.http.post(`/payments/${id}/${operation}/prepare`, body)
   }
 
   /** Broadcast a signed transaction for an operation (HTTP 202, async). */
-  submit(
-    id: Bytes32,
-    operation: TransactionOperation | 'dispute' | 'close_dispute',
-    params: SubmitTransactionRequest,
-  ): Promise<Transaction> {
+  submit(id: Bytes32, operation: TransactionOperation | 'dispute' | 'close_dispute', params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(`/payments/${id}/${operation}`, params)
   }
 

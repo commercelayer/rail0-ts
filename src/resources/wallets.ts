@@ -37,10 +37,7 @@ export class WalletsResource {
   constructor(private readonly http: HttpClient) {}
 
   /** List an account's wallets, each with its token holdings nested. */
-  list(
-    account_id: string,
-    params?: ListWalletsParams,
-  ): Promise<PaginatedResponse<WalletWithTokens>> {
+  list(account_id: string, params?: ListWalletsParams): Promise<PaginatedResponse<WalletWithTokens>> {
     return this.http.getPaginated(`/accounts/${account_id}/wallets${buildQuery(params)}`)
   }
 
@@ -74,10 +71,7 @@ export class WalletsResource {
    * (address, chain_id, token) payment methods — the same shape rail0-go returns.
    * There is no dedicated gateway endpoint; this lists active wallets and flattens.
    */
-  async paymentMethods(
-    account_id: string,
-    params?: PaymentMethodsParams,
-  ): Promise<PaymentMethod[]> {
+  async paymentMethods(account_id: string, params?: PaymentMethodsParams): Promise<PaymentMethod[]> {
     const { data } = await this.list(account_id, { active: true })
     const methods: PaymentMethod[] = []
     for (const w of data) {
@@ -85,8 +79,7 @@ export class WalletsResource {
         if (holding.active === false || !holding.token) continue
         const t = holding.token
         if (params?.chain_id && t.chain_id !== params.chain_id) continue
-        if (params?.token_symbol && t.symbol?.toUpperCase() !== params.token_symbol.toUpperCase())
-          continue
+        if (params?.token_symbol && t.symbol?.toUpperCase() !== params.token_symbol.toUpperCase()) continue
         methods.push({ address: w.address ?? '', chain_id: t.chain_id ?? 0, token: t })
       }
     }

@@ -57,7 +57,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List active blockchains */
+        /** List blockchains available as payment methods */
         get: operations["listBlockchains"];
         put?: never;
         post?: never;
@@ -181,7 +181,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get a payment with embedded transactions and optional signing payload */
+        /**
+         * Get a payment with embedded transactions and optional signing payload
+         * @description The `:id` accepts either the payment UUID or its `rail0_id` (the contract's bytes32 paymentId, `0x…`), resolved to the UUID internally. This holds for every `/payments/{id}/…` route.
+         */
         get: operations["getPayment"];
         put?: never;
         post?: never;
@@ -244,7 +247,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare an operation's unsigned transaction
-         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated: it is payer-or-payee on-chain and the payer has no gateway account, so authorization is on-chain (the signed tx + the contract's NotPayerOrPayee gate). `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2).
+         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated: it is payer-or-payee on-chain and the payer has no gateway account, so authorization is on-chain (the signed tx + the contract's NotPayerOrPayee gate). `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2). `void` is accepted only while the authorization is fully intact (nothing captured yet); once any amount has been captured it returns 422 `invalid_state`, and the uncaptured remainder is recovered via `release` instead.
          */
         post: operations["preparePaymentOperation"];
         delete?: never;
@@ -676,6 +679,8 @@ export interface components {
             address?: string;
             /** Format: uuid */
             account_id?: string;
+            /** @description The account's human-readable name. */
+            name?: string;
             /** Format: date-time */
             expires_at?: string;
         };
@@ -694,18 +699,13 @@ export interface components {
             address?: string;
             decimals?: number;
         };
+        /** @description Public-safe wallet view (the reduced set a buyer needs to discover a merchant's payment methods). */
         Wallet: {
             /** Format: uuid */
             id?: string;
-            /** Format: uuid */
-            account_id?: string;
             address?: string;
             label?: string | null;
             active?: boolean;
-            /** Format: date-time */
-            created_at?: string;
-            /** Format: date-time */
-            updated_at?: string;
         };
         /** @description A wallet's token holding, with the wallet, token, and blockchain nested via their own schemas. */
         WalletToken: {
@@ -725,15 +725,9 @@ export interface components {
         WalletWithTokens: {
             /** Format: uuid */
             id?: string;
-            /** Format: uuid */
-            account_id?: string;
             address?: string;
             label?: string | null;
             active?: boolean;
-            /** Format: date-time */
-            created_at?: string;
-            /** Format: date-time */
-            updated_at?: string;
             tokens?: components["schemas"]["WalletTokenHolding"][];
         };
         /** @description Base persisted payment fields. */
@@ -804,7 +798,7 @@ export interface components {
             /** @description Deployed rail0 contract address. */
             rail0_contract?: string;
             transactions?: components["schemas"]["Transaction"][];
-            /** @description EIP-3009 payload the payer must sign; present only when the payment is unsigned (may be null on transient RPC failure). */
+            /** @description EIP-3009 payload the payer must sign; present when the payment is unsigned. If it can't be built (e.g. the token's EIP-712 domain isn't cached and the on-chain read fails), the request returns 502 `signing_payload_unavailable` with a `reason` (`rpc_unreachable`, `rpc_error`, or `error`) rather than a payment with a null payload. */
             signing_payload?: unknown;
         };
         Transaction: {
@@ -816,6 +810,10 @@ export interface components {
             operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund";
             /** @enum {string} */
             status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
+            /** @description Decoded on-chain failure code (null unless status is "failed"): the RAIL0 custom error in snake_case (e.g. "not_payee"), or "revert" when the selector is unknown. The raw revert bytes are not exposed. */
+            error_code?: string | null;
+            /** @description Human-readable form of error_code (e.g. "NotPayee"); null unless status is "failed". */
+            error_message?: string | null;
             unsigned_transaction?: string | null;
             transaction_hash?: string | null;
             amount?: string | null;
@@ -843,7 +841,6 @@ export interface components {
         };
         AdminPayment: components["schemas"]["Payment"] & {
             signature?: string | null;
-            last_broadcast_hash?: string | null;
             last_error_code?: string | null;
             last_error_message?: string | null;
         };
@@ -1071,7 +1068,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Active blockchains. */
+            /** @description Active blockchains that carry at least one active token (a payment method is a chain+token pair). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1124,6 +1121,8 @@ export interface operations {
                 active?: boolean;
                 /** @description Restrict nested token holdings to the default one (does not hide wallets). */
                 default?: boolean;
+                /** @description Restrict nested token holdings to this active status (does not hide wallets). */
+                token_active?: boolean;
             };
             header?: never;
             path: {
