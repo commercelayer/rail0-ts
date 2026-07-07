@@ -119,9 +119,20 @@ Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transacti
 
 **Refund** is two-phase: `refundPrepare(id, { amount })` returns a `Transaction` carrying a `signing_payload`; sign it with `signRefund`, then `refundPrepare(id, { amount, signature })` returns the unsigned on-chain tx to sign + `refund()`.
 
-### `client.wallets` (scoped by account)
+### `client.wallets` (scoped by account, JWT)
 
-`list(accountId, params?)` → `PaginatedResponse<WalletWithTokens>` · `get(accountId, idOrAddress)` → `Wallet` · `create(accountId, { address, label? })` → `Wallet` · `update(accountId, id, { label?, active? })` → `Wallet` · `delete(accountId, id)` → `void` · `balances(accountId, id, params?)` → `WalletBalances` · `paymentMethods(accountId, params?)` → `PaymentMethod[]` (client-side flatten of active wallets × tokens).
+All wallet methods are behind SIWE — a merchant manages its **own** wallets. `list(accountId, params?)` → `PaginatedResponse<WalletWithTokens>` · `get(accountId, idOrAddress)` → `Wallet` · `create(accountId, { address, label? })` → `Wallet` · `update(accountId, id, { label?, active? })` → `Wallet` · `delete(accountId, id)` → `void` · `balances(accountId, id, params?)` → `WalletBalances`.
+
+### `client.paymentMethods` (public)
+
+Buyer-facing discovery of a merchant's accepted wallets/tokens — **no JWT**. `list(query)` → `WalletWithTokens[]`, where `query` is exactly one of `{ account_id }` (all the merchant's active wallets) or `{ address }` (just that one wallet). Maps the public `GET /payment_methods`; an unknown handle yields `[]`.
+
+```ts
+const methods = await client.paymentMethods.list({ address: '0xABC…' })
+for (const w of methods) for (const h of w.tokens ?? []) {
+  // pay h.token (h.token.symbol on h.token.chain_id) to w.address
+}
+```
 
 ### `client.webhooks` (JWT)
 
@@ -184,7 +195,8 @@ src/
   resources/
     types.ts      gateway-vocabulary types (Payment, Dispute, Webhook, …)
     payments.ts   PaymentsResource (lifecycle + disputes)
-    wallets.ts    WalletsResource  (CRUD, balances, paymentMethods)
+    wallets.ts    WalletsResource  (CRUD, balances)
+    payment_methods.ts  PaymentMethodsResource (public discovery)
     webhooks.ts   WebhooksResource
     chains.ts     ChainsResource
     tokens.ts     TokensResource

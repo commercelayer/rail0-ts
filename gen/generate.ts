@@ -222,6 +222,9 @@ export interface Transaction {
   transaction_hash?: string | null
   amount?: Uint256String | null
   block_number?: number | null
+  /** Decoded on-chain failure (null unless status is "failed"): error_code is the RAIL0 custom error in snake_case (e.g. "not_payee"), or "revert" when the selector is unknown; error_message is its human-readable form (e.g. "NotPayee"). */
+  error_code?: string | null
+  error_message?: string | null
   /** On-chain gas/receipt data, mirrored from the indexer on confirm; null until confirmed. */
   gas_used?: Uint256String | null
   gas_limit?: Uint256String | null
@@ -354,13 +357,6 @@ export interface Health {
   timestamp?: string
 }
 
-/** A (wallet, token, chain) a payee accepts payment on. Client-side convenience (flattened from active wallets), as in rail0-go. */
-export interface PaymentMethod {
-  address: string
-  chain_id: number
-  token: Token
-}
-
 // ── Pagination ───────────────────────────────────────────────────────
 export interface PageMeta {
   page: number
@@ -388,7 +384,7 @@ function buildQuery(params?: object): string {
   if (!params) return ''
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
   if (entries.length === 0) return ''
-  return '?' + entries.map(([k, v]) => \`\${k}=\${encodeURIComponent(String(v))}\`).join('&')
+  return \`?\${entries.map(([k, v]) => \`\${k}=\${encodeURIComponent(String(v))}\`).join('&')}\`
 }
 `
 
@@ -544,7 +540,6 @@ import type { HttpClient } from '../core/http.js'
 import type {
   CreateWalletRequest,
   PaginatedResponse,
-  PaymentMethod,
   UpdateWalletRequest,
   Wallet,
   WalletBalances,
@@ -565,14 +560,11 @@ export interface WalletBalancesParams {
   token_symbol?: string
 }
 
-export interface PaymentMethodsParams {
-  chain_id?: number
-  token_symbol?: string
-}
-
 /**
  * Wallets and their token holdings, scoped to an account. Mirrors rail0-go's
- * WalletsService. The list endpoint is public (no JWT); mutations require a JWT.
+ * WalletsService. Every method is behind SIWE — a merchant manages its OWN
+ * wallets here. Public, buyer-facing discovery of a merchant's accepted
+ * wallets/tokens lives on PaymentMethodsResource (GET /payment_methods).
  */
 export class WalletsResource {
   constructor(private readonly http: HttpClient) {}
@@ -606,25 +598,40 @@ export class WalletsResource {
   balances(account_id: string, id: string, params?: WalletBalancesParams): Promise<WalletBalances> {
     return this.http.get(\`/accounts/\${account_id}/wallets/\${id}/balances\${buildQuery(params)}\`)
   }
+}
+${BUILD_QUERY}`
+
+const PAYMENT_METHODS = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import type { WalletWithTokens } from './types.js'
+
+/**
+ * Selects the merchant whose payment methods to list. Provide EXACTLY ONE:
+ * account_id returns all the merchant's active wallets; address returns just
+ * that one wallet. Both empty (or both set) is rejected by the gateway (400).
+ */
+export interface PaymentMethodsQuery {
+  account_id?: string
+  address?: string
+}
+
+/**
+ * Public, buyer-facing discovery of a merchant's accepted payment methods
+ * (GET /payment_methods). Unlike WalletsResource (behind SIWE), this needs no
+ * JWT: a payer that only knows the merchant — by account id, or by one of its
+ * wallet addresses — lists the active wallet/token combinations it accepts.
+ */
+export class PaymentMethodsResource {
+  constructor(private readonly http: HttpClient) {}
 
   /**
-   * Convenience (client-side): the account's active wallets flattened to
-   * (address, chain_id, token) payment methods — the same shape rail0-go returns.
-   * There is no dedicated gateway endpoint; this lists active wallets and flattens.
+   * List the merchant's active wallets, each with its active token holdings
+   * nested under \`tokens\` (WalletWithTokens) — the same wallet-centric shape as
+   * WalletsResource.list, but public and scoped by the query. An unknown
+   * account/address yields an empty array. No pagination.
    */
-  async paymentMethods(account_id: string, params?: PaymentMethodsParams): Promise<PaymentMethod[]> {
-    const { data } = await this.list(account_id, { active: true })
-    const methods: PaymentMethod[] = []
-    for (const w of data) {
-      for (const holding of w.tokens ?? []) {
-        if (holding.active === false || !holding.token) continue
-        const t = holding.token
-        if (params?.chain_id && t.chain_id !== params.chain_id) continue
-        if (params?.token_symbol && t.symbol?.toUpperCase() !== params.token_symbol.toUpperCase()) continue
-        methods.push({ address: w.address ?? '', chain_id: t.chain_id ?? 0, token: t })
-      }
-    }
-    return methods
+  list(query: PaymentMethodsQuery): Promise<WalletWithTokens[]> {
+    return this.http.get(\`/payment_methods\${buildQuery(query)}\`)
   }
 }
 ${BUILD_QUERY}`
@@ -774,6 +781,7 @@ await writeFile(resolve(RESOURCES_DIR, 'types.ts'), TYPES, 'utf-8')
 console.log(`Generated: ${resolve(RESOURCES_DIR, 'types.ts')}`)
 await writeResource('payments.ts', PAYMENTS)
 await writeResource('wallets.ts', WALLETS)
+await writeResource('payment_methods.ts', PAYMENT_METHODS)
 await writeResource('webhooks.ts', WEBHOOKS)
 await writeResource('chains.ts', CHAINS)
 await writeResource('tokens.ts', TOKENS)

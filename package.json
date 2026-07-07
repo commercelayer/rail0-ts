@@ -45,7 +45,7 @@
     "typecheck": "tsc --noEmit && tsc -p examples/tsconfig.json && tsc -p test/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate": "tsx gen/generate.ts",
+    "generate": "tsx gen/generate.ts && biome check --write src/api.ts src/resources",
     "lint": "biome check src gen examples test",
     "lint:fix": "biome check --write src gen examples test",
     "format": "biome format --write src gen examples test",

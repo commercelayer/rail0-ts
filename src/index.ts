@@ -8,6 +8,8 @@ export type { AuthResponse } from './resources/auth.js'
 export { AuthResource, checksumAddress, personalSign } from './resources/auth.js'
 export { ChainsResource } from './resources/chains.js'
 export { HealthResource } from './resources/health.js'
+export type { PaymentMethodsQuery } from './resources/payment_methods.js'
+export { PaymentMethodsResource } from './resources/payment_methods.js'
 export type { ListPaymentsParams, ListTransactionsParams } from './resources/payments.js'
 // ── Resources ────────────────────────────────────────────────────────
 export { PaymentsResource } from './resources/payments.js'
@@ -48,7 +50,6 @@ export type {
   Payment,
   PaymentConfig,
   PaymentDetail,
-  PaymentMethod,
   // Enums
   PaymentMode,
   PaymentStatus,
@@ -71,11 +72,7 @@ export type {
   WebhookTopic,
   WebhookWithSecret,
 } from './resources/types.js'
-export type {
-  ListWalletsParams,
-  PaymentMethodsParams,
-  WalletBalancesParams,
-} from './resources/wallets.js'
+export type { ListWalletsParams, WalletBalancesParams } from './resources/wallets.js'
 export { WalletsResource } from './resources/wallets.js'
 export type { ListEventCallbacksParams, ListWebhooksParams } from './resources/webhooks.js'
 export { WebhooksResource } from './resources/webhooks.js'

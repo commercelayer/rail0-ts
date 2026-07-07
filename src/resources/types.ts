@@ -24,7 +24,13 @@ export type PaymentStatus =
   | 'released'
   | 'refunded'
   | 'partially_refunded'
-export type TransactionOperation = 'authorize' | 'charge' | 'capture' | 'void' | 'release' | 'refund'
+export type TransactionOperation =
+  | 'authorize'
+  | 'charge'
+  | 'capture'
+  | 'void'
+  | 'release'
+  | 'refund'
 export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
 export type DisputeStatus = 'open' | 'closed'
 export type CircuitState = 'closed' | 'open'
@@ -158,14 +164,13 @@ export interface Transaction {
   payment_id?: string
   operation: TransactionOperation
   status: TransactionStatus
-  /** Decoded on-chain failure (null unless status is "failed"): the RAIL0 custom error in snake_case, or "revert" when unknown. */
-  error_code?: string | null
-  /** Human-readable form of error_code (e.g. "NotPayee"); null unless status is "failed". */
-  error_message?: string | null
   unsigned_transaction?: string | null
   transaction_hash?: string | null
   amount?: Uint256String | null
   block_number?: number | null
+  /** Decoded on-chain failure (null unless status is "failed"): error_code is the RAIL0 custom error in snake_case (e.g. "not_payee"), or "revert" when the selector is unknown; error_message is its human-readable form (e.g. "NotPayee"). */
+  error_code?: string | null
+  error_message?: string | null
   /** On-chain gas/receipt data, mirrored from the indexer on confirm; null until confirmed. */
   gas_used?: Uint256String | null
   gas_limit?: Uint256String | null
@@ -296,13 +301,6 @@ export interface Health {
   active_chains?: number
   active_contracts?: number
   timestamp?: string
-}
-
-/** A (wallet, token, chain) a payee accepts payment on. Client-side convenience (flattened from active wallets), as in rail0-go. */
-export interface PaymentMethod {
-  address: string
-  chain_id: number
-  token: Token
 }
 
 // ── Pagination ───────────────────────────────────────────────────────

@@ -65,7 +65,10 @@ export class WebhooksResource {
   }
 
   /** List delivery attempts for a webhook. */
-  eventCallbacks(id: string, params?: ListEventCallbacksParams): Promise<PaginatedResponse<EventCallback>> {
+  eventCallbacks(
+    id: string,
+    params?: ListEventCallbacksParams,
+  ): Promise<PaginatedResponse<EventCallback>> {
     return this.http.getPaginated(`/webhooks/${id}/event_callbacks${buildQuery(params)}`)
   }
 
@@ -78,5 +81,5 @@ function buildQuery(params?: object): string {
   if (!params) return ''
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
   if (entries.length === 0) return ''
-  return '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')
+  return `?${entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')}`
 }
