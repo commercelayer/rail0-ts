@@ -99,6 +99,10 @@ export interface PayerSignatureRequest {
 export interface SubmitTransactionRequest {
   signed_transaction: string
 }
+/** Body for the submit-by-hash endpoints (MetaMask reports the broadcast tx hash). */
+export interface SubmitByHashRequest {
+  transaction_hash: string
+}
 /** Body for the generic prepare endpoints. amount → capture/refund; signature → refund phase-2; from → release. */
 export interface PrepareRequest {
   amount?: string

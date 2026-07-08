@@ -9,6 +9,7 @@ import type {
   Payment,
   PaymentDetail,
   PrepareRequest,
+  SubmitByHashRequest,
   SubmitTransactionRequest,
   Transaction,
   TransactionOperation,
@@ -87,6 +88,15 @@ export class PaymentsResource {
     params: SubmitTransactionRequest,
   ): Promise<Transaction> {
     return this.http.post(`/payments/${id}/${operation}`, params)
+  }
+
+  /** Record an already-broadcast transaction by hash (MetaMask signs+broadcasts in one step). */
+  submitByHash(
+    id: Bytes32,
+    operation: TransactionOperation | 'dispute' | 'close_dispute',
+    params: SubmitByHashRequest,
+  ): Promise<Transaction> {
+    return this.http.post(`/payments/${id}/${operation}/submitted`, params)
   }
 
   // ── Operation-specific pairs (payee unless noted) ──────────────────
