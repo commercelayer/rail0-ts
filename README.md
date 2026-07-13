@@ -70,16 +70,18 @@ Each on-chain operation is a two-step **prepare → submit**:
 
 When a wallet like **MetaMask** signs and broadcasts in one step (so you never hold the raw signed tx), report the resulting hash instead: **submit-by-hash** — `POST /payments/:id/:op/submitted` with `{ transaction_hash }` (payee-only) via `submitByHash(id, op, { transaction_hash })`.
 
-Payment status values: `unsigned`, `signed`, `authorized`, `charged`, `captured`, `partially_captured`, `voided`, `released`, `refunded`, `partially_refunded`.
+The `:id` accepts **either** the payment's UUID **or** its `rail0_id` (the contract's bytes32 id) — the gateway resolves both.
+
+Payment status values: `unsigned`, `signed`, `authorized`, `charged`, `captured`, `partially_captured`, `voided`, `released`, `refunded`, `partially_refunded`. Status changes are happy-path — a payment only leaves its state to *close*: `partially_refunded` is legacy and no longer produced (a partial refund leaves the status unchanged).
 
 | Operation | Caller | What it does |
 |-----------|--------|--------------|
 | `authorizePrepare` + `authorize` | payee | Broadcast the authorize tx; funds move to escrow |
 | `chargePrepare` + `charge` | payee | One-shot authorize + capture, no escrow window |
 | `capturePrepare` + `capture` | payee | Move escrowed funds to the merchant (partial supported) |
-| `voidPrepare` + `void` | payee | Cancel the hold, return funds to the payer |
-| `releasePrepare` + `release` | anyone | Reclaim escrow after the authorization expiry |
-| `refundPrepare` + `refund` | payee | Two-phase EIP-3009 `receiveWithAuthorization` refund |
+| `voidPrepare` + `void` | payee | Cancel the hold, return funds to the payer — **only before any capture** (else the contract reverts `AlreadyCaptured`) |
+| `releasePrepare` + `release` | anyone | Return the uncaptured escrow after expiry; closes as `released` only on a **total** release (untouched authorization), else status unchanged |
+| `refundPrepare` + `refund` | payee | Two-phase EIP-3009 `receiveWithAuthorization` refund; closes as `refunded` only when **fully settled**, else status unchanged |
 | `disputePrepare` + `dispute` | payer | Open a dispute (signal-only) |
 | `closeDisputePrepare` + `closeDispute` | payer | Close an open dispute |
 
