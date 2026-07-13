@@ -112,7 +112,7 @@ const client = new Rail0Client({
 })
 ```
 
-Resources: `client.payments`, `client.wallets`, `client.webhooks`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
+Resources: `client.payments`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
 
 ### `client.payments`
 
