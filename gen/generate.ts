@@ -415,6 +415,18 @@ export interface ListPaymentsParams {
   payer?: string
   payee?: string
   token?: string
+  /** Filter by EVM chain id. */
+  chain_id?: number
+  /** Filter by whether an open dispute exists (tri-state: omit for either). */
+  disputed?: boolean
+  /** Minimum amount in token base units (inclusive). */
+  min_amount?: string
+  /** Maximum amount in token base units (inclusive). */
+  max_amount?: string
+  /** Only payments created at/after this ISO-8601 timestamp. */
+  created_from?: string
+  /** Only payments created at/before this ISO-8601 timestamp. */
+  created_to?: string
   rail0_id?: string
   sort?: string
   page?: number

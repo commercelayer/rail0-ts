@@ -124,6 +124,43 @@ describe('Rail0Client', () => {
       expect(result.data).toBeInstanceOf(Array)
       expect(result.meta.page).toBe(1)
     })
+
+    it('serializes every filter param into the query string', async () => {
+      const mockList = { data: [], meta: { page: 2, per_page: 25, total: 0 } }
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(JSON.stringify(mockList), { status: 200 }))
+
+      await client.payments.list({
+        status: 'authorized',
+        mode: 'authorize',
+        payer: '0xaaaa',
+        payee: '0xbbbb',
+        token: '0xcccc',
+        chain_id: 8453,
+        disputed: true,
+        min_amount: '1000000',
+        max_amount: '5000000',
+        created_from: '2026-01-01T00:00:00Z',
+        created_to: '2026-02-01T00:00:00Z',
+        rail0_id: '0xdddd',
+        sort: '-created_at',
+        page: 2,
+      })
+
+      const url = String(spy.mock.calls[0]?.[0])
+      expect(url).toContain('status=authorized')
+      expect(url).toContain('mode=authorize')
+      expect(url).toContain('chain_id=8453')
+      expect(url).toContain('disputed=true')
+      expect(url).toContain('min_amount=1000000')
+      expect(url).toContain('max_amount=5000000')
+      expect(url).toContain('created_from=')
+      expect(url).toContain('created_to=')
+      expect(url).toContain('rail0_id=0xdddd')
+      expect(url).toContain('sort=-created_at')
+      expect(url).toContain('page=2')
+    })
   })
 
   describe('tokens.list', () => {

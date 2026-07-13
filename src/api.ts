@@ -197,14 +197,12 @@ export interface paths {
             query?: never;
             header?: never;
             path: {
+                /** @description The `:id` accepts either the payment UUID or its `rail0_id` (the contract's bytes32 paymentId, `0x…`), resolved to the UUID internally. This holds for every `/payments/{id}/…` route. */
                 id: string;
             };
             cookie?: never;
         };
-        /**
-         * Get a payment with embedded transactions and optional signing payload
-         * @description The `:id` accepts either the payment UUID or its `rail0_id` (the contract's bytes32 paymentId, `0x…`), resolved to the UUID internally. This holds for every `/payments/{id}/…` route.
-         */
+        /** Get a payment with embedded transactions and optional signing payload */
         get: operations["getPayment"];
         put?: never;
         post?: never;
@@ -267,7 +265,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare an operation's unsigned transaction
-         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated: it is payer-or-payee on-chain and the payer has no gateway account, so authorization is on-chain (the signed tx + the contract's NotPayerOrPayee gate). `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2). `void` is accepted only while the authorization is fully intact (nothing captured yet); once any amount has been captured it returns 422 `invalid_state`, and the uncaptured remainder is recovered via `release` instead.
+         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated: it is payer-or-payee on-chain and the payer has no gateway account, so authorization is on-chain (the signed tx + the contract's NotPayerOrPayee gate). `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2).
          */
         post: operations["preparePaymentOperation"];
         delete?: never;
@@ -294,6 +292,30 @@ export interface paths {
          * @description Stores the caller's signed raw transaction on the latest pending transaction for this operation and enqueues the broadcaster. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated (payer-or-payee submit it). As a robustness check the gateway also recovers the signed tx's sender and requires it to match the party the contract accepts as msg.sender — the payee for payee ops, the payer or payee for `release` — returning 403 otherwise and 400 if the tx can't be decoded, before broadcasting. Broadcast happens asynchronously.
          */
         post: operations["submitPaymentOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payments/{id}/{operation}/submitted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description Payment operation namespace. */
+                operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record an externally-broadcast operation transaction (MetaMask)
+         * @description For wallets that sign and broadcast in one step (MetaMask `eth_sendTransaction`) and so cannot hand the gateway a raw `signed_transaction`. The caller broadcasts the prepared transaction themselves and reports its hash here; the gateway attaches the hash to the operation's open transaction and moves it straight to `submitted`, WITHOUT the broadcaster — the indexer then confirms it by hash exactly as for a gateway-broadcast tx. Payee-only (bearerAuth) for every operation, `release` included (MetaMask support is merchant-only): a bare hash carries no signature to authorize it, so the SIWE session is the authorization. Re-callable while the tx is still unconfirmed to OVERWRITE a stuck or wrong hash; a confirmed/failed operation is terminal and returns 422.
+         */
+        post: operations["submitPaymentOperationByHash"];
         delete?: never;
         options?: never;
         head?: never;
@@ -818,7 +840,7 @@ export interface components {
             /** @description Deployed rail0 contract address. */
             rail0_contract?: string;
             transactions?: components["schemas"]["Transaction"][];
-            /** @description EIP-3009 payload the payer must sign; present when the payment is unsigned. If it can't be built (e.g. the token's EIP-712 domain isn't cached and the on-chain read fails), the request returns 502 `signing_payload_unavailable` with a `reason` (`rpc_unreachable`, `rpc_error`, or `error`) rather than a payment with a null payload. */
+            /** @description EIP-3009 payload the payer must sign; present only when the payment is unsigned (may be null on transient RPC failure). */
             signing_payload?: unknown;
         };
         Transaction: {
@@ -1458,6 +1480,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /** @description The `:id` accepts either the payment UUID or its `rail0_id` (the contract's bytes32 paymentId, `0x…`), resolved to the UUID internally. This holds for every `/payments/{id}/…` route. */
                 id: string;
             };
             cookie?: never;
@@ -1655,6 +1678,53 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    submitPaymentOperationByHash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description Payment operation namespace. */
+                operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Hash of the already-broadcast transaction (0x + 64 hex). */
+                    transaction_hash: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted; the hash was recorded and awaits on-chain confirmation. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description Malformed transaction_hash. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The operation's transaction is already confirmed or failed — its hash is not overwritable. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     prepareDispute: {
