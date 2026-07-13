@@ -86,6 +86,32 @@ describe('Rail0Client', () => {
     })
   })
 
+  describe('payments.submitByHash', () => {
+    it('posts the tx hash to /:op/submitted', async () => {
+      const mockTx = {
+        rail0_id: mockPaymentId,
+        status: 'submitting',
+      }
+      const transactionHash = `0x${'ab'.repeat(32)}`
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(JSON.stringify(mockTx), { status: 202 }))
+
+      const result = await client.payments.submitByHash(mockPaymentId, 'capture', {
+        transaction_hash: transactionHash,
+      })
+
+      expect(result.status).toBe('submitting')
+      expect(spy).toHaveBeenCalledWith(
+        `${BASE_URL}/payments/${mockPaymentId}/capture/submitted`,
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ transaction_hash: transactionHash }),
+        }),
+      )
+    })
+  })
+
   describe('payments.list', () => {
     it('calls GET /payments and returns paginated data', async () => {
       const mockList = { data: [], meta: { page: 1, per_page: 20, total: 0 } }

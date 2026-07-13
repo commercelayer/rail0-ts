@@ -153,6 +153,10 @@ export interface PayerSignatureRequest {
 export interface SubmitTransactionRequest {
   signed_transaction: string
 }
+/** Body for the submit-by-hash endpoints (MetaMask reports the broadcast tx hash). */
+export interface SubmitByHashRequest {
+  transaction_hash: string
+}
 /** Body for the generic prepare endpoints. amount → capture/refund; signature → refund phase-2; from → release. */
 export interface PrepareRequest {
   amount?: string
@@ -399,6 +403,7 @@ import type {
   PaymentDetail,
   PayerSignatureRequest,
   PrepareRequest,
+  SubmitByHashRequest,
   SubmitTransactionRequest,
   Transaction,
   TransactionOperation,
@@ -466,6 +471,13 @@ export class PaymentsResource {
   /** Broadcast a signed transaction for an operation (HTTP 202, async). */
   submit(id: Bytes32, operation: TransactionOperation | 'dispute' | 'close_dispute', params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(\`/payments/\${id}/\${operation}\`, params)
+  }
+
+  /** Record an already-broadcast transaction by hash (MetaMask signs+broadcasts in one step).
+   *  Only the payee operations expose a /submitted endpoint — dispute/close-dispute are
+   *  payer-only and raw-sign only, so they are intentionally excluded from the type. */
+  submitByHash(id: Bytes32, operation: TransactionOperation, params: SubmitByHashRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/\${operation}/submitted\`, params)
   }
 
   // ── Operation-specific pairs (payee unless noted) ──────────────────

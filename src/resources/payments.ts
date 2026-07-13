@@ -9,6 +9,7 @@ import type {
   Payment,
   PaymentDetail,
   PrepareRequest,
+  SubmitByHashRequest,
   SubmitTransactionRequest,
   Transaction,
   TransactionOperation,
@@ -87,6 +88,17 @@ export class PaymentsResource {
     params: SubmitTransactionRequest,
   ): Promise<Transaction> {
     return this.http.post(`/payments/${id}/${operation}`, params)
+  }
+
+  /** Record an already-broadcast transaction by hash (MetaMask signs+broadcasts in one step).
+   *  Only the payee operations expose a /submitted endpoint — dispute/close-dispute are
+   *  payer-only and raw-sign only, so they are intentionally excluded from the type. */
+  submitByHash(
+    id: Bytes32,
+    operation: TransactionOperation,
+    params: SubmitByHashRequest,
+  ): Promise<Transaction> {
+    return this.http.post(`/payments/${id}/${operation}/submitted`, params)
   }
 
   // ── Operation-specific pairs (payee unless noted) ──────────────────
