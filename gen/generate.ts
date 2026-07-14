@@ -352,6 +352,8 @@ export interface EventCallback {
   error_reason?: string | null
   status?: EventCallbackStatus
   created_at?: string
+  /** The JSON request body POSTed to the callback URL (decompressed) — for inspection/download. */
+  payload?: string | null
 }
 export interface Health {
   status?: HealthStatus

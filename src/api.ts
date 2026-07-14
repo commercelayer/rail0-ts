@@ -946,6 +946,8 @@ export interface components {
             status?: "pending" | "delivered" | "failed";
             /** Format: date-time */
             created_at?: string;
+            /** @description The JSON request body POSTed to the callback URL (decompressed). */
+            payload?: string | null;
         };
         /** @description Sweeper view of a stale submitted transaction. */
         SyncTransaction: {
