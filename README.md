@@ -1,8 +1,8 @@
 # @rail0/sdk
 
-TypeScript SDK for the [RAIL0](https://github.com/commercelayer/rail0) stablecoin payment API.
+TypeScript SDK for the [RAIL0](https://github.com/commercelayer/rail0) stablecoin payment gateway.
 
-RAIL0 brings the authorize → capture → refund lifecycle of card networks to stablecoin payments — no intermediaries, no protocol fees. This SDK wraps the REST API in front of the contract with fully-typed access to every operation, plus client-side EIP-3009 / EIP-1559 signing helpers (via `@noble` — no ethers/viem dependency). It mirrors the [rail0-go](https://github.com/commercelayer/rail0-go) SDK surface.
+RAIL0 brings the authorize → capture → refund lifecycle of card networks to stablecoin payments — no intermediaries, no protocol fees. This SDK is a fully-typed REST client for the RAIL0 gateway in front of the contract, with access to every operation, plus client-side EIP-3009 / EIP-1559 signing helpers (via `@noble` — no ethers/viem dependency). It mirrors the [rail0-go](https://github.com/commercelayer/rail0-go) SDK surface.
 
 ## Requirements
 
