@@ -132,8 +132,11 @@ export class AuthResource {
    *
    * @param privateKeyHex - 0x-prefixed or raw hex private key (32 bytes)
    * @param domain - host of the API server, e.g. "api.rail0.xyz"
+   * @param chainId - chain id embedded in the SIWE message. Must match the
+   *   gateway's SIWE_CHAIN_ID policy (default 1); override only when the gateway
+   *   is configured with a different login chain.
    */
-  async login(privateKeyHex: string, domain: string): Promise<AuthResponse> {
+  async login(privateKeyHex: string, domain: string, chainId = 1): Promise<AuthResponse> {
     const { nonce } = await this.getNonce()
     const address = checksumAddress(privateKeyHex)
 
@@ -145,7 +148,7 @@ export class AuthResource {
       address,
       uri: `http://${domain}`,
       version: '1',
-      chainId: 1,
+      chainId,
       nonce,
       statement: 'Sign in to RAIL0',
     })

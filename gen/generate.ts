@@ -441,12 +441,25 @@ export interface ListTransactionsParams {
   per_page?: number
 }
 
+export interface ListDisputesParams {
+  /** Filter by dispute status ("open" or "closed"). */
+  status?: string
+  sort?: string
+  page?: number
+  per_page?: number
+}
+
 export class PaymentsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** Create a payment. Returns the PaymentDetail, including the EIP-712 signing_payload for the payer. */
-  create(params: CreatePaymentRequest): Promise<PaymentDetail> {
-    return this.http.post('/payments', params)
+  /**
+   * Create a payment. Returns the PaymentDetail, including the EIP-712 signing_payload for the payer.
+   *
+   * Pass \`idempotencyKey\` to make the request replay-safe: a repeated call with
+   * the same key returns the existing payment (HTTP 200) instead of creating a new one.
+   */
+  create(params: CreatePaymentRequest, idempotencyKey?: string): Promise<PaymentDetail> {
+    return this.http.post('/payments', params, idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined)
   }
 
   /** List payments for the authenticated wallet (payer or payee). Requires a JWT. */
@@ -469,9 +482,9 @@ export class PaymentsResource {
     return this.http.put(\`/payments/\${id}/sign\`, params)
   }
 
-  /** List the payment's dispute open/close history. */
-  disputes(id: Bytes32): Promise<Dispute[]> {
-    return this.http.get(\`/payments/\${id}/disputes\`)
+  /** List the payment's dispute open/close history (paginated). */
+  disputes(id: Bytes32, params?: ListDisputesParams): Promise<PaginatedResponse<Dispute>> {
+    return this.http.getPaginated(\`/payments/\${id}/disputes\${buildQuery(params)}\`)
   }
 
   // ── Generic prepare/submit ─────────────────────────────────────────
@@ -574,6 +587,8 @@ export interface ListWalletsParams {
   chain_id?: number
   token_symbol?: string
   active?: boolean
+  /** Restrict nested token holdings to the default one. */
+  default?: boolean
   sort?: string
   page?: number
   per_page?: number
@@ -743,15 +758,22 @@ import type { Blockchain } from './types.js'
 
 export type { Blockchain } from './types.js'
 
+export interface ListChainsParams {
+  /** Filter by network type ("testnet" or "mainnet"). */
+  network_type?: string
+  /** Filter by native symbol (case-insensitive, e.g. "ETH"). */
+  symbol?: string
+}
+
 export class ChainsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** List all active blockchains supported by RAIL0. */
-  list(): Promise<Blockchain[]> {
-    return this.http.get('/blockchains')
+  /** List active blockchains supported by RAIL0, optionally filtered. */
+  list(params?: ListChainsParams): Promise<Blockchain[]> {
+    return this.http.get(\`/blockchains\${buildQuery(params)}\`)
   }
 }
-`
+${BUILD_QUERY}`
 
 const TOKENS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
@@ -763,15 +785,15 @@ export class TokensResource {
   constructor(private readonly http: HttpClient) {}
 
   /**
-   * List active tokens, optionally filtered by chain.
-   * @param chain_id Chain ID to filter by. Omit for all chains.
+   * List active tokens, optionally filtered by chain and/or symbol.
+   * @param chain_id Chain ID to filter by. Omit or 0 for all chains.
+   * @param symbol   Token symbol to filter by (case-insensitive, e.g. "USDC").
    */
-  list(chain_id?: number): Promise<Token[]> {
-    const path = chain_id && chain_id !== 0 ? \`/tokens?chain_id=\${chain_id}\` : '/tokens'
-    return this.http.get(path)
+  list(chain_id?: number, symbol?: string): Promise<Token[]> {
+    return this.http.get(\`/tokens\${buildQuery({ chain_id: chain_id || undefined, symbol })}\`)
   }
 }
-`
+${BUILD_QUERY}`
 
 const HEALTH = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'

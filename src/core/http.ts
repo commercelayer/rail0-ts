@@ -97,8 +97,8 @@ export class HttpClient {
     return (await this.send<T>('PUT', path, body)).data
   }
 
-  async post<T>(path: string, body?: unknown): Promise<T> {
-    return (await this.send<T>('POST', path, body)).data
+  async post<T>(path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
+    return (await this.send<T>('POST', path, body, headers)).data
   }
 
   async patch<T>(path: string, body?: unknown): Promise<T> {
@@ -138,6 +138,7 @@ export class HttpClient {
     method: string,
     path: string,
     body?: unknown,
+    extraHeaders?: Record<string, string>,
   ): Promise<{ data: T; headers: Headers }> {
     const url = `${this.baseUrl}${path}`
     const maxAttempts = this.maxRetries + 1
@@ -156,7 +157,7 @@ export class HttpClient {
       try {
         response = await fetch(url, {
           method,
-          headers: this.headers,
+          headers: extraHeaders ? { ...this.headers, ...extraHeaders } : this.headers,
           ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
           signal: controller.signal,
         })

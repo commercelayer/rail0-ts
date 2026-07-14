@@ -47,12 +47,29 @@ export interface ListTransactionsParams {
   per_page?: number
 }
 
+export interface ListDisputesParams {
+  /** Filter by dispute status ("open" or "closed"). */
+  status?: string
+  sort?: string
+  page?: number
+  per_page?: number
+}
+
 export class PaymentsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** Create a payment. Returns the PaymentDetail, including the EIP-712 signing_payload for the payer. */
-  create(params: CreatePaymentRequest): Promise<PaymentDetail> {
-    return this.http.post('/payments', params)
+  /**
+   * Create a payment. Returns the PaymentDetail, including the EIP-712 signing_payload for the payer.
+   *
+   * Pass `idempotencyKey` to make the request replay-safe: a repeated call with
+   * the same key returns the existing payment (HTTP 200) instead of creating a new one.
+   */
+  create(params: CreatePaymentRequest, idempotencyKey?: string): Promise<PaymentDetail> {
+    return this.http.post(
+      '/payments',
+      params,
+      idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+    )
   }
 
   /** List payments for the authenticated wallet (payer or payee). Requires a JWT. */
@@ -78,9 +95,9 @@ export class PaymentsResource {
     return this.http.put(`/payments/${id}/sign`, params)
   }
 
-  /** List the payment's dispute open/close history. */
-  disputes(id: Bytes32): Promise<Dispute[]> {
-    return this.http.get(`/payments/${id}/disputes`)
+  /** List the payment's dispute open/close history (paginated). */
+  disputes(id: Bytes32, params?: ListDisputesParams): Promise<PaginatedResponse<Dispute>> {
+    return this.http.getPaginated(`/payments/${id}/disputes${buildQuery(params)}`)
   }
 
   // ── Generic prepare/submit ─────────────────────────────────────────

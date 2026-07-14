@@ -13,6 +13,8 @@ export interface ListWalletsParams {
   chain_id?: number
   token_symbol?: string
   active?: boolean
+  /** Restrict nested token holdings to the default one. */
+  default?: boolean
   sort?: string
   page?: number
   per_page?: number

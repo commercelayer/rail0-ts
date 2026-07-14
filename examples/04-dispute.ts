@@ -29,9 +29,9 @@ try {
   })
   console.log('Dispute closed')
 
-  // Inspect the dispute history.
+  // Inspect the dispute history (paginated).
   const history = await client.payments.disputes(id)
-  for (const d of history) console.log(d.status, d.opened_at, d.closed_at)
+  for (const d of history.data) console.log(d.status, d.opened_at, d.closed_at)
 } catch (err) {
   if (err instanceof Rail0ApiError) console.error(`[${err.error}] ${err.message}`)
   throw err

@@ -116,7 +116,7 @@ Resources: `client.payments`, `client.wallets`, `client.paymentMethods`, `client
 
 ### `client.payments`
 
-`create(params)` → `PaymentDetail` · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id)` → `Dispute[]`.
+`create(params, idempotencyKey?)` → `PaymentDetail` (pass `idempotencyKey` to make the create replay-safe) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
 
 Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transaction`):
 `authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason?)`/`dispute`, `closeDisputePrepare(id, reason?)`/`closeDispute`. A generic `prepare(id, op, body?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only).
@@ -144,11 +144,11 @@ for (const w of methods) for (const h of w.tokens ?? []) {
 
 ### `client.chains` / `client.tokens` / `client.health`
 
-`chains.list()` → `Blockchain[]` · `tokens.list(chainId?)` → `Token[]` · `health.get()` → `Health`.
+`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`) · `tokens.list(chainId?, symbol?)` → `Token[]` · `health.get()` → `Health`.
 
 ### `client.auth`
 
-`getNonce()` · `verify(message, signature)` → `AuthResponse` · `login(privateKeyHex, domain)` → `AuthResponse` (full SIWE flow).
+`getNonce()` · `verify(message, signature)` → `AuthResponse` · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs).
 
 ### Logging
 

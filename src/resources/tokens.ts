@@ -8,11 +8,18 @@ export class TokensResource {
   constructor(private readonly http: HttpClient) {}
 
   /**
-   * List active tokens, optionally filtered by chain.
-   * @param chain_id Chain ID to filter by. Omit for all chains.
+   * List active tokens, optionally filtered by chain and/or symbol.
+   * @param chain_id Chain ID to filter by. Omit or 0 for all chains.
+   * @param symbol   Token symbol to filter by (case-insensitive, e.g. "USDC").
    */
-  list(chain_id?: number): Promise<Token[]> {
-    const path = chain_id && chain_id !== 0 ? `/tokens?chain_id=${chain_id}` : '/tokens'
-    return this.http.get(path)
+  list(chain_id?: number, symbol?: string): Promise<Token[]> {
+    return this.http.get(`/tokens${buildQuery({ chain_id: chain_id || undefined, symbol })}`)
   }
+}
+
+function buildQuery(params?: object): string {
+  if (!params) return ''
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
+  if (entries.length === 0) return ''
+  return `?${entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')}`
 }
