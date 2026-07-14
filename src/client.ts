@@ -1,6 +1,7 @@
 import { HttpClient, type HttpClientOptions } from './core/http.js'
 import { AuthResource } from './resources/auth.js'
 import { ChainsResource } from './resources/chains.js'
+import { DisputesResource } from './resources/disputes.js'
 import { HealthResource } from './resources/health.js'
 import { PaymentMethodsResource } from './resources/payment_methods.js'
 import { PaymentsResource } from './resources/payments.js'
@@ -15,6 +16,7 @@ export class Rail0Client {
   readonly chains: ChainsResource
   readonly tokens: TokensResource
   readonly payments: PaymentsResource
+  readonly disputes: DisputesResource
   readonly wallets: WalletsResource
   readonly paymentMethods: PaymentMethodsResource
   readonly webhooks: WebhooksResource
@@ -26,6 +28,7 @@ export class Rail0Client {
     this.chains = new ChainsResource(http)
     this.tokens = new TokensResource(http)
     this.payments = new PaymentsResource(http)
+    this.disputes = new DisputesResource(http)
     this.wallets = new WalletsResource(http)
     this.paymentMethods = new PaymentMethodsResource(http)
     this.webhooks = new WebhooksResource(http)

@@ -171,6 +171,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/disputes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List disputes on the authenticated wallet's payments (open and closed) */
+        get: operations["listAccountDisputes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payments": {
         parameters: {
             query?: never;
@@ -835,6 +852,9 @@ export interface components {
             /** Format: date-time */
             closed_at?: string | null;
         };
+        DisputeDetail: components["schemas"]["Dispute"] & {
+            payment?: components["schemas"]["Payment"];
+        };
         PaymentDetail: components["schemas"]["Payment"] & {
             chain_id?: number;
             /** @description Deployed rail0 contract address. */
@@ -1361,6 +1381,39 @@ export interface operations {
                     "application/json": components["schemas"]["WalletWithTokens"][];
                 };
             };
+        };
+    };
+    listAccountDisputes: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Filter by dispute status. */
+                status?: "open" | "closed";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disputes (open and closed) on the caller's payments (as payer or payee). */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisputeDetail"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
     listPayments: {

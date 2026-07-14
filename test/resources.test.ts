@@ -188,6 +188,25 @@ describe('resource alignment', () => {
     })
   })
 
+  // ── Disputes (account-level, open + closed) ────────────────────────────────
+
+  describe('disputes.list', () => {
+    it('returns paginated disputes with embedded payment and forwards status', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          okList(
+            [{ id: 'd1', status: 'closed', closed_by: 'payee', payment: { rail0_id: RAIL0_ID, status: 'refunded' } }],
+            1,
+          ),
+        )
+      const res = await client.disputes.list({ status: 'closed' })
+      expect(res.data[0]?.status).toBe('closed')
+      expect(res.data[0]?.payment?.rail0_id).toBe(RAIL0_ID)
+      expect(String(spy.mock.calls[0]?.[0])).toContain('/disputes?status=closed')
+    })
+  })
+
   // ── Auth login chainId ───────────────────────────────────────────────────
 
   describe('auth.login chainId', () => {

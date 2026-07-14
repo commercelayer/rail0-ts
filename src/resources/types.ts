@@ -201,6 +201,8 @@ export interface Dispute {
   close_reason?: string | null
   closed_block?: number | null
   closed_at?: string | null
+  /** Parent payment (public-safe view), embedded by the account-level GET /disputes list. */
+  payment?: Payment
 }
 export interface Wallet {
   id?: string

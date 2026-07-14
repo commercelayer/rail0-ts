@@ -255,6 +255,8 @@ export interface Dispute {
   close_reason?: string | null
   closed_block?: number | null
   closed_at?: string | null
+  /** Parent payment (public-safe view), embedded by the account-level GET /disputes list. */
+  payment?: Payment
 }
 export interface Wallet {
   id?: string
@@ -795,6 +797,29 @@ export class TokensResource {
 }
 ${BUILD_QUERY}`
 
+const DISPUTES = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import type { Dispute, PaginatedResponse } from './types.js'
+import type { ListDisputesParams } from './payments.js'
+
+/**
+ * Account-level dispute list (requires JWT). Complements
+ * PaymentsResource.disputes (one payment's open/close history): this surfaces
+ * every dispute — open AND closed — across the caller's payments (as payer or
+ * payee), each with its parent \`payment\` embedded. A closed dispute drops out
+ * of the \`disputed\` filter on PaymentsResource.list (current-state) but still
+ * appears here.
+ */
+export class DisputesResource {
+  constructor(private readonly http: HttpClient) {}
+
+  /** List the account's disputes (open and closed). */
+  list(params?: ListDisputesParams): Promise<PaginatedResponse<Dispute>> {
+    return this.http.getPaginated(\`/disputes\${buildQuery(params)}\`)
+  }
+}
+${BUILD_QUERY}`
+
 const HEALTH = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
 import type { Health } from './types.js'
@@ -826,6 +851,7 @@ await mkdir(RESOURCES_DIR, { recursive: true })
 await writeFile(resolve(RESOURCES_DIR, 'types.ts'), TYPES, 'utf-8')
 console.log(`Generated: ${resolve(RESOURCES_DIR, 'types.ts')}`)
 await writeResource('payments.ts', PAYMENTS)
+await writeResource('disputes.ts', DISPUTES)
 await writeResource('wallets.ts', WALLETS)
 await writeResource('payment_methods.ts', PAYMENT_METHODS)
 await writeResource('webhooks.ts', WEBHOOKS)
