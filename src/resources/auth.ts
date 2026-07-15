@@ -10,9 +10,15 @@ import type { HttpClient } from '../core/http.js'
 export interface AuthResponse {
   token: string
   address: string
-  accountId: string
-  /** The account's human-readable name, for client display. */
-  name: string
+  /**
+   * The account owning the signed-in wallet, or null for an account-less
+   * session. SIWE alone proves control of the address, so the gateway issues a
+   * token even when the address is registered to no account (e.g. a buyer).
+   * Clients that require an account must treat null as "not allowed".
+   */
+  accountId: string | null
+  /** The account's human-readable name, or null for an account-less session. */
+  name: string | null
   expiresAt: string
 }
 
@@ -107,8 +113,8 @@ export class AuthResource {
       .post<{
         token: string
         address: string
-        account_id: string
-        name: string
+        account_id: string | null
+        name: string | null
         expires_at: string
       }>('/auth', {
         message,

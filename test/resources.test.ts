@@ -226,5 +226,21 @@ describe('resource alignment', () => {
       const customBody = JSON.parse((spy.mock.calls[3]?.[1] as RequestInit).body as string)
       expect(customBody.message).toContain('Chain ID: 5042002')
     })
+
+    it('surfaces an account-less session (null account_id/name)', async () => {
+      // The gateway issues a token for an address with no account (a buyer):
+      // account_id and name come back null, and the SDK must pass them through
+      // rather than coercing to a string.
+      const nonce = () => ok({ nonce: 'testNonce123', expires_at: '2099-01-01T00:00:00Z' })
+      const session = () =>
+        ok({ token: 't', address: '0x0', account_id: null, name: null, expires_at: '2026-01-02T00:00:00Z' })
+
+      const spy = vi.spyOn(globalThis, 'fetch')
+      spy.mockResolvedValueOnce(nonce()).mockResolvedValueOnce(session())
+      const res = await client.auth.login(KEY, 'localhost')
+      expect(res.accountId).toBeNull()
+      expect(res.name).toBeNull()
+      expect(res.token).toBe('t')
+    })
   })
 })
