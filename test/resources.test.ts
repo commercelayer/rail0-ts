@@ -207,6 +207,23 @@ describe('resource alignment', () => {
     })
   })
 
+  // ── Payer report-by-hash (MetaMask buyer) ──────────────────────────────────
+
+  describe('payments payer submitByHash', () => {
+    it('posts the hash to the dispute and close-dispute submitted endpoints', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async () => ok({ id: 't1', status: 'submitted' }))
+
+      await client.payments.disputeSubmitByHash(RAIL0_ID, { transaction_hash: '0xdisp' })
+      expect(String(spy.mock.calls[0]?.[0])).toContain(`/payments/${RAIL0_ID}/dispute/submitted`)
+      expect(JSON.parse((spy.mock.calls[0]?.[1] as RequestInit).body as string).transaction_hash).toBe('0xdisp')
+
+      await client.payments.closeDisputeSubmitByHash(RAIL0_ID, { transaction_hash: '0xclose' })
+      expect(String(spy.mock.calls[1]?.[0])).toContain(`/payments/${RAIL0_ID}/dispute/close/submitted`)
+    })
+  })
+
   // ── Auth login chainId ───────────────────────────────────────────────────
 
   describe('auth.login chainId', () => {

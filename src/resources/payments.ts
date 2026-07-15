@@ -120,8 +120,9 @@ export class PaymentsResource {
   }
 
   /** Record an already-broadcast transaction by hash (MetaMask signs+broadcasts in one step).
-   *  Only the payee operations expose a /submitted endpoint — dispute/close-dispute are
-   *  payer-only and raw-sign only, so they are intentionally excluded from the type. */
+   *  Payee-only for the merchant operations; `release` is authorized for either participant
+   *  (payer or payee). The payer operations dispute/close-dispute have their own payer-only
+   *  report-by-hash methods below (disputeSubmitByHash / closeDisputeSubmitByHash). */
   submitByHash(
     id: Bytes32,
     operation: TransactionOperation,
@@ -193,6 +194,18 @@ export class PaymentsResource {
   }
   closeDispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(`/payments/${id}/dispute/close`, params)
+  }
+
+  /** Report an already-broadcast dispute tx by hash (MetaMask buyer flow). Payer-only:
+   *  the payer authenticates account-less via SIWE, since the bare hash carries no
+   *  signature. The payer's counterpart to submitByHash. */
+  disputeSubmitByHash(id: Bytes32, params: SubmitByHashRequest): Promise<Transaction> {
+    return this.http.post(`/payments/${id}/dispute/submitted`, params)
+  }
+
+  /** Report an already-broadcast close-dispute tx by hash (MetaMask buyer flow). Payer-only. */
+  closeDisputeSubmitByHash(id: Bytes32, params: SubmitByHashRequest): Promise<Transaction> {
+    return this.http.post(`/payments/${id}/dispute/close/submitted`, params)
   }
 }
 
