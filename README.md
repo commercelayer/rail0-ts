@@ -97,6 +97,20 @@ All client-side, over `@noble` (no ethers/viem).
 | `signAuthorize` / `signCharge` | Lower-level EIP-3009 signers from explicit params |
 | `signTransferWithAuthorization` / `signReceiveWithAuthorization` | Raw EIP-3009 transfer / receive signers |
 
+## Amounts
+
+Convert between a human decimal and the token's base-unit integer string, with
+string/BigInt math (no float rounding):
+
+```typescript
+import { toBaseUnits, formatAmount } from '@rail0/sdk'
+
+toBaseUnits('1.50', 6) // → '1500000'   (USDC has 6 decimals)
+formatAmount('1500000', 6) // → '1.5'   (trailing zeros trimmed)
+```
+
+Fractional digits beyond `decimals` are truncated; a malformed amount throws.
+
 ## API reference
 
 ### `new Rail0Client(options)`
@@ -179,6 +193,10 @@ try {
   if (err instanceof Rail0ApiError) console.error(err.status, err.error, err.message)
 }
 ```
+
+`err.hint` (or `describeError(code)`) returns an actionable next step for known
+codes — gateway state guards and contract reverts — e.g. `refund_expired` →
+_"the refund window has closed…"_. Returns `undefined` for an unknown code.
 
 ## Development
 

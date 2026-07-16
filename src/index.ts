@@ -1,7 +1,8 @@
 export type { Rail0ClientOptions } from './client.js'
 export { Rail0Client } from './client.js'
 // ── Errors & logging ─────────────────────────────────────────────────
-export { Rail0ApiError } from './core/error.js'
+export { Rail0ApiError, describeError } from './core/error.js'
+export { toBaseUnits, formatAmount } from './amounts.js'
 export type { LogEntry, Logger } from './core/http.js'
 export { debugLogger } from './core/http.js'
 export type { AuthResponse } from './resources/auth.js'
