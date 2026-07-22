@@ -1,12 +1,27 @@
+import type { ApiErrorBody } from '../resources/types.js'
+
 export class Rail0ApiError extends Error {
   readonly status: number
+  /**
+   * Machine-readable code. The gateway's canonical error body carries the code in
+   * `status` (e.g. "rate_limited", "not_found", "forbidden"); only invalid_state
+   * (payment state guard) and contract_revert responses add a more specific
+   * `error` sub-code (e.g. "not_capturable", "not_payee"). We surface the most
+   * specific one available — `error` when present, else `status`.
+   */
   readonly error: string
+  /**
+   * Seconds to wait before retrying, parsed from the `Retry-After` response header.
+   * Present only on 429 (rate-limited) responses that advertise a window.
+   */
+  readonly retryAfter?: number
 
-  constructor(status: number, body: { error: string; message: string }) {
-    super(body.message)
+  constructor(status: number, body: ApiErrorBody, retryAfter?: number) {
+    super(body.message ?? `HTTP ${status}`)
     this.name = 'Rail0ApiError'
     this.status = status
-    this.error = body.error
+    this.error = body.error ?? body.status
+    if (retryAfter !== undefined) this.retryAfter = retryAfter
   }
 
   /** An actionable next-step hint for this error's code, or undefined if unknown. */

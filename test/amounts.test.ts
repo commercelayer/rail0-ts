@@ -57,7 +57,11 @@ describe('describeError', () => {
   })
 
   it('exposes the hint on Rail0ApiError', () => {
-    const err = new Rail0ApiError(422, { error: 'amount_exceeds_capturable', message: 'rejected' })
+    const err = new Rail0ApiError(422, {
+      status: 'invalid_state',
+      error: 'amount_exceeds_capturable',
+      message: 'rejected',
+    })
     expect(err.hint).toBeTruthy()
   })
 })

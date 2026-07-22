@@ -365,6 +365,52 @@ export interface Health {
   timestamp?: string
 }
 
+// ── Analytics (merchant sales rollups) ───────────────────────────────
+/** Gross/captured/refunded volume for one (token, chain). Amounts are token
+ *  base-unit integer strings (sums within a single token); format with \`decimals\`. */
+export interface AnalyticsVolume {
+  chain_id: number | null
+  chain_name: string | null
+  token: Address
+  symbol: string | null
+  decimals: number | null
+  orders: number
+  gross: Uint256String
+  captured: Uint256String
+  refunded: Uint256String
+}
+/** Headline sales KPIs. \`by_status\` is a status→count map (only present statuses);
+ *  \`volume\` is per (token, chain), only ever summed within a single token. */
+export interface AnalyticsSummary {
+  orders: number
+  disputed: number
+  /** Fraction of orders refunded (0–1, 4 dp). */
+  refund_rate: number
+  /** Fraction of orders disputed (0–1, 4 dp). */
+  dispute_rate: number
+  by_status: Partial<Record<PaymentStatus, number>>
+  volume: AnalyticsVolume[]
+}
+/** One point of the order-count time series (oldest first). \`volume\` is a
+ *  base-unit string only when a single token+chain is filtered, else null. */
+export interface AnalyticsBucket {
+  /** Bucket start as an ISO-8601 timestamp. */
+  bucket: string
+  orders: number
+  volume: Uint256String | null
+}
+/** One breakdown row: a dimension key + order count. token/chain rows also carry
+ *  token/chain_id/decimals/volume; mode/status rows leave those null. */
+export interface AnalyticsRow {
+  /** Dimension value: token symbol/address, chain name/id, or the mode/status string. */
+  key: string | number
+  orders: number
+  token?: Address | null
+  chain_id?: number | null
+  decimals?: number | null
+  volume?: Uint256String | null
+}
+
 // ── Pagination ───────────────────────────────────────────────────────
 export interface PageMeta {
   page: number
@@ -378,8 +424,12 @@ export interface PaginatedResponse<T> {
 
 // ── Error ────────────────────────────────────────────────────────────
 export interface ApiErrorBody {
+  /** Canonical machine-readable code, e.g. "rate_limited", "not_found", "forbidden", "invalid_state". */
   status: string
+  /** Human-readable description. */
   message?: string
+  /** A more specific sub-code, present only on invalid_state (payment state guard) and contract_revert responses (e.g. "not_capturable", "not_payee"). */
+  error?: string
 }
 `
 
@@ -503,8 +553,9 @@ export class PaymentsResource {
   }
 
   /** Record an already-broadcast transaction by hash (MetaMask signs+broadcasts in one step).
-   *  Only the payee operations expose a /submitted endpoint — dispute/close-dispute are
-   *  payer-only and raw-sign only, so they are intentionally excluded from the type. */
+   *  Payee-only for the merchant operations; \`release\` is authorized for either participant
+   *  (payer or payee). The payer operations dispute/close-dispute have their own payer-only
+   *  report-by-hash methods below (disputeSubmitByHash / closeDisputeSubmitByHash). */
   submitByHash(id: Bytes32, operation: TransactionOperation, params: SubmitByHashRequest): Promise<Transaction> {
     return this.http.post(\`/payments/\${id}/\${operation}/submitted\`, params)
   }
@@ -572,6 +623,18 @@ export class PaymentsResource {
   }
   closeDispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(\`/payments/\${id}/dispute/close\`, params)
+  }
+
+  /** Report an already-broadcast dispute tx by hash (MetaMask buyer flow). Payer-only:
+   *  the payer authenticates account-less via SIWE, since the bare hash carries no
+   *  signature. The payer's counterpart to submitByHash. */
+  disputeSubmitByHash(id: Bytes32, params: SubmitByHashRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/dispute/submitted\`, params)
+  }
+
+  /** Report an already-broadcast close-dispute tx by hash (MetaMask buyer flow). Payer-only. */
+  closeDisputeSubmitByHash(id: Bytes32, params: SubmitByHashRequest): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/dispute/close/submitted\`, params)
   }
 }
 ${BUILD_QUERY}`
@@ -822,6 +885,72 @@ export class DisputesResource {
 }
 ${BUILD_QUERY}`
 
+const ANALYTICS = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import type {
+  Address,
+  AnalyticsBucket,
+  AnalyticsRow,
+  AnalyticsSummary,
+  PaymentMode,
+  PaymentStatus,
+} from './types.js'
+
+/**
+ * Shared query filters for every analytics endpoint. All optional; each narrows
+ * the account's own payments (as payee). \`token\` + \`chain_id\` together scope
+ * monetary volume to a single token, so sums never mix tokens/decimals.
+ */
+export interface AnalyticsFilters {
+  mode?: PaymentMode
+  status?: PaymentStatus
+  /** Token address (0x…) — scopes volume to one token. */
+  token?: Address
+  chain_id?: number
+  /** Only payments created at/after this ISO-8601 timestamp. */
+  from?: string
+  /** Only payments created at/before this ISO-8601 timestamp. */
+  to?: string
+}
+
+/** Time-bucket granularity for the timeseries endpoint (gateway default: "day"). */
+export type AnalyticsInterval = 'day' | 'week' | 'month'
+/** Dimension to aggregate by for the breakdown endpoint. */
+export type AnalyticsDimension = 'token' | 'chain' | 'mode' | 'status'
+
+/**
+ * Merchant sales analytics (GET /analytics/*). Account-scoped and account-ONLY:
+ * every endpoint needs a JWT with a non-null account — 401 without a token, 403
+ * for an account-less (buyer) session. Results cover only the account's own
+ * payments as payee, so a merchant only ever sees its own sales. Mirrors the
+ * gateway's Analytics service rollups.
+ */
+export class AnalyticsResource {
+  constructor(private readonly http: HttpClient) {}
+
+  /** Headline KPIs: order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume. */
+  summary(filters?: AnalyticsFilters): Promise<AnalyticsSummary> {
+    return this.http.get(\`/analytics/summary\${buildQuery(filters)}\`)
+  }
+
+  /** Order count per time bucket (oldest first); single-token volume only when both token and chain are filtered. */
+  timeseries(
+    filters?: AnalyticsFilters,
+    options?: { interval?: AnalyticsInterval },
+  ): Promise<AnalyticsBucket[]> {
+    return this.http.get(\`/analytics/timeseries\${buildQuery({ ...filters, interval: options?.interval })}\`)
+  }
+
+  /** Aggregate orders by a dimension. token/chain rows carry per-token volume; mode/status are counts only. */
+  breakdown(
+    filters: AnalyticsFilters | undefined,
+    options: { by: AnalyticsDimension },
+  ): Promise<AnalyticsRow[]> {
+    return this.http.get(\`/analytics/breakdown\${buildQuery({ ...filters, by: options.by })}\`)
+  }
+}
+${BUILD_QUERY}`
+
 const HEALTH = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
 import type { Health } from './types.js'
@@ -859,6 +988,7 @@ await writeResource('payment_methods.ts', PAYMENT_METHODS)
 await writeResource('webhooks.ts', WEBHOOKS)
 await writeResource('chains.ts', CHAINS)
 await writeResource('tokens.ts', TOKENS)
+await writeResource('analytics.ts', ANALYTICS)
 await writeResource('health.ts', HEALTH)
 
 console.log('Done.')

@@ -1,3 +1,4 @@
+import type { ApiErrorBody } from '../resources/types.js'
 import { Rail0ApiError } from './error.js'
 
 /** One log record emitted by the HTTP client per request attempt. */
@@ -72,6 +73,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * Parse the `Retry-After` header into a number of seconds. The gateway's rate
+ * limiter advertises the throttle window as an integer count of seconds (never an
+ * HTTP-date), so we only accept the delta-seconds form; anything else yields
+ * undefined. Only meaningful on a 429 response, but harmless elsewhere.
+ */
+function retryAfterSeconds(response: Response): number | undefined {
+  const raw = response.headers.get('Retry-After')
+  if (raw == null) return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : undefined
+}
+
 export class HttpClient {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
@@ -87,6 +101,17 @@ export class HttpClient {
     this.logger = options.logger
     this.maxRetries = options.maxRetries ?? 0
     this.retryDelay = options.retryDelay ?? 200
+  }
+
+  /**
+   * Set (or clear) the Bearer token sent on every subsequent request. Pass a JWT
+   * to authenticate a long-lived client after `auth.login()`; pass null/undefined
+   * to clear it. Additive — a token may still be supplied at construction via
+   * `headers`.
+   */
+  setAuthToken(token: string | null | undefined): void {
+    if (token) this.headers.Authorization = `Bearer ${token}`
+    else delete this.headers.Authorization
   }
 
   async get<T>(path: string): Promise<T> {
@@ -179,10 +204,10 @@ export class HttpClient {
 
       if (!response.ok) {
         const errorBody = (await response.json().catch(() => ({
-          error: 'UnknownError',
+          status: 'unknown_error',
           message: `HTTP ${response.status}`,
-        }))) as { error: string; message: string }
-        const apiError = new Rail0ApiError(response.status, errorBody)
+        }))) as ApiErrorBody
+        const apiError = new Rail0ApiError(response.status, errorBody, retryAfterSeconds(response))
         this.logger?.({
           method,
           url,

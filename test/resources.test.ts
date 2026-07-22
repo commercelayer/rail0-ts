@@ -224,6 +224,86 @@ describe('resource alignment', () => {
     })
   })
 
+  // ── Analytics (merchant sales rollups, account-scoped) ─────────────────────
+
+  describe('analytics', () => {
+    it('summary returns KPIs and forwards every shared filter', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        ok({
+          orders: 3,
+          disputed: 1,
+          refund_rate: 0.3333,
+          dispute_rate: 0.3333,
+          by_status: { charged: 2, refunded: 1 },
+          volume: [{ chain_id: 84532, token: '0xtok', gross: '3000000' }],
+        }),
+      )
+      const res = await client.analytics.summary({
+        mode: 'charge',
+        status: 'charged',
+        token: '0xtok',
+        chain_id: 84532,
+        from: '2026-01-01T00:00:00Z',
+        to: '2026-02-01T00:00:00Z',
+      })
+      expect(res.orders).toBe(3)
+      expect(res.by_status.charged).toBe(2)
+      expect(res.volume[0]?.gross).toBe('3000000')
+
+      const url = String(spy.mock.calls[0]?.[0])
+      expect(url).toContain('/analytics/summary?')
+      expect(url).toContain('mode=charge')
+      expect(url).toContain('status=charged')
+      expect(url).toContain('token=0xtok')
+      expect(url).toContain('chain_id=84532')
+      expect(url).toContain('from=')
+      expect(url).toContain('to=')
+    })
+
+    it('timeseries returns buckets and forwards the interval option', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(ok([{ bucket: '2026-01-01T00:00:00Z', orders: 5, volume: null }]))
+      const res = await client.analytics.timeseries({ mode: 'authorize' }, { interval: 'week' })
+      expect(res[0]?.orders).toBe(5)
+      expect(res[0]?.volume).toBeNull()
+
+      const url = String(spy.mock.calls[0]?.[0])
+      expect(url).toContain('/analytics/timeseries?')
+      expect(url).toContain('mode=authorize')
+      expect(url).toContain('interval=week')
+    })
+
+    it('timeseries omits interval when not supplied (gateway defaults to day)', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok([]))
+      await client.analytics.timeseries()
+      const url = String(spy.mock.calls[0]?.[0])
+      expect(url).toMatch(/\/analytics\/timeseries$/)
+      expect(url).not.toContain('interval=')
+    })
+
+    it('breakdown sends the required `by` dimension and merges filters', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(ok([{ key: 'USDC', volume: '3000000' }]))
+      const res = await client.analytics.breakdown({ status: 'charged' }, { by: 'token' })
+      expect(res[0]?.key).toBe('USDC')
+      expect(res[0]?.volume).toBe('3000000')
+
+      const url = String(spy.mock.calls[0]?.[0])
+      expect(url).toContain('/analytics/breakdown?')
+      expect(url).toContain('by=token')
+      expect(url).toContain('status=charged')
+    })
+
+    it('breakdown works with no filters (undefined)', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok([{ key: 'charged', orders: 2 }]))
+      await client.analytics.breakdown(undefined, { by: 'status' })
+      const url = String(spy.mock.calls[0]?.[0])
+      expect(url).toContain('/analytics/breakdown?by=status')
+    })
+  })
+
   // ── Auth login chainId ───────────────────────────────────────────────────
 
   describe('auth.login chainId', () => {
