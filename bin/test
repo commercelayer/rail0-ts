@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# bin/test — Run the rail0-ts SDK test suite (vitest).
+#
+#   bin/test                          # whole suite
+#   bin/test test/payments.test.ts    # a single file
+#   bin/test -t analytics             # filter by test name (vitest -t)
+#
+# Pure unit tests — no database or running services needed. Installs
+# dependencies if they're missing, then runs `vitest run` with NODE_ENV=test.
+# Extra args pass through to vitest.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+command -v pnpm >/dev/null 2>&1 || { echo "❌  pnpm not found"; exit 1; }
+
+if [[ ! -d "node_modules" ]]; then
+  echo "📦  Installing dependencies…"
+  pnpm install
+fi
+
+export NODE_ENV=test
+
+echo "🧪  Running tests (vitest)…"
+exec pnpm exec vitest run "$@"
