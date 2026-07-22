@@ -311,6 +311,52 @@ export interface Health {
   timestamp?: string
 }
 
+// ── Analytics (merchant sales rollups) ───────────────────────────────
+/** Gross/captured/refunded volume for one (token, chain). Amounts are token
+ *  base-unit integer strings (sums within a single token); format with `decimals`. */
+export interface AnalyticsVolume {
+  chain_id: number | null
+  chain_name: string | null
+  token: Address
+  symbol: string | null
+  decimals: number | null
+  orders: number
+  gross: Uint256String
+  captured: Uint256String
+  refunded: Uint256String
+}
+/** Headline sales KPIs. `by_status` is a status→count map (only present statuses);
+ *  `volume` is per (token, chain), only ever summed within a single token. */
+export interface AnalyticsSummary {
+  orders: number
+  disputed: number
+  /** Fraction of orders refunded (0–1, 4 dp). */
+  refund_rate: number
+  /** Fraction of orders disputed (0–1, 4 dp). */
+  dispute_rate: number
+  by_status: Partial<Record<PaymentStatus, number>>
+  volume: AnalyticsVolume[]
+}
+/** One point of the order-count time series (oldest first). `volume` is a
+ *  base-unit string only when a single token+chain is filtered, else null. */
+export interface AnalyticsBucket {
+  /** Bucket start as an ISO-8601 timestamp. */
+  bucket: string
+  orders: number
+  volume: Uint256String | null
+}
+/** One breakdown row: a dimension key + order count. token/chain rows also carry
+ *  token/chain_id/decimals/volume; mode/status rows leave those null. */
+export interface AnalyticsRow {
+  /** Dimension value: token symbol/address, chain name/id, or the mode/status string. */
+  key: string | number
+  orders: number
+  token?: Address | null
+  chain_id?: number | null
+  decimals?: number | null
+  volume?: Uint256String | null
+}
+
 // ── Pagination ───────────────────────────────────────────────────────
 export interface PageMeta {
   page: number
@@ -324,6 +370,10 @@ export interface PaginatedResponse<T> {
 
 // ── Error ────────────────────────────────────────────────────────────
 export interface ApiErrorBody {
+  /** Canonical machine-readable code, e.g. "rate_limited", "not_found", "forbidden", "invalid_state". */
   status: string
+  /** Human-readable description. */
   message?: string
+  /** A more specific sub-code, present only on invalid_state (payment state guard) and contract_revert responses (e.g. "not_capturable", "not_payee"). */
+  error?: string
 }

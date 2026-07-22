@@ -256,13 +256,102 @@ describe('Rail0Client', () => {
   })
 
   describe('Rail0ApiError', () => {
-    it('exposes status and error code', () => {
-      const err = new Rail0ApiError(422, { error: 'InvalidAmount', message: 'Amount is zero.' })
+    it('uses the canonical `status` as the code when no `error` sub-code is present', () => {
+      const err = new Rail0ApiError(404, { status: 'not_found', message: 'No payment found.' })
 
-      expect(err.status).toBe(422)
-      expect(err.error).toBe('InvalidAmount')
-      expect(err.message).toBe('Amount is zero.')
+      expect(err.status).toBe(404)
+      expect(err.error).toBe('not_found')
+      expect(err.message).toBe('No payment found.')
+      expect(err.retryAfter).toBeUndefined()
       expect(err).toBeInstanceOf(Error)
+    })
+
+    it('prefers the more specific `error` sub-code over `status` (invalid_state / contract_revert)', () => {
+      const err = new Rail0ApiError(422, {
+        status: 'invalid_state',
+        error: 'not_capturable',
+        message: 'Cannot capture.',
+      })
+
+      expect(err.error).toBe('not_capturable')
+      // hint map is keyed on the sub-code
+      expect(err.hint).toBe("the payment must be 'authorized' or 'partially_captured' to capture")
+    })
+
+    it('exposes retryAfter when provided', () => {
+      const err = new Rail0ApiError(
+        429,
+        { status: 'rate_limited', message: 'Too many requests.' },
+        30,
+      )
+      expect(err.retryAfter).toBe(30)
+    })
+  })
+
+  describe('error body mapping over HTTP', () => {
+    it('surfaces the canonical `status` as the code for a status-only error body', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: 'not_found', message: 'No payment found.' }), {
+          status: 404,
+        }),
+      )
+
+      await expect(client.payments.get(mockPaymentId)).rejects.toMatchObject({
+        status: 404,
+        error: 'not_found',
+      })
+    })
+
+    it('reads Retry-After (seconds) off a 429 and exposes it as retryAfter', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: 'rate_limited', message: 'Too many requests. Retry later.' }),
+          {
+            status: 429,
+            headers: { 'Retry-After': '42' },
+          },
+        ),
+      )
+
+      await expect(client.payments.get(mockPaymentId)).rejects.toMatchObject({
+        status: 429,
+        error: 'rate_limited',
+        retryAfter: 42,
+      })
+    })
+
+    it('leaves retryAfter undefined on a 429 without a Retry-After header', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: 'rate_limited' }), { status: 429 }),
+      )
+
+      const err = (await client.payments.get(mockPaymentId).catch((e) => e)) as Rail0ApiError
+      expect(err).toBeInstanceOf(Rail0ApiError)
+      expect(err.retryAfter).toBeUndefined()
+    })
+  })
+
+  describe('setAuthToken', () => {
+    it('adds a Bearer header to subsequent requests and clears it when unset', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(
+          async () => new Response(JSON.stringify({ rail0_id: mockPaymentId }), { status: 200 }),
+        )
+
+      await client.payments.get(mockPaymentId)
+      const before = (spy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
+      expect(before.Authorization).toBeUndefined()
+
+      client.setAuthToken('jwt-abc')
+      await client.payments.get(mockPaymentId)
+      const after = (spy.mock.calls[1]?.[1] as RequestInit).headers as Record<string, string>
+      expect(after.Authorization).toBe('Bearer jwt-abc')
+
+      client.setAuthToken(null)
+      await client.payments.get(mockPaymentId)
+      const cleared = (spy.mock.calls[2]?.[1] as RequestInit).headers as Record<string, string>
+      expect(cleared.Authorization).toBeUndefined()
     })
   })
 

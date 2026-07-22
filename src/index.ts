@@ -5,6 +5,12 @@ export { Rail0ApiError, describeError } from './core/error.js'
 export { toBaseUnits, formatAmount } from './amounts.js'
 export type { LogEntry, Logger } from './core/http.js'
 export { debugLogger } from './core/http.js'
+export type {
+  AnalyticsDimension,
+  AnalyticsFilters,
+  AnalyticsInterval,
+} from './resources/analytics.js'
+export { AnalyticsResource } from './resources/analytics.js'
 export type { AuthResponse } from './resources/auth.js'
 export { AuthResource, checksumAddress, personalSign } from './resources/auth.js'
 export { ChainsResource } from './resources/chains.js'
@@ -20,6 +26,11 @@ export { TokensResource } from './resources/tokens.js'
 export type {
   // Primitives
   Address,
+  // Analytics
+  AnalyticsBucket,
+  AnalyticsRow,
+  AnalyticsSummary,
+  AnalyticsVolume,
   ApiErrorBody,
   AssetBalance,
   BalanceError,

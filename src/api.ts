@@ -200,7 +200,7 @@ export interface paths {
         put?: never;
         /**
          * Create a payment
-         * @description Idempotent on the `Idempotency-Key` header: when a payment already exists for the key, the existing record is returned with 200 instead of 201.
+         * @description Session required (an account-less token is fine); the `payer` in the body must equal the authenticated address (403 otherwise) — a buyer only drafts payments payable from its own wallet. `payer` and `payee` must be different addresses (a payment to oneself is rejected with 422). Idempotent on the `Idempotency-Key` header, scoped to the caller: when a payment already exists for the key AND the same payer, that record is returned with 200 instead of 201. A key already used by a different account is not shared — it falls through to create and hits the global unique key, returning 409.
          */
         post: operations["createPayment"];
         delete?: never;
@@ -219,7 +219,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get a payment with embedded transactions and optional signing payload */
+        /**
+         * Get a payment with embedded transactions and optional signing payload
+         * @description Participant-only: readable only by the payment's payer or payee (bearerAuth), not by anyone who learns the id. The payer authenticates with an account-less SIWE token. 401 without a token, 403 for a non-participant.
+         */
         get: operations["getPayment"];
         put?: never;
         post?: never;
@@ -239,7 +242,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Store the payer's signature on a payment */
+        /**
+         * Store the payer's signature on a payment
+         * @description Session required (an account-less token is fine); the signer itself is verified from the recovered signature, not the session party.
+         */
         put: operations["signPayment"];
         post?: never;
         delete?: never;
@@ -257,7 +263,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** List a payment's transactions */
+        /**
+         * List a payment's transactions
+         * @description Participant-only (bearerAuth): readable only by the payment's payer or payee. 401 without a token, 403 for a non-participant.
+         */
         get: operations["listPaymentTransactions"];
         put?: never;
         post?: never;
@@ -282,7 +291,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare an operation's unsigned transaction
-         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated: it is payer-or-payee on-chain and the payer has no gateway account, so authorization is on-chain (the signed tx + the contract's NotPayerOrPayee gate). `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2).
+         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Session required (bearerAuth) for every operation. The payee operations additionally require the caller to be the payee; `release` is not payee-gated (it is payer-or-payee on-chain and the payer has no gateway account, so its acting party is authorized on-chain — the signed tx + the contract's NotPayerOrPayee gate) but its prepare is still restricted to a payment participant. `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2).
          */
         post: operations["preparePaymentOperation"];
         delete?: never;
@@ -306,7 +315,7 @@ export interface paths {
         put?: never;
         /**
          * Submit an operation's signed transaction
-         * @description Stores the caller's signed raw transaction on the latest pending transaction for this operation and enqueues the broadcaster. Requires the caller to be the payee (bearerAuth), EXCEPT `release`, which is NOT session-gated (payer-or-payee submit it). As a robustness check the gateway also recovers the signed tx's sender and requires it to match the party the contract accepts as msg.sender — the payee for payee ops, the payer or payee for `release` — returning 403 otherwise and 400 if the tx can't be decoded, before broadcasting. Broadcast happens asynchronously.
+         * @description Stores the caller's signed raw transaction on the latest pending transaction for this operation and enqueues the broadcaster. Session required (bearerAuth) for every operation. The payee operations additionally require the caller to be the payee; `release` accepts any session (payer-or-payee submit it). As a robustness check the gateway also recovers the signed tx's sender and requires it to match the party the contract accepts as msg.sender — the payee for payee ops, the payer or payee for `release` — returning 403 otherwise and 400 if the tx can't be decoded, before broadcasting. Broadcast happens asynchronously.
          */
         post: operations["submitPaymentOperation"];
         delete?: never;
@@ -330,9 +339,53 @@ export interface paths {
         put?: never;
         /**
          * Record an externally-broadcast operation transaction (MetaMask)
-         * @description For wallets that sign and broadcast in one step (MetaMask `eth_sendTransaction`) and so cannot hand the gateway a raw `signed_transaction`. The caller broadcasts the prepared transaction themselves and reports its hash here; the gateway attaches the hash to the operation's open transaction and moves it straight to `submitted`, WITHOUT the broadcaster — the indexer then confirms it by hash exactly as for a gateway-broadcast tx. Payee-only (bearerAuth) for every operation, `release` included (MetaMask support is merchant-only): a bare hash carries no signature to authorize it, so the SIWE session is the authorization. Re-callable while the tx is still unconfirmed to OVERWRITE a stuck or wrong hash; a confirmed/failed operation is terminal and returns 422.
+         * @description For wallets that sign and broadcast in one step (MetaMask `eth_sendTransaction`) and so cannot hand the gateway a raw `signed_transaction`. The caller broadcasts the prepared transaction themselves and reports its hash here; the gateway attaches the hash to the operation's open transaction and moves it straight to `submitted`, WITHOUT the broadcaster — the indexer then confirms it by hash exactly as for a gateway-broadcast tx. JWT-gated (bearerAuth) since a bare hash carries no signature to authorize it: payee-only for the merchant operations (authorize/capture/charge/void/refund); `release` is payer-or-payee on-chain so it accepts EITHER participant (a MetaMask buyer can report a payer-side release). The payer operations dispute/close_dispute have their own payer-only /submitted endpoints. Re-callable while the tx is still unconfirmed to OVERWRITE a stuck or wrong hash; a confirmed/failed operation is terminal and returns 422.
          */
         post: operations["submitPaymentOperationByHash"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payments/{id}/dispute/submitted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record an externally-broadcast dispute transaction (MetaMask)
+         * @description The payer's counterpart to /payments/{id}/{operation}/submitted: a MetaMask buyer signs+sends the dispute() tx in one step and reports its hash here. Payer-only (bearerAuth): the bare hash carries no signature, so the SIWE session is the authorization (the payer authenticates with an account-less token). Records the hash on the payment's dispute transaction and moves it to `submitted`, skipping the broadcaster. Re-callable while unconfirmed; a confirmed/failed tx is terminal (422).
+         */
+        post: operations["submitDisputeByHash"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payments/{id}/dispute/close/submitted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record an externally-broadcast close-dispute transaction (MetaMask)
+         * @description Payer-only report-by-hash for the closeDispute() tx, same contract as /payments/{id}/dispute/submitted. Lets a MetaMask buyer close a dispute it broadcast itself.
+         */
+        post: operations["submitCloseDisputeByHash"];
         delete?: never;
         options?: never;
         head?: never;
@@ -352,7 +405,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare the dispute transaction (open; payer-signed)
-         * @description Builds the unsigned dispute() transaction on a pending transaction for the payer to sign. Signal-only (no fund effect). NOT session-gated — the payer has no gateway account, so authorization is on-chain (the payer-signed tx + the contract's NotPayer gate). Submit the signed tx to POST /payments/{id}/dispute.
+         * @description Builds the unsigned dispute() transaction on a pending transaction for the payer to sign. Signal-only (no fund effect). Session required (an account-less token is fine) and restricted to a payment participant (payer or payee); the acting party (payer) is authorized on-chain, not by the session (the payer has no gateway account) — the payer-signed tx + the contract's NotPayer gate. Submit the signed tx to POST /payments/{id}/dispute.
          */
         post: operations["prepareDispute"];
         delete?: never;
@@ -374,7 +427,7 @@ export interface paths {
         put?: never;
         /**
          * Submit the signed dispute transaction (open; payer-signed)
-         * @description Stores the payer's signed dispute() transaction and enqueues the broadcaster. NOT session-gated; as a robustness check the gateway recovers the signed tx's sender and requires it to be the payer (403 otherwise, 400 if undecodable), mirroring the contract's NotPayer gate. The disputed flag is set when the indexer reports the on-chain event.
+         * @description Stores the payer's signed dispute() transaction and enqueues the broadcaster. Session required (an account-less token is fine); the acting party is authorized on-chain — the gateway recovers the signed tx's sender and requires it to be the payer (403 otherwise, 400 if undecodable), mirroring the contract's NotPayer gate. The disputed flag is set when the indexer reports the on-chain event.
          */
         post: operations["submitDispute"];
         delete?: never;
@@ -396,7 +449,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare the close-dispute transaction (open; payer-signed)
-         * @description Builds the unsigned closeDispute() transaction on a pending transaction for the payer to sign. NOT session-gated — the payer has no gateway account; authorization is on-chain (the payer-signed tx + the contract's NotPayer gate). Submit the signed tx to POST /payments/{id}/dispute/close.
+         * @description Builds the unsigned closeDispute() transaction on a pending transaction for the payer to sign. Session required (an account-less token is fine) and restricted to a payment participant (payer or payee); the acting party (payer) is authorized on-chain, not by the session (the payer has no gateway account) — the payer-signed tx + the contract's NotPayer gate. Submit the signed tx to POST /payments/{id}/dispute/close.
          */
         post: operations["prepareCloseDispute"];
         delete?: never;
@@ -418,7 +471,7 @@ export interface paths {
         put?: never;
         /**
          * Submit the signed close-dispute transaction (open; payer-signed)
-         * @description Stores the payer's signed closeDispute() transaction and enqueues the broadcaster. NOT session-gated; as a robustness check the gateway recovers the signed tx's sender and requires it to be the payer (403 otherwise, 400 if undecodable), mirroring the contract's NotPayer gate.
+         * @description Stores the payer's signed closeDispute() transaction and enqueues the broadcaster. Session required (an account-less token is fine); the acting party is authorized on-chain — the gateway recovers the signed tx's sender and requires it to be the payer (403 otherwise, 400 if undecodable), mirroring the contract's NotPayer gate.
          */
         post: operations["submitCloseDispute"];
         delete?: never;
@@ -436,8 +489,71 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** List a payment's disputes */
+        /**
+         * List a payment's disputes
+         * @description Participant-only (bearerAuth): readable only by the payment's payer or payee. 401 without a token, 403 for a non-participant.
+         */
         get: operations["listDisputes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Merchant sales KPIs (counts + per-token/chain volume)
+         * @description Account-only (require_account!): headline sales analytics over the merchant account's own payments as payee. 403 for an account-less (buyer) session. Counts are token-agnostic; monetary volume is grouped per (token, chain) and only summed within one token.
+         */
+        get: operations["analyticsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/timeseries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Order count per time bucket
+         * @description Account-only. Order count per time interval (day/week/month), oldest first. Per-bucket volume is included only when both a token and a chain are filtered (so the sum is over one token); otherwise null.
+         */
+        get: operations["analyticsTimeseries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/breakdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Orders aggregated by a dimension
+         * @description Account-only. Aggregate orders by `token`, `chain`, `mode`, or `status`. token/chain rows carry per-token volume; mode/status are counts only.
+         */
+        get: operations["analyticsBreakdown"];
         put?: never;
         post?: never;
         delete?: never;
@@ -730,16 +846,19 @@ export interface components {
              */
             expires_at: string;
         };
-        /** @description Issued after a successful SIWE verification. */
+        /** @description Issued after a successful SIWE verification. SIWE alone proves control of the address, so a token is issued even when the address is not registered to any account; in that case `account_id` and `name` are null (an account-less session, e.g. a buyer). Clients that require an account must treat a null `account_id` as not-allowed. */
         Session: {
             /** @description JWT bearer token. */
             token?: string;
             /** @description Resolved wallet address. */
             address?: string;
-            /** Format: uuid */
-            account_id?: string;
-            /** @description The account's human-readable name. */
-            name?: string;
+            /**
+             * Format: uuid
+             * @description The account owning the signed-in wallet, or null for an account-less (e.g. buyer) session.
+             */
+            account_id?: string | null;
+            /** @description The account's human-readable name, or null for an account-less session. */
+            name?: string | null;
             /** Format: date-time */
             expires_at?: string;
         };
@@ -943,7 +1062,7 @@ export interface components {
             response_message?: string | null;
             error_reason?: string | null;
             /** @enum {string} */
-            status?: "pending" | "delivered" | "failed";
+            status?: "delivered" | "failed";
             /** Format: date-time */
             created_at?: string;
             /** @description The JSON request body POSTed to the callback URL (decompressed). */
@@ -1107,7 +1226,7 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            /** @description SIWE verification failed. The `status` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or `address_not_registered`. */
+            /** @description SIWE verification failed. The `status` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, or `signer_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (200). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1551,6 +1670,8 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentDetail"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -1625,6 +1746,8 @@ export interface operations {
                     "application/json": components["schemas"]["Transaction"][];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -1771,9 +1894,102 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             /** @description The operation's transaction is already confirmed or failed — its hash is not overwritable. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    submitDisputeByHash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Hash of the already-broadcast transaction (0x + 64 hex). */
+                    transaction_hash: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted; the hash was recorded and awaits on-chain confirmation. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description Malformed transaction_hash. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The dispute transaction is already confirmed or failed — its hash is not overwritable. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    submitCloseDisputeByHash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Hash of the already-broadcast transaction (0x + 64 hex). */
+                    transaction_hash: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted; the hash was recorded and awaits on-chain confirmation. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description Malformed transaction_hash. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The close-dispute transaction is already confirmed or failed — its hash is not overwritable. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1958,7 +2174,107 @@ export interface operations {
                     "application/json": components["schemas"]["Dispute"][];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    analyticsSummary: {
+        parameters: {
+            query?: {
+                mode?: "authorize" | "charge";
+                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
+                /** @description Token address (0x…) — scopes volume to one token. */
+                token?: string;
+                chain_id?: number;
+                /** @description Only payments created at/after this time (ISO-8601). */
+                from?: string;
+                /** @description Only payments created at/before this time (ISO-8601). */
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) gross/captured/refunded volume (base units). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    analyticsTimeseries: {
+        parameters: {
+            query?: {
+                mode?: "authorize" | "charge";
+                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
+                /** @description Token address (0x…) — scopes volume to one token. */
+                token?: string;
+                chain_id?: number;
+                /** @description Only payments created at/after this time (ISO-8601). */
+                from?: string;
+                /** @description Only payments created at/before this time (ISO-8601). */
+                to?: string;
+                interval?: "day" | "week" | "month";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Buckets with order count and (single-token) volume. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>[];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    analyticsBreakdown: {
+        parameters: {
+            query: {
+                mode?: "authorize" | "charge";
+                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
+                /** @description Token address (0x…) — scopes volume to one token. */
+                token?: string;
+                chain_id?: number;
+                /** @description Only payments created at/after this time (ISO-8601). */
+                from?: string;
+                /** @description Only payments created at/before this time (ISO-8601). */
+                to?: string;
+                by: "token" | "chain" | "mode" | "status";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row per dimension key with an order count (and volume for token/chain). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>[];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listWebhooks: {
@@ -2215,7 +2531,7 @@ export interface operations {
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Filter by delivery status. */
-                status?: "pending" | "delivered" | "failed";
+                status?: "delivered" | "failed";
                 /** @description Filter by event topic. */
                 topic?: components["schemas"]["WebhookTopic"];
                 /** @description Filter by the payment the delivery is for. */

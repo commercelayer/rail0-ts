@@ -126,7 +126,14 @@ const client = new Rail0Client({
 })
 ```
 
-Resources: `client.payments`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
+Resources: `client.payments`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.disputes`, `client.analytics`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
+
+`setAuthToken(jwt)` sets (or, with `null`/`undefined`, clears) the `Authorization: Bearer …` header on every subsequent request — call it after `auth.login()` to authenticate a long-lived client without reconstructing it:
+
+```typescript
+const { token } = await client.auth.login(privateKeyHex, 'api.rail0.xyz')
+client.setAuthToken(token) // now client.analytics/webhooks/… are authenticated
+```
 
 ### `client.payments`
 
@@ -162,6 +169,22 @@ Account-level dispute list — every dispute (open **and** closed) across the ca
 
 `list(params?)` → `PaginatedResponse<Dispute>` — `params`: `{ status?: 'open' | 'closed', sort?, page?, per_page? }`.
 
+### `client.analytics` (merchant, JWT + account)
+
+Merchant sales analytics over the account's **own** payments as payee. Account-only: every method needs a JWT with a non-null account — `401` without a token, `403` for an account-less (buyer) session. All three take the same optional `AnalyticsFilters`: `{ mode?, status?, token?, chain_id?, from?, to? }` (`from`/`to` are ISO-8601; `token` + `chain_id` together scope monetary volume to a single token, so sums never mix decimals).
+
+- `summary(filters?)` → `AnalyticsSummary` — `{ orders, disputed, refund_rate, dispute_rate, by_status, volume }`, where `volume` is one `AnalyticsVolume` per `(token, chain)` with base-unit `gross`/`captured`/`refunded` strings.
+- `timeseries(filters?, { interval? })` → `AnalyticsBucket[]` — order count per bucket (oldest first); `interval` is `'day'` (default) | `'week'` | `'month'`. `volume` is a base-unit string only when both `token` and `chain_id` are filtered, else `null`.
+- `breakdown(filters, { by })` → `AnalyticsRow[]` — aggregate by `by`: `'token'` | `'chain'` | `'mode'` | `'status'`. `token`/`chain` rows carry `volume`; `mode`/`status` rows are counts only.
+
+```ts
+const { token } = await client.auth.login(privateKeyHex, 'api.rail0.xyz')
+client.setAuthToken(token)
+const kpis  = await client.analytics.summary({ mode: 'charge' })
+const daily = await client.analytics.timeseries({}, { interval: 'day' })
+const byTok = await client.analytics.breakdown(undefined, { by: 'token' })
+```
+
 ### `client.chains` / `client.tokens` / `client.health`
 
 `chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`) · `tokens.list(chainId?, symbol?)` → `Token[]` · `health.get()` → `Health`.
@@ -182,7 +205,7 @@ const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz', logger: debug
 
 ## Error handling
 
-Every 4xx / 5xx throws a `Rail0ApiError` with `.status`, `.error` (machine code), and `.message`:
+Every 4xx / 5xx throws a `Rail0ApiError` with `.status` (HTTP code), `.error` (machine code), `.message`, and — on `429` — `.retryAfter`:
 
 ```typescript
 import { Rail0ApiError } from '@rail0/sdk'
@@ -190,9 +213,22 @@ import { Rail0ApiError } from '@rail0/sdk'
 try {
   await client.payments.capture(id, { signed_transaction })
 } catch (err) {
-  if (err instanceof Rail0ApiError) console.error(err.status, err.error, err.message)
+  if (err instanceof Rail0ApiError) {
+    console.error(err.status, err.error, err.message)
+    if (err.status === 429 && err.retryAfter) await sleep(err.retryAfter * 1000)
+  }
 }
 ```
+
+`.error` is the machine-readable code. The gateway's canonical error body carries it
+in `status` (e.g. `rate_limited`, `not_found`, `forbidden`); only `invalid_state`
+(payment state guards) and `contract_revert` responses add a more specific `error`
+sub-code (e.g. `not_capturable`, `not_payee`). `Rail0ApiError.error` surfaces the most
+specific available — the sub-code when present, else the canonical `status`.
+
+`.retryAfter` is the number of seconds parsed from the `Retry-After` response header
+on a `429` (the gateway's rate limiter advertises its window), or `undefined`. There is
+no automatic retry of `429`s — back off using this value.
 
 `err.hint` (or `describeError(code)`) returns an actionable next step for known
 codes — gateway state guards and contract reverts — e.g. `refund_expired` →
@@ -223,9 +259,11 @@ src/
   resources/
     types.ts      gateway-vocabulary types (Payment, Dispute, Webhook, …)
     payments.ts   PaymentsResource (lifecycle + disputes)
+    disputes.ts   DisputesResource (account-level list)
     wallets.ts    WalletsResource  (CRUD, balances)
     payment_methods.ts  PaymentMethodsResource (public discovery)
     webhooks.ts   WebhooksResource
+    analytics.ts  AnalyticsResource (merchant sales rollups)
     chains.ts     ChainsResource
     tokens.ts     TokensResource
     health.ts     HealthResource
