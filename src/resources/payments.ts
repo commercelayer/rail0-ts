@@ -101,10 +101,14 @@ export class PaymentsResource {
   }
 
   // ── Generic prepare/submit ─────────────────────────────────────────
+  // For the standard operations only (authorize/capture/charge/void/release/
+  // refund). Dispute and close-dispute have their own paths (dispute/prepare and
+  // dispute/close/prepare) — use disputePrepare/dispute and closeDisputePrepare/
+  // closeDispute, not this generic form.
   /** Build the unsigned transaction for an operation. */
   prepare(
     id: Bytes32,
-    operation: TransactionOperation | 'dispute' | 'close_dispute',
+    operation: TransactionOperation,
     body?: PrepareRequest,
   ): Promise<Transaction> {
     return this.http.post(`/payments/${id}/${operation}/prepare`, body)
@@ -113,7 +117,7 @@ export class PaymentsResource {
   /** Broadcast a signed transaction for an operation (HTTP 202, async). */
   submit(
     id: Bytes32,
-    operation: TransactionOperation | 'dispute' | 'close_dispute',
+    operation: TransactionOperation,
     params: SubmitTransactionRequest,
   ): Promise<Transaction> {
     return this.http.post(`/payments/${id}/${operation}`, params)
