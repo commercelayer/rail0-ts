@@ -1,4 +1,44 @@
 export interface paths {
+    "/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Service descriptor
+         * @description Public service descriptor at the API root: names the service and exposes the api/contract version plus pointers to /health and /openapi.json. Unknown paths return 404.
+         */
+        get: operations["getRoot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/openapi.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * OpenAPI specification
+         * @description The generated OpenAPI 3.1 specification for this API, served raw.
+         */
+        get: operations["getOpenapiSpec"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -149,6 +189,108 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets/{id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable a token (chain) this wallet accepts
+         * @description Upserts an accepted token/chain combination for the wallet — the same combinations exposed by GET /payment_methods and enforced by POST /payments. Re-enabling a previously-disabled holding reactivates its row (never duplicates). 201 when created, 200 when an existing holding is updated.
+         */
+        post: operations["enableWalletToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets/{id}/tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+                /** @description Token UUID. */
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disable a token this wallet accepts (soft delete)
+         * @description Soft-disables the accepted token/chain holding (active:false), removing it from discovery/creation while keeping the row. Re-enable via POST.
+         */
+        delete: operations["disableWalletToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets/{id}/tokens/{token_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+                /** @description Token UUID. */
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Enable an existing token holding
+         * @description Enables an existing holding (active:true). Returns 404 if the wallet has no holding for the token (use POST to create one).
+         */
+        patch: operations["enableExistingWalletToken"];
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets/{id}/tokens/{token_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+                /** @description Token UUID. */
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Disable an existing token holding
+         * @description Disables an existing holding (active:false). Returns 404 if the wallet has no holding for the token.
+         */
+        patch: operations["disableExistingWalletToken"];
         trace?: never;
     };
     "/payment_methods": {
@@ -696,26 +838,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sync/info": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Indexer/sync status information
-         * @description Indexer-facing. Currently not implemented (returns 501).
-         */
-        get: operations["getSyncInfo"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/sync/transactions": {
         parameters: {
             query?: never;
@@ -824,13 +946,28 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description Gateway liveness/readiness. Only the database gates the HTTP code (200 healthy, 503 when the DB is unreachable); Sidekiq is reported but never flips the code, since the API still serves synchronous requests when workers are down. `status` is the global signal: `ok` (all good), `degraded` (DB ok but Sidekiq not ok), `error` (DB down — the only 503). */
         Health: {
             /** @enum {string} */
-            status?: "ok" | "degraded";
+            status?: "ok" | "degraded" | "error";
             api_version?: string;
             contract_version?: string;
             /** @enum {string} */
             db?: "ok" | "error";
+            /** @description Worker fleet health (does not gate liveness). */
+            sidekiq?: {
+                /**
+                 * @description ok = Redis up and >=1 live worker; degraded = Redis up but no live worker; down = Redis unreachable.
+                 * @enum {string}
+                 */
+                status?: "ok" | "degraded" | "down";
+                /** @enum {string} */
+                redis?: "ok" | "error";
+                /** @description Live Sidekiq process count (present only when Redis is up). */
+                processes?: number;
+                /** @description Total enqueued jobs across queues (present only when Redis is up). */
+                enqueued?: number;
+            };
             active_chains?: number;
             active_contracts?: number;
             /** Format: date-time */
@@ -1150,6 +1287,46 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getRoot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Service info. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    getOpenapiSpec: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OpenAPI document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
     getHealth: {
         parameters: {
             query?: never;
@@ -1479,6 +1656,147 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    enableWalletToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description EVM chain id of the token. */
+                    chain_id: number;
+                    /** @description Token address (0x, 40 hex). */
+                    token: string;
+                    /** @description Make this the wallet's default token. */
+                    default?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Existing holding re-enabled/updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletToken"];
+                };
+            };
+            /** @description Holding created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletToken"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Unknown chain or token. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    disableWalletToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+                /** @description Token UUID. */
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Holding disabled. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    enableExistingWalletToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+                /** @description Token UUID. */
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Holding enabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletToken"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    disableExistingWalletToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+                /** @description Token UUID. */
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Holding disabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletToken"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listPaymentMethods: {
         parameters: {
             query?: {
@@ -1638,7 +1956,7 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentDetail"];
                 };
             };
-            /** @description Validation error. `status` is one of `no_active_contract`, `unknown_token`, `invalid_amount`. */
+            /** @description Validation error. `status` is one of `no_active_contract`, `unknown_token`, `unsupported_payment_method` (the payee does not offer that token/chain), `invalid_amount`. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2563,26 +2881,6 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-        };
-    };
-    getSyncInfo: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Not implemented yet. */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
         };
     };
     getSyncTransactions: {
