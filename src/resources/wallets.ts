@@ -47,7 +47,13 @@ export class WalletsResource {
     return this.http.get(`/accounts/${account_id}/wallets/${id_or_address}`)
   }
 
-  /** Add a wallet to the account. */
+  /**
+   * Add a wallet to the account. Requires a SIWE proof-of-ownership of the
+   * address being added: pass the EIP-4361 `message` (nonce from
+   * `POST /auth/nonces`) and its `signature`, produced with the added wallet's
+   * own key — see CreateWalletRequest. The gateway rejects a signature that does
+   * not recover to `address` (422) and an address already registered anywhere (409).
+   */
   create(account_id: string, params: CreateWalletRequest): Promise<Wallet> {
     return this.http.post(`/accounts/${account_id}/wallets`, params)
   }

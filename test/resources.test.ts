@@ -97,7 +97,12 @@ describe('resource alignment', () => {
       await client.wallets.get(ACCOUNT_ID, WALLET_ID)
 
       spy.mockResolvedValueOnce(ok({ id: WALLET_ID }))
-      await client.wallets.create(ACCOUNT_ID, { address: '0xabc', label: 'w' })
+      await client.wallets.create(ACCOUNT_ID, {
+        address: '0xabc',
+        message: 'siwe-message',
+        signature: '0xsig',
+        label: 'w',
+      })
 
       spy.mockResolvedValueOnce(ok({ id: WALLET_ID, label: 'renamed' }))
       await client.wallets.update(ACCOUNT_ID, WALLET_ID, { label: 'renamed' })
@@ -111,6 +116,15 @@ describe('resource alignment', () => {
       const methods = spy.mock.calls.map((c) => (c[1] as RequestInit).method)
       expect(methods).toEqual(['GET', 'POST', 'PATCH', 'DELETE', 'GET'])
       expect(String(spy.mock.calls[4]?.[0])).toContain(`/wallets/${WALLET_ID}/balances`)
+
+      // create forwards the SIWE proof-of-ownership (message + signature) in the body
+      const createBody = JSON.parse((spy.mock.calls[1]?.[1] as RequestInit).body as string)
+      expect(createBody).toMatchObject({
+        address: '0xabc',
+        message: 'siwe-message',
+        signature: '0xsig',
+        label: 'w',
+      })
     })
   })
 
