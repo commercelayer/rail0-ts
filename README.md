@@ -146,7 +146,17 @@ Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transacti
 
 ### `client.wallets` (scoped by account, JWT)
 
-All wallet methods are behind SIWE — a merchant manages its **own** wallets. `list(accountId, params?)` → `PaginatedResponse<WalletWithTokens>` · `get(accountId, idOrAddress)` → `Wallet` · `create(accountId, { address, label? })` → `Wallet` · `update(accountId, id, { label?, active? })` → `Wallet` · `delete(accountId, id)` → `void` · `balances(accountId, id, params?)` → `WalletBalances`.
+All wallet methods are behind SIWE — a merchant manages its **own** wallets. `list(accountId, params?)` → `PaginatedResponse<WalletWithTokens>` · `get(accountId, idOrAddress)` → `Wallet` · `create(accountId, { address, message, signature, label? })` → `Wallet` · `update(accountId, id, { label?, active? })` → `Wallet` · `delete(accountId, id)` → `void` · `balances(accountId, id, params?)` → `WalletBalances`.
+
+Adding a wallet requires a **SIWE proof-of-ownership** of the address being added — not just the session JWT. Obtain a single-use nonce (`POST /auth/nonces`), build an EIP-4361 message whose `address` is the wallet being added, and sign it with **that wallet's own key** (the same handshake as login, but signed by the added wallet rather than the session wallet). Pass the resulting `message` + `signature` to `create`. The gateway rejects a signature that does not recover to `address` (422) and an address already registered anywhere (409 — addresses are globally unique). This lets a merchant prove control of several payee wallets under one account.
+
+```ts
+const { nonce } = await client.auth.getNonce()
+// Build + sign an EIP-4361 message for the wallet being added (its own key):
+const message = /* SiweMessage({ domain, address: added, uri, chainId, nonce }).prepareMessage() */
+const signature = personalSign(addedWalletKey, message)
+await client.wallets.create(accountId, { address: added, message, signature, label: 'Payouts' })
+```
 
 ### `client.paymentMethods` (public)
 

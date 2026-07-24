@@ -163,8 +163,21 @@ export interface PrepareRequest {
   signature?: string
   from?: Address
 }
+/**
+ * Adding a wallet requires a SIWE proof-of-ownership of \`address\`: obtain a
+ * single-use nonce from \`POST /auth/nonces\`, build an EIP-4361 message carrying
+ * that nonce whose \`address\` is the wallet being added, and sign it with THAT
+ * wallet's private key. The gateway verifies the signature recovers to
+ * \`address\` (422 otherwise), consumes the nonce, and enforces global address
+ * uniqueness (409 if already registered anywhere). The proven address need not
+ * equal the session address — a merchant may control several payee wallets.
+ */
 export interface CreateWalletRequest {
   address: string
+  /** EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). */
+  message: string
+  /** Signature over the SIWE message (0x…), proving control of the address's private key. */
+  signature: string
   label?: string
 }
 export interface UpdateWalletRequest {
@@ -542,13 +555,17 @@ export class PaymentsResource {
   }
 
   // ── Generic prepare/submit ─────────────────────────────────────────
+  // For the standard operations only (authorize/capture/charge/void/release/
+  // refund). Dispute and close-dispute have their own paths (dispute/prepare and
+  // dispute/close/prepare) — use disputePrepare/dispute and closeDisputePrepare/
+  // closeDispute, not this generic form.
   /** Build the unsigned transaction for an operation. */
-  prepare(id: Bytes32, operation: TransactionOperation | 'dispute' | 'close_dispute', body?: PrepareRequest): Promise<Transaction> {
+  prepare(id: Bytes32, operation: TransactionOperation, body?: PrepareRequest): Promise<Transaction> {
     return this.http.post(\`/payments/\${id}/\${operation}/prepare\`, body)
   }
 
   /** Broadcast a signed transaction for an operation (HTTP 202, async). */
-  submit(id: Bytes32, operation: TransactionOperation | 'dispute' | 'close_dispute', params: SubmitTransactionRequest): Promise<Transaction> {
+  submit(id: Bytes32, operation: TransactionOperation, params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(\`/payments/\${id}/\${operation}\`, params)
   }
 
@@ -685,7 +702,13 @@ export class WalletsResource {
     return this.http.get(\`/accounts/\${account_id}/wallets/\${id_or_address}\`)
   }
 
-  /** Add a wallet to the account. */
+  /**
+   * Add a wallet to the account. Requires a SIWE proof-of-ownership of the
+   * address being added: pass the EIP-4361 \`message\` (nonce from
+   * \`POST /auth/nonces\`) and its \`signature\`, produced with the added wallet's
+   * own key — see CreateWalletRequest. The gateway rejects a signature that does
+   * not recover to \`address\` (422) and an address already registered anywhere (409).
+   */
   create(account_id: string, params: CreateWalletRequest): Promise<Wallet> {
     return this.http.post(\`/accounts/\${account_id}/wallets\`, params)
   }

@@ -136,7 +136,10 @@ export interface paths {
         /** List the account's wallets, each with its token holdings nested */
         get: operations["listAccountWallets"];
         put?: never;
-        /** Add a wallet to the account */
+        /**
+         * Add a wallet to the account
+         * @description Registers a wallet on the account. Requires a SIWE proof-of-ownership of the address being added: obtain a single-use nonce from `POST /auth/nonces`, build an EIP-4361 message carrying that nonce and signed by the address's private key, and submit `message` + `signature` here. The gateway verifies the signature recovers to `address`, the nonce is unused/unexpired, and the message binds to an allowed SIWE domain/chain — otherwise 422. The proven address need not equal the session address (a merchant may control several payee wallets). Wallet addresses are globally unique: an address already registered (to this or any other account) yields 409.
+         */
         post: operations["createWallet"];
         delete?: never;
         options?: never;
@@ -386,7 +389,7 @@ export interface paths {
         get?: never;
         /**
          * Store the payer's signature on a payment
-         * @description Session required (an account-less token is fine); the signer itself is verified from the recovered signature, not the session party.
+         * @description Session required (an account-less token is fine) and the caller must be a participant (payer or payee). The signer itself is additionally verified from the recovered signature, not the session party.
          */
         put: operations["signPayment"];
         post?: never;
@@ -1518,8 +1521,12 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description EVM wallet address (0x, 40 hex). */
+                    /** @description EVM wallet address to add (0x, 40 hex). Must be the address that signed the SIWE message. */
                     address: string;
+                    /** @description EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). */
+                    message: string;
+                    /** @description Signature over the SIWE message (0x…), proving control of the address's private key. */
+                    signature: string;
                     /** @description Human-readable label. */
                     label?: string;
                 };
@@ -1537,6 +1544,20 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description The address is already registered to an account (addresses are globally unique). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The SIWE proof-of-ownership failed: unparseable message, unknown/used/expired nonce, domain/chain mismatch, or a signature that does not recover to `address`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getWallet: {
@@ -2020,6 +2041,8 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentDetail"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             /** @description Payment not signable or signer mismatch. */
             422: {

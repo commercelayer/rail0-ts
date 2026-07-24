@@ -109,8 +109,21 @@ export interface PrepareRequest {
   signature?: string
   from?: Address
 }
+/**
+ * Adding a wallet requires a SIWE proof-of-ownership of `address`: obtain a
+ * single-use nonce from `POST /auth/nonces`, build an EIP-4361 message carrying
+ * that nonce whose `address` is the wallet being added, and sign it with THAT
+ * wallet's private key. The gateway verifies the signature recovers to
+ * `address` (422 otherwise), consumes the nonce, and enforces global address
+ * uniqueness (409 if already registered anywhere). The proven address need not
+ * equal the session address — a merchant may control several payee wallets.
+ */
 export interface CreateWalletRequest {
   address: string
+  /** EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). */
+  message: string
+  /** Signature over the SIWE message (0x…), proving control of the address's private key. */
+  signature: string
   label?: string
 }
 export interface UpdateWalletRequest {
