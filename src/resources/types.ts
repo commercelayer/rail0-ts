@@ -240,6 +240,13 @@ export interface Token {
   symbol?: string
   address?: string
   decimals?: number
+  /**
+   * False for a RETIRED token: still resolvable (a payment references its token
+   * address forever, so historical payments must render) but not usable for a
+   * new payment. Always present — the gateway marks it required precisely so a
+   * `false` is never dropped from the payload.
+   */
+  active: boolean
 }
 export interface Blockchain {
   chain_id?: number

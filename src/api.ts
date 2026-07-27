@@ -1010,12 +1010,14 @@ export interface components {
             network_type?: string;
             explorer_url?: string;
         };
-        /** @description Public accepted-token view. */
+        /** @description Public accepted-token view. The listing is not implicitly active-only (a payment references its token address forever, so a retired token must stay resolvable), so `active` tells a usable token from a retired one. */
         Token: {
             chain_id?: number;
             symbol?: string;
             address?: string;
             decimals?: number;
+            /** @description False for a retired token: still resolvable for historical payments, but not usable for a new one. */
+            active: boolean;
         };
         /** @description Public-safe wallet view (the reduced set a buyer needs to discover a merchant's payment methods). */
         Wallet: {
@@ -1449,6 +1451,8 @@ export interface operations {
                 chain_id?: number;
                 /** @description Token symbol to filter by (case-insensitive, e.g. USDC). */
                 symbol?: string;
+                /** @description Filter by active flag; omit for every token. */
+                active?: boolean;
             };
             header?: never;
             path?: never;
