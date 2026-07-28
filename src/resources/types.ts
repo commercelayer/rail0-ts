@@ -383,10 +383,16 @@ export interface PaginatedResponse<T> {
 
 // ── Error ────────────────────────────────────────────────────────────
 export interface ApiErrorBody {
-  /** Canonical machine-readable code, e.g. "rate_limited", "not_found", "forbidden", "invalid_state". */
+  /** The specific condition and the only field to branch on, e.g. "not_capturable", "insufficient_token_balance". */
+  code?: string
+  /** Short label for the failure, e.g. "Not enough balance". */
+  title?: string
+  /** One or two sentences fit to show a user verbatim. */
+  detail?: string
+  /** The wider family `code` sits in (e.g. "forbidden", "invalid_state"), under its pre-code/title/detail name. Also the code itself on errors that have no wider family. */
   status: string
-  /** Human-readable description. */
+  /** Legacy alias of `detail`. */
   message?: string
-  /** A more specific sub-code, present only on invalid_state (payment state guard) and contract_revert responses (e.g. "not_capturable", "not_payee"). */
+  /** The specific sub-code under its older name, sent on invalid_state and contract_revert responses. */
   error?: string
 }

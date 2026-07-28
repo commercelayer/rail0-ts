@@ -215,7 +215,8 @@ const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz', logger: debug
 
 ## Error handling
 
-Every 4xx / 5xx throws a `Rail0ApiError` with `.status` (HTTP code), `.error` (machine code), `.message`, and — on `429` — `.retryAfter`:
+Every 4xx / 5xx throws a `Rail0ApiError` carrying the gateway's code/title/detail
+triple, plus `.status` (HTTP code) and — on `429` — `.retryAfter`:
 
 ```typescript
 import { Rail0ApiError } from '@rail0/sdk'
@@ -224,25 +225,42 @@ try {
   await client.payments.capture(id, { signed_transaction })
 } catch (err) {
   if (err instanceof Rail0ApiError) {
-    console.error(err.status, err.error, err.message)
+    console.error(err.error)  // branch on this: 'insufficient_token_balance'
+    console.error(err.title)  // short label: 'Not enough balance'
+    console.error(err.detail) // a sentence you can show a user verbatim
     if (err.status === 429 && err.retryAfter) await sleep(err.retryAfter * 1000)
   }
 }
 ```
 
-`.error` is the machine-readable code. The gateway's canonical error body carries it
-in `status` (e.g. `rate_limited`, `not_found`, `forbidden`); only `invalid_state`
-(payment state guards) and `contract_revert` responses add a more specific `error`
-sub-code (e.g. `not_capturable`, `not_payee`). `Rail0ApiError.error` surfaces the most
-specific available — the sub-code when present, else the canonical `status`.
+**`.error` is the only field to branch on** — the specific condition, read from the
+gateway's `code` and falling back to the older `error` sub-code, then to the wider
+`status` family, so an older gateway still yields the most specific value it sent.
+
+`.title` and `.detail` come from the gateway's error catalogue, so the same condition
+always reads the same way whichever endpoint surfaced it; `.detail` is written to be
+shown to a user as-is and is also the thrown error's `.message`.
+
+The codes span four families, and the last two are the ones most requests actually
+hit — neither is raised by RAIL0 itself:
+
+| Family | Examples |
+| --- | --- |
+| Request & state guards | `not_capturable`, `amount_exceeds_refundable`, `not_the_payee` |
+| RAIL0 custom errors | `not_payee`, `already_captured`, `refund_expired` |
+| Token reverts | `insufficient_token_balance`, `invalid_token_signature`, `authorization_already_used` |
+| Broadcast rejections | `insufficient_gas_funds`, `nonce_too_low`, `replacement_underpriced` |
+
+A **failed transaction** carries the same triple as `error_code`, `error_title` and
+`error_detail`, whether it reverted on-chain or was refused before broadcast.
 
 `.retryAfter` is the number of seconds parsed from the `Retry-After` response header
 on a `429` (the gateway's rate limiter advertises its window), or `undefined`. There is
 no automatic retry of `429`s — back off using this value.
 
-`err.hint` (or `describeError(code)`) returns an actionable next step for known
-codes — gateway state guards and contract reverts — e.g. `refund_expired` →
-_"the refund window has closed…"_. Returns `undefined` for an unknown code.
+`err.hint` (or `describeError(code)`) is this SDK's own local advice, a *supplement* to
+`.detail` rather than a replacement — present only for codes worth adding a next step
+to, `undefined` otherwise.
 
 ## Development
 

@@ -942,9 +942,20 @@ export interface components {
             code?: "rpc_unavailable" | "rpc_error" | "timeout" | "error";
             message?: string;
         };
-        /** @description Generic error envelope. `status` is a machine-readable code; additional context fields (e.g. `message`, `resource`, `param`, `errors`, `chain_id`) may also be present. */
+        /** @description Error envelope. Every error this API returns carries `code` (stable and machine-readable — the only field to branch on), `title` (a short label) and `detail` (one or two sentences fit to show a user verbatim). The wording comes from the gateway's error catalogue, so the same condition always reads the same way wherever it surfaces. `status` and `message` are the pre-code/title/detail names, derived from the same entry and kept for existing clients: `status` carries the family a client used to switch on (e.g. `forbidden`, `invalid_state`) where `code` is narrower, and `message` equals `detail`. Context fields may also be present (`resource`, `param`, `chain_id`, `token`, `payee`, `errors`). */
         Error: {
+            /** @example amount_exceeds_refundable */
+            code: string;
+            /** @example Amount above the refundable balance */
+            title: string;
+            /** @example The amount is higher than the balance the merchant still holds for this payment. */
+            detail: string;
+            /**
+             * @description Legacy: the error family, or the code itself when there is no wider family.
+             * @example invalid_state
+             */
             status: string;
+            /** @description Legacy alias of `detail`. */
             message?: string;
         } & {
             [key: string]: unknown;
@@ -1010,12 +1021,14 @@ export interface components {
             network_type?: string;
             explorer_url?: string;
         };
-        /** @description Public accepted-token view. */
+        /** @description Public accepted-token view. The listing is not implicitly active-only (a payment references its token address forever, so a retired token must stay resolvable), so `active` tells a usable token from a retired one. */
         Token: {
             chain_id?: number;
             symbol?: string;
             address?: string;
             decimals?: number;
+            /** @description False for a retired token: still resolvable for historical payments, but not usable for a new one. */
+            active: boolean;
         };
         /** @description Public-safe wallet view (the reduced set a buyer needs to discover a merchant's payment methods). */
         Wallet: {
@@ -1131,9 +1144,13 @@ export interface components {
             operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund";
             /** @enum {string} */
             status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
-            /** @description Decoded on-chain failure code (null unless status is "failed"): the RAIL0 custom error in snake_case (e.g. "not_payee"), or "revert" when the selector is unknown. The raw revert bytes are not exposed. */
+            /** @description Decoded failure code, null unless `status` is "failed". Same catalogue as an error body's `code`: a RAIL0 custom error (`not_payee`), a token-level revert (`insufficient_token_balance`, `invalid_token_signature`, `authorization_already_used`), a Solidity panic, or a rejection that stopped the broadcast before the chain saw it (`insufficient_gas_funds`, `nonce_too_low`). */
             error_code?: string | null;
-            /** @description Human-readable form of error_code (e.g. "NotPayee"); null unless status is "failed". */
+            /** @description Short label for `error_code`; null unless failed. */
+            error_title?: string | null;
+            /** @description Sentence explaining the failure; null unless failed. Carries the chain's own words when the revert was not one the gateway recognises. */
+            error_detail?: string | null;
+            /** @description Legacy alias of `error_detail`. */
             error_message?: string | null;
             unsigned_transaction?: string | null;
             transaction_hash?: string | null;
@@ -1406,7 +1423,7 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            /** @description SIWE verification failed. The `status` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, or `signer_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (200). */
+            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, or `signer_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (200). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1449,6 +1466,8 @@ export interface operations {
                 chain_id?: number;
                 /** @description Token symbol to filter by (case-insensitive, e.g. USDC). */
                 symbol?: string;
+                /** @description Filter by active flag; omit for every token. */
+                active?: boolean;
             };
             header?: never;
             path?: never;
@@ -1977,7 +1996,7 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentDetail"];
                 };
             };
-            /** @description Validation error. `status` is one of `no_active_contract`, `unknown_token`, `unsupported_payment_method` (the payee does not offer that token/chain), `invalid_amount`. */
+            /** @description Validation error. `code` is one of `no_active_contract`, `unknown_token`, `unsupported_payment_method` (the payee does not offer that token/chain), `invalid_amount`. */
             422: {
                 headers: {
                     [name: string]: unknown;
