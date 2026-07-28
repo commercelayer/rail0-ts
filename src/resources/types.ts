@@ -396,9 +396,9 @@ export interface ApiErrorBody {
   title?: string
   /** One or two sentences fit to show a user verbatim. */
   detail?: string
-  /** The wider family `code` sits in (e.g. "forbidden", "invalid_state"), under its pre-code/title/detail name. Also the code itself on errors that have no wider family. */
+  /** The wider family the code sits in (e.g. "forbidden", "invalid_state"), under its pre-code/title/detail name. Also the code itself on errors with no wider family. */
   status: string
-  /** Legacy alias of `detail`. */
+  /** Legacy alias of detail. */
   message?: string
   /** The specific sub-code under its older name, sent on invalid_state and contract_revert responses. */
   error?: string
