@@ -150,6 +150,7 @@ export class PaymentsResource {
     return this.http.post(`/payments/${id}/charge`, params)
   }
 
+  /** `amount` is a human decimal (e.g. "10.50") — the gateway converts to token base units. */
   capturePrepare(id: Bytes32, amount: string): Promise<Transaction> {
     return this.http.post(`/payments/${id}/capture/prepare`, { amount })
   }

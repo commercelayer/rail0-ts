@@ -32,7 +32,7 @@ const packSig = (s: { v: number; r: string; s: string }) =>
 const payment = await client.payments.create({
   chain_id: 8453,
   mode: 'authorize',
-  amount: '50000000', // 50 USDC (6 decimals)
+  amount: '50.00', // human decimal — the gateway converts to base units
   token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
   payer: '0xBuyer...',
   payee: '0xMerchant...',
@@ -49,7 +49,7 @@ await client.payments.authorize(payment.rail0_id, {
 })
 
 // 4. Payee captures once the order is fulfilled.
-const capPrep = await client.payments.capturePrepare(payment.rail0_id, '50000000')
+const capPrep = await client.payments.capturePrepare(payment.rail0_id, '50.00')
 await client.payments.capture(payment.rail0_id, {
   signed_transaction: signTransaction(capPrep.unsigned_transaction!, PAYEE_KEY),
 })
@@ -98,6 +98,12 @@ All client-side, over `@noble` (no ethers/viem).
 | `signTransferWithAuthorization` / `signReceiveWithAuthorization` | Raw EIP-3009 transfer / receive signers |
 
 ## Amounts
+
+Amounts you **send** (`create`, `capturePrepare`, `refundPrepare`) are human
+decimal strings (`'50.00'`) — the gateway converts them to base units using the
+token's decimals. Amounts you **read** back (`amount`, `capturable_amount`,
+`refundable_amount`, analytics volumes, the `min_amount`/`max_amount` list
+filters) are base-unit integer strings (`'50000000'`).
 
 Convert between a human decimal and the token's base-unit integer string, with
 string/BigInt math (no float rounding):

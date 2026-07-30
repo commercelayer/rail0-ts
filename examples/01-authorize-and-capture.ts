@@ -26,7 +26,7 @@ try {
   const created = await client.payments.create({
     chain_id: 8453,
     mode: 'authorize',
-    amount: '50000000', // 50 USDC (6 decimals)
+    amount: '50.00', // human decimal — the gateway converts to base units
     token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
     payer: '0xBuyerAddress000000000000000000000000000000',
     payee: '0xMerchantAddress0000000000000000000000000000',
@@ -45,7 +45,7 @@ try {
   console.log('Authorize submitted:', authTx.status)
 
   // 4. Payee captures once the order is fulfilled (funds escrow → merchant).
-  const capPrep = await client.payments.capturePrepare(id, '50000000')
+  const capPrep = await client.payments.capturePrepare(id, '50.00')
   const capTx = await client.payments.capture(id, {
     signed_transaction: signTransaction(capPrep.unsigned_transaction as string, PAYEE_KEY),
   })

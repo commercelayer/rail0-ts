@@ -140,6 +140,7 @@ export interface SigningPayload {
 export interface CreatePaymentRequest {
   chain_id: number
   mode: PaymentMode
+  /** Human decimal amount (e.g. "10.50") — the gateway converts to token base units. */
   amount: string
   token: Address
   payer: Address
@@ -157,7 +158,7 @@ export interface SubmitTransactionRequest {
 export interface SubmitByHashRequest {
   transaction_hash: string
 }
-/** Body for the generic prepare endpoints. amount → capture/refund; signature → refund phase-2; from → release. */
+/** Body for the generic prepare endpoints. amount → capture/refund (human decimal, e.g. "10.50"); signature → refund phase-2; from → release. */
 export interface PrepareRequest {
   amount?: string
   signature?: string
@@ -605,6 +606,7 @@ export class PaymentsResource {
     return this.http.post(\`/payments/\${id}/charge\`, params)
   }
 
+  /** \`amount\` is a human decimal (e.g. "10.50") — the gateway converts to token base units. */
   capturePrepare(id: Bytes32, amount: string): Promise<Transaction> {
     return this.http.post(\`/payments/\${id}/capture/prepare\`, { amount })
   }

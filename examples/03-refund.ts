@@ -23,12 +23,12 @@ try {
   console.log('Refundable:', detail.refundable_amount)
 
   // Phase 1 — get the ReceiveWithAuthorization payload for the payee to sign.
-  const phase1 = await client.payments.refundPrepare(id, { amount: '50000000' })
+  const phase1 = await client.payments.refundPrepare(id, { amount: '50.00' })
   const sig = signRefund(PAYEE_KEY, phase1)
 
   // Phase 2 — hand the signature back to get the unsigned on-chain refund tx.
   const phase2 = await client.payments.refundPrepare(id, {
-    amount: '50000000',
+    amount: '50.00',
     signature: `${sig.r}${sig.s.slice(2)}${sig.v.toString(16).padStart(2, '0')}`,
   })
 
