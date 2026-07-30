@@ -157,7 +157,8 @@ describe('payments', () => {
     const res = await client().payments.create({
       chain_id: 8453,
       mode: 'authorize',
-      amount: PAYMENT.amount,
+      // Request amounts are human decimals; PAYMENT.amount is the base-unit response fixture.
+      amount: '100.00',
       token: PAYMENT.token,
       payer: PAYMENT.payer,
       payee: PAYMENT.payee,

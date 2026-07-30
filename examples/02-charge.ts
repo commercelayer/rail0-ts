@@ -20,7 +20,7 @@ try {
   const created = await client.payments.create({
     chain_id: 8453,
     mode: 'charge',
-    amount: '25000000', // 25 USDC
+    amount: '25.00', // human decimal — the gateway converts to base units
     token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     payer: '0xBuyerAddress000000000000000000000000000000',
     payee: '0xMerchantAddress0000000000000000000000000000',
