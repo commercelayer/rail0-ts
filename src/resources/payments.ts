@@ -4,20 +4,27 @@ import type {
   Bytes32,
   CreatePaymentRequest,
   Dispute,
+  DisputeStatus,
   PaginatedResponse,
   PayerSignatureRequest,
   Payment,
   PaymentDetail,
+  PaymentMode,
+  PaymentStatus,
   PrepareRequest,
   SubmitByHashRequest,
   SubmitTransactionRequest,
   Transaction,
   TransactionOperation,
+  TransactionStatus,
 } from './types.js'
 
+// The gateway validates these filters with Grape `values:` and answers 400 on
+// anything else, so they are typed as the unions rather than bare strings —
+// `list({ status: 'cancelled' })` is a compile error, not a runtime 400.
 export interface ListPaymentsParams {
-  status?: string
-  mode?: string
+  status?: PaymentStatus
+  mode?: PaymentMode
   payer?: string
   payee?: string
   token?: string
@@ -40,8 +47,16 @@ export interface ListPaymentsParams {
 }
 
 export interface ListTransactionsParams {
+  /**
+   * Filter by operation. Left as `string` on purpose: the gateway accepts all
+   * EIGHT stored operations here (TRANSACTION_OPERATIONS — the six fund ops plus
+   * `dispute` and `close_dispute`), so TransactionOperation, which carries only
+   * the six that have prepare/submit endpoints, would wrongly reject
+   * `?operation=dispute` — the very filter rail0-cli#47 was fixed to allow.
+   * Narrow once the gateway spec splits the two (commercelayer/rail0-gateway#177).
+   */
   operation?: string
-  status?: string
+  status?: TransactionStatus
   sort?: string
   page?: number
   per_page?: number
@@ -49,7 +64,7 @@ export interface ListTransactionsParams {
 
 export interface ListDisputesParams {
   /** Filter by dispute status ("open" or "closed"). */
-  status?: string
+  status?: DisputeStatus
   sort?: string
   page?: number
   per_page?: number

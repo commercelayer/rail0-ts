@@ -20,13 +20,9 @@ pnpm add @rail0/sdk
 ## Quick start
 
 ```typescript
-import { Rail0Client, signPayment, signTransaction } from '@rail0/sdk'
+import { packSignature, Rail0Client, signPayment, signTransaction } from '@rail0/sdk'
 
 const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz' })
-
-// Pack a { v, r, s } signature into the 65-byte hex the gateway expects.
-const packSig = (s: { v: number; r: string; s: string }) =>
-  `${s.r}${s.s.slice(2)}${s.v.toString(16).padStart(2, '0')}`
 
 // 1. Buyer creates the payment (mode: authorize → escrow).
 const payment = await client.payments.create({
@@ -40,7 +36,7 @@ const payment = await client.payments.create({
 
 // 2. Buyer signs the EIP-3009 payload the gateway returned, then stores it.
 const sig = signPayment(BUYER_KEY, payment) // { v, r, s }
-await client.payments.sign(payment.rail0_id, { signature: packSig(sig) })
+await client.payments.sign(payment.rail0_id, { signature: packSignature(sig) })
 
 // 3. Payee authorizes: prepare → sign the EIP-1559 tx → submit (funds → escrow).
 const authPrep = await client.payments.authorizePrepare(payment.rail0_id)
@@ -93,9 +89,17 @@ All client-side, over `@noble` (no ethers/viem).
 |--------|-----|
 | `signPayment(key, paymentDetail)` | Payer signs the EIP-3009 payload from `create()` (authorize or charge) |
 | `signRefund(key, transaction)` | Payee signs the refund payload from `refundPrepare` phase-1 |
+| `packSignature(sig)` | Turn a `{ v, r, s }` into the `0x` r‖s‖v hex every `signature` field expects |
 | `signTransaction(unsignedJson, key)` | Sign an unsigned EIP-1559 tx from any prepare step → raw hex for submit |
 | `signAuthorize` / `signCharge` | Lower-level EIP-3009 signers from explicit params |
 | `signTransferWithAuthorization` / `signReceiveWithAuthorization` | Raw EIP-3009 transfer / receive signers |
+| `buildSiweMessage(params)` | Build the EIP-4361 text for a login or a wallet proof-of-ownership |
+
+`signPayment` / `signRefund` need only the `signing_payload` field, so they accept
+any `{ signing_payload }` — a whole `PaymentDetail`/`Transaction`, or just the
+payload holder. An unrecognised `primaryType` **throws** rather than defaulting to
+the transfer typehash: the gateway's payload is signed verbatim, never rebuilt
+client-side.
 
 ## Amounts
 
@@ -154,12 +158,27 @@ Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transacti
 
 All wallet methods are behind SIWE — a merchant manages its **own** wallets. `list(accountId, params?)` → `PaginatedResponse<WalletWithTokens>` · `get(accountId, idOrAddress)` → `Wallet` · `create(accountId, { address, message, signature, label? })` → `Wallet` · `update(accountId, id, { label?, active? })` → `Wallet` · `delete(accountId, id)` → `void` · `balances(accountId, id, params?)` → `WalletBalances`.
 
+Accepted tokens: `addToken(accountId, id, { chain_id, token, default? })` → `WalletTokenHolding` (upsert — reactivates a disabled holding instead of duplicating it) · `removeToken(accountId, id, tokenId)` → `void` (soft, keeps the row) · `enableToken(accountId, id, tokenId)` / `disableToken(accountId, id, tokenId)` → `WalletTokenHolding` (404 when the wallet has no holding for that token). `tokenId` is the **token's** UUID (as in `WalletTokenHolding.token.…`), not an id of the holding row.
+
+A wallet with no accepted token is invisible to buyers and unusable as a payee: `GET /payment_methods` skips it and `payments.create` answers 422 `unsupported_payment_method`. Onboarding a merchant is therefore `create` **plus at least one** `addToken`.
+
 Adding a wallet requires a **SIWE proof-of-ownership** of the address being added — not just the session JWT. Obtain a single-use nonce (`POST /auth/nonces`), build an EIP-4361 message whose `address` is the wallet being added, and sign it with **that wallet's own key** (the same handshake as login, but signed by the added wallet rather than the session wallet). Pass the resulting `message` + `signature` to `create`. The gateway rejects a signature that does not recover to `address` (422) and an address already registered anywhere (409 — addresses are globally unique). This lets a merchant prove control of several payee wallets under one account.
 
 ```ts
+import { buildSiweMessage, checksumAddress, personalSign } from '@rail0/sdk'
+
 const { nonce } = await client.auth.getNonce()
-// Build + sign an EIP-4361 message for the wallet being added (its own key):
-const message = /* SiweMessage({ domain, address: added, uri, chainId, nonce }).prepareMessage() */
+const added = checksumAddress(addedWalletKey)
+// Build + sign an EIP-4361 message for the wallet being added (its OWN key).
+// `address` must be EIP-55 checksummed and `uri`'s host must equal `domain`.
+const message = buildSiweMessage({
+  domain: 'api.rail0.xyz',
+  address: added,
+  uri: 'https://api.rail0.xyz',
+  chainId: 1,
+  nonce,
+  statement: 'Sign in to RAIL0',
+})
 const signature = personalSign(addedWalletKey, message)
 await client.wallets.create(accountId, { address: added, message, signature, label: 'Payouts' })
 ```

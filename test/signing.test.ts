@@ -1,10 +1,13 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { describe, expect, it } from 'vitest'
-import type { PaymentConfig } from '../src/resources/types.js'
+import type { PaymentConfig, SigningPayload } from '../src/resources/types.js'
 import {
+  packSignature,
   signAuthorize,
   signCharge,
+  signPayment,
+  signRefund,
   signTransferWithAuthorization,
   type TokenDomain,
 } from '../src/signing.js'
@@ -336,6 +339,97 @@ function rlpDecode(buf: Uint8Array): Uint8Array[] {
 function toHex(b: Uint8Array): string {
   return `0x${Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')}`
 }
+
+// ================================================================
+//  packSignature
+// ================================================================
+
+describe('packSignature', () => {
+  it('packs r || s || v with v as the 1-byte hex 1b/1c', () => {
+    const r = `0x${'11'.repeat(32)}` as const
+    const s = `0x${'22'.repeat(32)}` as const
+
+    expect(packSignature({ v: 27, r, s })).toBe(`0x${'11'.repeat(32)}${'22'.repeat(32)}1b`)
+    expect(packSignature({ v: 28, r, s })).toBe(`0x${'11'.repeat(32)}${'22'.repeat(32)}1c`)
+  })
+
+  it('produces the 132-char shape the gateway parses (0x + 130 hex)', () => {
+    const packed = packSignature(
+      signAuthorize({
+        privateKey: PRIVATE_KEY,
+        payment: PAYMENT,
+        nonce: NONCE,
+        contractAddress: CONTRACT_ADDRESS,
+        tokenDomain: TOKEN_DOMAIN,
+      }),
+    )
+    expect(packed).toMatch(/^0x[0-9a-f]{128}(1b|1c)$/i)
+    expect(packed).toHaveLength(132)
+  })
+})
+
+// ================================================================
+//  signPayment / signRefund — payload-only inputs, primaryType guard
+// ================================================================
+
+describe('signFromPayload (via signPayment / signRefund)', () => {
+  // The gateway's payload verbatim: only `signing_payload` is read, so the tests
+  // pass the bare holder — the shape real browser callers had to cast to before.
+  const payload = (primaryType: string): SigningPayload => ({
+    domain: TOKEN_DOMAIN,
+    types: {},
+    primaryType,
+    message: {
+      from: PAYER,
+      to: CONTRACT_ADDRESS,
+      value: '50000000',
+      validAfter: '0',
+      validBefore: '9999999999',
+      nonce: NONCE,
+    },
+  })
+
+  it('signs a bare { signing_payload } — no full PaymentDetail / Transaction needed', () => {
+    const sig = signPayment(PRIVATE_KEY, {
+      signing_payload: payload('TransferWithAuthorization'),
+    })
+    expect(sig.r).toMatch(/^0x[0-9a-f]{64}$/i)
+
+    const refundSig = signRefund(PRIVATE_KEY, {
+      signing_payload: payload('ReceiveWithAuthorization'),
+    })
+    // Different typehash → different digest → different signature.
+    expect(refundSig.r).not.toBe(sig.r)
+  })
+
+  it('matches the equivalent explicit signAuthorize for a transfer payload', () => {
+    const fromPayload = signPayment(PRIVATE_KEY, {
+      signing_payload: payload('TransferWithAuthorization'),
+    })
+    const explicit = signAuthorize({
+      privateKey: PRIVATE_KEY,
+      payment: PAYMENT,
+      nonce: NONCE,
+      contractAddress: CONTRACT_ADDRESS,
+      tokenDomain: TOKEN_DOMAIN,
+    })
+    expect(fromPayload).toEqual(explicit)
+  })
+
+  it('throws on an unknown primaryType instead of silently using the transfer typehash', () => {
+    expect(() => signPayment(PRIVATE_KEY, { signing_payload: payload('SomethingElse') })).toThrow(
+      /unsupported EIP-712 primaryType: SomethingElse/,
+    )
+    expect(() => signRefund(PRIVATE_KEY, { signing_payload: payload('') })).toThrow(
+      /unsupported EIP-712 primaryType/,
+    )
+  })
+
+  it('throws a distinct error when the payload is absent', () => {
+    expect(() => signPayment(PRIVATE_KEY, {})).toThrow(/no signing_payload/)
+    expect(() => signRefund(PRIVATE_KEY, { signing_payload: null })).toThrow(/no signing_payload/)
+  })
+})
 
 describe('signTransaction (EIP-1559)', () => {
   const unsigned = JSON.stringify({

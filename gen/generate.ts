@@ -84,6 +84,21 @@ export type PaymentStatus =
   | 'released'
   | 'refunded'
   | 'partially_refunded'
+/**
+ * The six fund operations that have prepare/submit endpoints — the values that
+ * can appear in a \`/payments/:id/:operation\` path.
+ *
+ * DELIBERATELY NARROWER than what a transaction ROW can hold: the gateway also
+ * stores \`dispute\` and \`close_dispute\` (payments.rb TRANSACTION_OPERATIONS, a
+ * superset of OPERATIONS), and those rows come back from
+ * \`payments.transactions()\`. Widening this type here would be wrong in the other
+ * direction — it is also the argument type of prepare/submit/submitByHash, and
+ * dispute/close-dispute have their own hand-written paths. The proper fix is a
+ * separate 8-value record type, which waits on the gateway spec: openapi.json's
+ * \`Transaction.operation\` enum is missing both values (its transactions-FILTER
+ * enum has all eight) — commercelayer/rail0-gateway#177. Until that lands,
+ * comparing a row's \`operation\` to 'dispute' needs a cast.
+ */
 export type TransactionOperation = 'authorize' | 'charge' | 'capture' | 'void' | 'release' | 'refund'
 export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
 export type DisputeStatus = 'open' | 'closed'
@@ -184,6 +199,18 @@ export interface CreateWalletRequest {
 export interface UpdateWalletRequest {
   label?: string
   active?: boolean
+}
+/**
+ * Body for accepting a token (chain) on a wallet. The pair must resolve to an
+ * ACTIVE token in the gateway's catalog (422 \`unknown_chain\` / \`unknown_token\`
+ * otherwise) — a retired token is still readable but can never be advertised.
+ */
+export interface AddWalletTokenRequest {
+  chain_id: number
+  /** Token contract address (0x, 40 hex) on \`chain_id\`. */
+  token: Address
+  /** Make this the wallet's default token. At most one default per wallet — setting it clears the others. */
+  default?: boolean
 }
 export interface CreateWebhookRequest {
   name: string
@@ -479,20 +506,27 @@ import type {
   Bytes32,
   CreatePaymentRequest,
   Dispute,
+  DisputeStatus,
   PaginatedResponse,
   Payment,
   PaymentDetail,
+  PaymentMode,
+  PaymentStatus,
   PayerSignatureRequest,
   PrepareRequest,
   SubmitByHashRequest,
   SubmitTransactionRequest,
   Transaction,
   TransactionOperation,
+  TransactionStatus,
 } from './types.js'
 
+// The gateway validates these filters with Grape \`values:\` and answers 400 on
+// anything else, so they are typed as the unions rather than bare strings —
+// \`list({ status: 'cancelled' })\` is a compile error, not a runtime 400.
 export interface ListPaymentsParams {
-  status?: string
-  mode?: string
+  status?: PaymentStatus
+  mode?: PaymentMode
   payer?: string
   payee?: string
   token?: string
@@ -515,8 +549,16 @@ export interface ListPaymentsParams {
 }
 
 export interface ListTransactionsParams {
+  /**
+   * Filter by operation. Left as \`string\` on purpose: the gateway accepts all
+   * EIGHT stored operations here (TRANSACTION_OPERATIONS — the six fund ops plus
+   * \`dispute\` and \`close_dispute\`), so TransactionOperation, which carries only
+   * the six that have prepare/submit endpoints, would wrongly reject
+   * \`?operation=dispute\` — the very filter rail0-cli#47 was fixed to allow.
+   * Narrow once the gateway spec splits the two (commercelayer/rail0-gateway#177).
+   */
   operation?: string
-  status?: string
+  status?: TransactionStatus
   sort?: string
   page?: number
   per_page?: number
@@ -524,7 +566,7 @@ export interface ListTransactionsParams {
 
 export interface ListDisputesParams {
   /** Filter by dispute status ("open" or "closed"). */
-  status?: string
+  status?: DisputeStatus
   sort?: string
   page?: number
   per_page?: number
@@ -674,11 +716,13 @@ ${BUILD_QUERY}`
 const WALLETS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
 import type {
+  AddWalletTokenRequest,
   CreateWalletRequest,
   PaginatedResponse,
   UpdateWalletRequest,
   Wallet,
   WalletBalances,
+  WalletTokenHolding,
   WalletWithTokens,
 } from './types.js'
 
@@ -741,6 +785,46 @@ export class WalletsResource {
   /** Read a wallet's live on-chain balances (native + tokens). */
   balances(account_id: string, id: string, params?: WalletBalancesParams): Promise<WalletBalances> {
     return this.http.get(\`/accounts/\${account_id}/wallets/\${id}/balances\${buildQuery(params)}\`)
+  }
+
+  // ── Accepted tokens ────────────────────────────────────────────────
+  // The (wallet, token) holdings that power the public GET /payment_methods and
+  // gate payment creation: POST /payments refuses a payee/token pair the wallet
+  // does not accept (422 unsupported_payment_method), so onboarding a merchant is
+  // wallets.create + at least one addToken — a wallet with no holding is invisible
+  // to buyers and unusable as a payee.
+  //
+  // \`token_id\` on remove/enable/disable is the TOKEN's UUID (as returned in
+  // WalletTokenHolding.token), NOT an id of the holding row — the gateway looks
+  // the holding up by (wallet, token). A non-UUID is a clean 404.
+
+  /**
+   * Accept a token (chain) on this wallet — an upsert on (wallet, token): a
+   * previously-disabled holding is reactivated rather than duplicated. The
+   * gateway answers 201 when it creates the holding and 200 when it reactivates
+   * or updates one; both return the holding, so the SDK does not distinguish them.
+   */
+  addToken(account_id: string, id: string, params: AddWalletTokenRequest): Promise<WalletTokenHolding> {
+    return this.http.post(\`/accounts/\${account_id}/wallets/\${id}/tokens\`, params)
+  }
+
+  /**
+   * Stop accepting a token — soft delete (204). The holding row survives with
+   * active:false (and loses \`default\`), so its history is kept and enableToken
+   * can bring it back.
+   */
+  removeToken(account_id: string, id: string, token_id: string): Promise<void> {
+    return this.http.delete(\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}\`)
+  }
+
+  /** Re-enable an EXISTING holding. 404 when the wallet has none for the token — use addToken to create one. */
+  enableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
+    return this.http.patch(\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}/enable\`)
+  }
+
+  /** Disable an EXISTING holding (same effect as removeToken, but returns the holding). 404 when absent. */
+  disableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
+    return this.http.patch(\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}/disable\`)
   }
 }
 ${BUILD_QUERY}`

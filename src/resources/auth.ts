@@ -1,6 +1,5 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
-import { SiweMessage } from 'siwe'
 import type { HttpClient } from '../core/http.js'
 
 // ================================================================
@@ -20,6 +19,61 @@ export interface AuthResponse {
   /** The account's human-readable name, or null for an account-less session. */
   name: string | null
   expiresAt: string
+}
+
+/** Fields of the EIP-4361 message built by `buildSiweMessage`. */
+export interface SiweMessageParams {
+  /** RFC 4501 authority requesting the sign-in — HOST ONLY, no port, no scheme. */
+  domain: string
+  /**
+   * The signing address, EIP-55 checksummed (see `checksumAddress`). EIP-4361
+   * mandates the checksummed form and the strict verifiers (viem, siwe-js)
+   * reject a lowercase address, so never pass one.
+   */
+  address: string
+  /** RFC 3986 URI of the resource being signed in to. Its host must equal `domain`. */
+  uri: string
+  /** EIP-155 chain id the session is bound to. */
+  chainId: number
+  /** Single-use nonce from `POST /auth/nonces` (≥ 8 alphanumeric chars). */
+  nonce: string
+  /** Optional one-line assertion shown to the user. Must not contain a newline. */
+  statement?: string
+  /** ISO-8601 issue time; defaults to now. The gateway rejects a stale or future one. */
+  issuedAt?: string
+}
+
+// ================================================================
+//  EIP-4361 (SIWE) message
+// ================================================================
+
+/**
+ * Build the canonical EIP-4361 message text to sign, byte-for-byte as the
+ * gateway's parser expects it. Owned here rather than delegated to the `siwe`
+ * npm package, which pulls all of `ethers` (~16 MB) in at module scope for this
+ * one string.
+ *
+ * The layout is unforgiving, because the gateway parses it with a single regex
+ * (ruby `siwe` 0.1.5: `…account:\n(0x…{40})\n\n((statement)\n)?\n URI: …`). The
+ * statement slot is `\n{statement}\n` when present and a bare `\n` when absent —
+ * which is why an omitted statement leaves TWO blank lines between the address
+ * and `URI:`. Emitting one blank line there makes the regex miss and the gateway
+ * answer `invalid_siwe` ("Could not parse SIWE message"). Joining the parts with
+ * '\n' reproduces both cases exactly (the same construction the ruby gem uses).
+ */
+export function buildSiweMessage(params: SiweMessageParams): string {
+  const statement =
+    params.statement === undefined || params.statement === '' ? '\n' : `\n${params.statement}\n`
+  return [
+    `${params.domain} wants you to sign in with your Ethereum account:`,
+    params.address,
+    statement,
+    `URI: ${params.uri}`,
+    'Version: 1',
+    `Chain ID: ${params.chainId}`,
+    `Nonce: ${params.nonce}`,
+    `Issued At: ${params.issuedAt ?? new Date().toISOString()}`,
+  ].join('\n')
 }
 
 // ================================================================
@@ -131,8 +185,8 @@ export class AuthResource {
 
   /**
    * Full SIWE login flow:
-   *  1. POST /nonces
-   *  2. Build EIP-4361 message via siwe library
+   *  1. POST /auth/nonces
+   *  2. Build the EIP-4361 message (buildSiweMessage)
    *  3. Sign with EIP-191 personal_sign using noble/curves
    *  4. POST /auth and return the JWT response
    *
@@ -149,17 +203,17 @@ export class AuthResource {
     // Strip port from domain — the API's siwe_domain is host-only (e.g. "localhost")
     const siweHost = domain.split(':')[0] as string
 
-    const siweMessage = new SiweMessage({
+    // Statement kept identical to rail0-go's signSIWE, so both SDKs put the same
+    // text in front of the user for the same handshake.
+    const message = buildSiweMessage({
       domain: siweHost,
       address,
       uri: `http://${domain}`,
-      version: '1',
       chainId,
       nonce,
       statement: 'Sign in to RAIL0',
     })
-    const messageStr = siweMessage.prepareMessage()
-    const signature = personalSign(privateKeyHex, messageStr)
-    return this.verify(messageStr, signature)
+    const signature = personalSign(privateKeyHex, message)
+    return this.verify(message, signature)
   }
 }

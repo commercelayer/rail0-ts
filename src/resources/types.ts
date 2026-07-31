@@ -24,6 +24,21 @@ export type PaymentStatus =
   | 'released'
   | 'refunded'
   | 'partially_refunded'
+/**
+ * The six fund operations that have prepare/submit endpoints — the values that
+ * can appear in a `/payments/:id/:operation` path.
+ *
+ * DELIBERATELY NARROWER than what a transaction ROW can hold: the gateway also
+ * stores `dispute` and `close_dispute` (payments.rb TRANSACTION_OPERATIONS, a
+ * superset of OPERATIONS), and those rows come back from
+ * `payments.transactions()`. Widening this type here would be wrong in the other
+ * direction — it is also the argument type of prepare/submit/submitByHash, and
+ * dispute/close-dispute have their own hand-written paths. The proper fix is a
+ * separate 8-value record type, which waits on the gateway spec: openapi.json's
+ * `Transaction.operation` enum is missing both values (its transactions-FILTER
+ * enum has all eight) — commercelayer/rail0-gateway#177. Until that lands,
+ * comparing a row's `operation` to 'dispute' needs a cast.
+ */
 export type TransactionOperation =
   | 'authorize'
   | 'charge'
@@ -130,6 +145,18 @@ export interface CreateWalletRequest {
 export interface UpdateWalletRequest {
   label?: string
   active?: boolean
+}
+/**
+ * Body for accepting a token (chain) on a wallet. The pair must resolve to an
+ * ACTIVE token in the gateway's catalog (422 `unknown_chain` / `unknown_token`
+ * otherwise) — a retired token is still readable but can never be advertised.
+ */
+export interface AddWalletTokenRequest {
+  chain_id: number
+  /** Token contract address (0x, 40 hex) on `chain_id`. */
+  token: Address
+  /** Make this the wallet's default token. At most one default per wallet — setting it clears the others. */
+  default?: boolean
 }
 export interface CreateWebhookRequest {
   name: string
