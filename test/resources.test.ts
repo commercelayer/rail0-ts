@@ -10,6 +10,8 @@ const KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 const ACCOUNT_ID = '018e1234-5678-7abc-9def-012345678901'
 const WALLET_ID = '018e2222-3333-7abc-9def-012345678902'
 const WEBHOOK_ID = '018e3333-4444-7abc-9def-012345678903'
+const TOKEN_ID = '018e4444-5555-7abc-9def-012345678904'
+const TOKEN_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
 const RAIL0_ID = `0x${'ab'.repeat(32)}`
 
 function ok(body: unknown, headers?: Record<string, string>): Response {
@@ -124,6 +126,49 @@ describe('resource alignment', () => {
         message: 'siwe-message',
         signature: '0xsig',
         label: 'w',
+      })
+    })
+
+    // The accepted-token holdings gate payment creation (POST /payments 422s
+    // unsupported_payment_method without one), so a merchant cannot be onboarded
+    // through the SDK unless these four reach the right verb + path. `token_id`
+    // in the path is the TOKEN's uuid, not an id of the holding row.
+    it('addToken / removeToken / enableToken / disableToken hit the right verb and path', async () => {
+      const holding = { token: { symbol: 'USDC', chain_id: 84532 }, active: true, default: true }
+      const spy = vi.spyOn(globalThis, 'fetch')
+
+      spy.mockResolvedValueOnce(ok(holding))
+      const created = await client.wallets.addToken(ACCOUNT_ID, WALLET_ID, {
+        chain_id: 84532,
+        token: TOKEN_ADDRESS,
+        default: true,
+      })
+      expect(created.token?.symbol).toBe('USDC')
+
+      spy.mockResolvedValueOnce(new Response(null, { status: 204 }))
+      await client.wallets.removeToken(ACCOUNT_ID, WALLET_ID, TOKEN_ID)
+
+      spy.mockResolvedValueOnce(ok(holding))
+      await client.wallets.enableToken(ACCOUNT_ID, WALLET_ID, TOKEN_ID)
+
+      spy.mockResolvedValueOnce(ok({ ...holding, active: false, default: false }))
+      const disabled = await client.wallets.disableToken(ACCOUNT_ID, WALLET_ID, TOKEN_ID)
+      expect(disabled.active).toBe(false)
+
+      const methods = spy.mock.calls.map((c) => (c[1] as RequestInit).method)
+      expect(methods).toEqual(['POST', 'DELETE', 'PATCH', 'PATCH'])
+
+      const base = `/accounts/${ACCOUNT_ID}/wallets/${WALLET_ID}/tokens`
+      expect(String(spy.mock.calls[0]?.[0])).toContain(base)
+      expect(String(spy.mock.calls[1]?.[0])).toContain(`${base}/${TOKEN_ID}`)
+      expect(String(spy.mock.calls[2]?.[0])).toContain(`${base}/${TOKEN_ID}/enable`)
+      expect(String(spy.mock.calls[3]?.[0])).toContain(`${base}/${TOKEN_ID}/disable`)
+
+      // The upsert body carries chain_id + token (+ optional default).
+      expect(JSON.parse((spy.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+        chain_id: 84532,
+        token: TOKEN_ADDRESS,
+        default: true,
       })
     })
   })

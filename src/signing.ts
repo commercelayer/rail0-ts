@@ -1,13 +1,6 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
-import type {
-  Address,
-  Bytes32,
-  PaymentConfig,
-  PaymentDetail,
-  SigningPayload,
-  Transaction,
-} from './resources/types.js'
+import type { Address, Bytes32, PaymentConfig, SigningPayload } from './resources/types.js'
 
 // ================================================================
 //  EIP-712 type strings
@@ -155,6 +148,16 @@ export interface Eip3009Signature {
   s: Bytes32
 }
 
+/**
+ * Anything carrying the gateway's EIP-712 payload: a `PaymentDetail`, a refund
+ * `Transaction`, or a bare `{ signing_payload }`. `signPayment` / `signRefund`
+ * read only that one field, so they ask only for it — demanding the whole record
+ * forced callers into a cast that would swallow a real shape change.
+ */
+export interface WithSigningPayload {
+  signing_payload?: SigningPayload | null
+}
+
 /** Parameters for a raw transferWithAuthorization signature. */
 export interface SignTransferParams {
   from: Address
@@ -172,21 +175,21 @@ export interface SignTransferParams {
 
 /**
  * Parameters for signing an authorize or charge call.
- * The nonce comes from `signingPayload.message.nonce` returned by `POST /payments`.
- * The contract hardcodes validAfter=0 and validBefore=payment.authorizationExpiry.
+ * The nonce comes from `signing_payload.message.nonce` returned by `POST /payments`.
+ * The contract hardcodes validAfter=0 and validBefore=payment.authorization_expiry.
  *
- * For the simple case, prefer `signPayment(privateKey, createPaymentResponse)` which
- * reads all fields from the API response directly.
+ * For the simple case, prefer `signPayment(privateKey, paymentDetail)`, which reads
+ * every field off the `POST /payments` response directly.
  */
 export interface SignPaymentParams {
   /** Payer's private key (0x-prefixed hex or raw Uint8Array). */
   privateKey: `0x${string}` | Uint8Array
   payment: PaymentConfig
-  /** Nonce from `createPaymentResponse.signingPayload.message.nonce`. */
+  /** Nonce from `paymentDetail.signing_payload.message.nonce`. */
   nonce: Bytes32
-  /** RAIL0 contract address — from `createPaymentResponse.rail0Contract`. */
+  /** RAIL0 contract address — from `paymentDetail.rail0_contract`. */
   contractAddress: Address
-  /** EIP-712 domain of the payment token — from `createPaymentResponse.signingPayload.domain`. */
+  /** EIP-712 domain of the payment token — from `paymentDetail.signing_payload.domain`. */
   tokenDomain: TokenDomain
 }
 
@@ -220,6 +223,22 @@ function doSign(
 }
 
 /**
+ * Pack an `{ v, r, s }` signature into the 65-byte hex string every gateway
+ * endpoint that takes a signature expects — `payments.sign(id, { signature })`
+ * and refund `prepare` phase-2.
+ *
+ * Layout: `0x` || r (32 bytes) || s (32 bytes) || v (1 byte), so 132 chars. The
+ * two easy mistakes are writing `v` as the decimal 27/28 instead of the 1-byte
+ * hex `1b`/`1c`, and leaving the `0x` on `s`: either one still produces a
+ * well-formed 0x string, so the gateway's `recover_signer` simply lands on a
+ * different address and answers 422 `signer_mismatch` with nothing pointing at
+ * the packing. Use this instead of hand-rolling it.
+ */
+export function packSignature(sig: Eip3009Signature): string {
+  return `${sig.r}${sig.s.slice(2)}${sig.v.toString(16).padStart(2, '0')}`
+}
+
+/**
  * Sign a raw EIP-3009 transferWithAuthorization message.
  *
  * For RAIL0 payment flows prefer signAuthorize / signCharge which
@@ -244,10 +263,23 @@ export function signTransferWithAuthorization(
  * Sign the EIP-3009 payload required by an authorize call.
  *
  * ```ts
- * const resp = await client.payments.createPayment({ payment: { ...payment, amount: '50000000' }, chainId, mode: 'authorize' })
- * const sig = signAuthorize({ privateKey, payment: resp.payment, nonce: resp.signingPayload.message.nonce, contractAddress: resp.rail0Contract, tokenDomain: resp.signingPayload.domain })
- * await client.payments.sign(resp.paymentId, sig)
- * await client.payments.authorize(resp.paymentId)
+ * const resp = await client.payments.create({
+ *   chain_id: 8453,
+ *   mode: 'authorize',
+ *   amount: '50.00', // HUMAN decimal — the gateway applies the token's decimals
+ *   token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
+ *   payer,
+ *   payee,
+ * })
+ * const payload = resp.signing_payload!
+ * const sig = signAuthorize({
+ *   privateKey,
+ *   payment: resp,
+ *   nonce: payload.message.nonce,
+ *   contractAddress: resp.rail0_contract!,
+ *   tokenDomain: payload.domain,
+ * })
+ * await client.payments.sign(resp.rail0_id, { signature: packSignature(sig) })
  * ```
  */
 export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
@@ -265,10 +297,24 @@ export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
  * Sign the EIP-3009 payload required by a charge call.
  *
  * ```ts
- * const resp = await client.payments.createPayment({ payment: { ...payment, amount: '25000000' }, chainId, mode: 'charge' })
- * const sig = signCharge({ privateKey, payment: resp.payment, nonce: resp.signing_payload.message.nonce, contractAddress: resp.rail0_contract, tokenDomain: resp.signing_payload.domain })
- * await client.payments.sign(resp.rail0_id, sig)
- * await client.payments.charge(resp.rail0_id, signedTx)
+ * const resp = await client.payments.create({
+ *   chain_id: 8453,
+ *   mode: 'charge',
+ *   amount: '25.00', // HUMAN decimal — the gateway applies the token's decimals
+ *   token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
+ *   payer,
+ *   payee,
+ * })
+ * const payload = resp.signing_payload!
+ * const sig = signCharge({
+ *   privateKey,
+ *   payment: resp,
+ *   nonce: payload.message.nonce,
+ *   contractAddress: resp.rail0_contract!,
+ *   tokenDomain: payload.domain,
+ * })
+ * await client.payments.sign(resp.rail0_id, { signature: packSignature(sig) })
+ * // The payee then broadcasts it: chargePrepare → signTransaction → charge.
  * ```
  */
 export function signCharge(params: SignPaymentParams): Eip3009Signature {
@@ -289,15 +335,22 @@ export function signCharge(params: SignPaymentParams): Eip3009Signature {
  * field extraction needed. This is the recommended signing path for payers.
  *
  * ```ts
- * const resp = await client.payments.create({ payment: { ...payment, amount: '50000000' }, chain_id: chainId, mode: 'authorize' })
+ * const resp = await client.payments.create({
+ *   chain_id: 8453,
+ *   mode: 'authorize',
+ *   amount: '50.00', // HUMAN decimal — the gateway applies the token's decimals
+ *   token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
+ *   payer,
+ *   payee,
+ * })
  * const sig = signPayment(privateKey, resp)
- * await client.payments.sign(resp.rail0_id, sig)
- * await client.payments.authorizePrepare(resp.rail0_id)
+ * await client.payments.sign(resp.rail0_id, { signature: packSignature(sig) })
+ * // The payee then broadcasts it: authorizePrepare → signTransaction → authorize.
  * ```
  */
 export function signPayment(
   privateKey: `0x${string}` | Uint8Array,
-  payment: PaymentDetail,
+  payment: WithSigningPayload,
 ): Eip3009Signature {
   const payload = payment.signing_payload
   if (!payload) {
@@ -310,13 +363,31 @@ export function signPayment(
  * Sign an EIP-712 payload, selecting TransferWithAuthorization vs
  * ReceiveWithAuthorization by its `primaryType`. Shared by signPayment (payer,
  * authorize/charge) and signRefund (payee, refund).
+ *
+ * An unrecognised `primaryType` throws rather than falling back to the transfer
+ * typehash. A fallback would still yield a well-formed signature — over the WRONG
+ * digest — which only surfaces on-chain as `invalid_token_signature` after gas is
+ * spent. `primaryType` is precisely the field that moves when the contract's
+ * EIP-3009 primitive changes (commercelayer/rail0#58), so a client must never
+ * guess it: the gateway's payload is signed verbatim or not at all.
  */
 function signFromPayload(
   privateKey: `0x${string}` | Uint8Array,
   payload: SigningPayload,
 ): Eip3009Signature {
-  const typeHash =
-    payload.primaryType === 'ReceiveWithAuthorization' ? RECEIVE_TYPEHASH : TRANSFER_TYPEHASH
+  let typeHash: Uint8Array
+  switch (payload.primaryType) {
+    case 'TransferWithAuthorization':
+      typeHash = TRANSFER_TYPEHASH
+      break
+    case 'ReceiveWithAuthorization':
+      typeHash = RECEIVE_TYPEHASH
+      break
+    default:
+      throw new Error(
+        `unsupported EIP-712 primaryType: ${payload.primaryType} (expected TransferWithAuthorization or ReceiveWithAuthorization) — upgrade @rail0/sdk`,
+      )
+  }
   const { message, domain } = payload
   return doSign(
     privateKey,
@@ -360,11 +431,20 @@ export function signReceiveWithAuthorization(
 /**
  * Sign the refund payload returned by `refundPrepare` phase-1. Reads the
  * ReceiveWithAuthorization payload off the returned transaction and signs it
- * with the payee key; pass the resulting (v, r, s) to `refundPrepare` phase-2.
+ * with the payee key; pass the packed result to `refundPrepare` phase-2.
+ *
+ * ```ts
+ * const phase1 = await client.payments.refundPrepare(id, { amount: '10.00' })
+ * const sig = signRefund(payeeKey, phase1)
+ * const phase2 = await client.payments.refundPrepare(id, {
+ *   amount: '10.00',
+ *   signature: packSignature(sig),
+ * })
+ * ```
  */
 export function signRefund(
   privateKey: `0x${string}` | Uint8Array,
-  transaction: Transaction,
+  transaction: WithSigningPayload,
 ): Eip3009Signature {
   const payload = transaction.signing_payload
   if (!payload) {

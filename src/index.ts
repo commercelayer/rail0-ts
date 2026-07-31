@@ -11,8 +11,13 @@ export type {
   AnalyticsInterval,
 } from './resources/analytics.js'
 export { AnalyticsResource } from './resources/analytics.js'
-export type { AuthResponse } from './resources/auth.js'
-export { AuthResource, checksumAddress, personalSign } from './resources/auth.js'
+export type { AuthResponse, SiweMessageParams } from './resources/auth.js'
+export {
+  AuthResource,
+  buildSiweMessage,
+  checksumAddress,
+  personalSign,
+} from './resources/auth.js'
 export { ChainsResource } from './resources/chains.js'
 export { DisputesResource } from './resources/disputes.js'
 export { HealthResource } from './resources/health.js'
@@ -24,6 +29,7 @@ export { PaymentsResource } from './resources/payments.js'
 export { TokensResource } from './resources/tokens.js'
 // ── Types ────────────────────────────────────────────────────────────
 export type {
+  AddWalletTokenRequest,
   // Primitives
   Address,
   // Analytics
@@ -94,9 +100,11 @@ export type {
   SignPaymentParams,
   SignTransferParams,
   TokenDomain,
+  WithSigningPayload,
 } from './signing.js'
 // ── Signing ──────────────────────────────────────────────────────────
 export {
+  packSignature,
   signAuthorize,
   signCharge,
   signPayment,

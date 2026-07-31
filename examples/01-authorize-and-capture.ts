@@ -9,17 +9,19 @@
  * authorization expiry, release (permissionless).
  */
 
-import { Rail0ApiError, Rail0Client, signPayment, signTransaction } from '../src/index.js'
+import {
+  packSignature,
+  Rail0ApiError,
+  Rail0Client,
+  signPayment,
+  signTransaction,
+} from '../src/index.js'
 
 const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz' })
 
 // Example keys — NEVER hardcode real keys. Hardhat accounts #0 / #1.
 const BUYER_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 const PAYEE_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'
-
-// Pack an { v, r, s } signature into the 65-byte hex the gateway expects.
-const packSig = (sig: { v: number; r: string; s: string }): string =>
-  `${sig.r}${sig.s.slice(2)}${sig.v.toString(16).padStart(2, '0')}`
 
 try {
   // 1. Buyer creates the payment (mode: authorize → escrow).
@@ -34,8 +36,9 @@ try {
   const id = created.rail0_id as string
 
   // 2. Buyer signs the EIP-3009 payload the gateway returned, then stores it.
+  //    packSignature turns { v, r, s } into the 0x r||s||v hex the gateway wants.
   const sig = signPayment(BUYER_KEY, created)
-  await client.payments.sign(id, { signature: packSig(sig) })
+  await client.payments.sign(id, { signature: packSignature(sig) })
 
   // 3. Payee authorizes: prepare the tx, sign it, submit it (funds → escrow).
   const authPrep = await client.payments.authorizePrepare(id)

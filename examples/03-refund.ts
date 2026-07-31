@@ -10,7 +10,13 @@
  * payment's refundable_amount.
  */
 
-import { Rail0ApiError, Rail0Client, signRefund, signTransaction } from '../src/index.js'
+import {
+  packSignature,
+  Rail0ApiError,
+  Rail0Client,
+  signRefund,
+  signTransaction,
+} from '../src/index.js'
 
 const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz' })
 
@@ -29,7 +35,7 @@ try {
   // Phase 2 — hand the signature back to get the unsigned on-chain refund tx.
   const phase2 = await client.payments.refundPrepare(id, {
     amount: '50.00',
-    signature: `${sig.r}${sig.s.slice(2)}${sig.v.toString(16).padStart(2, '0')}`,
+    signature: packSignature(sig),
   })
 
   // Sign + submit the refund transaction.
