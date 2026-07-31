@@ -39,7 +39,9 @@ describe('resource alignment', () => {
 
   describe('chains.list', () => {
     it('returns the blockchain catalog', async () => {
-      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok([{ chain_id: 84532, native_symbol: 'ETH' }]))
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        ok([{ chain_id: 84532, native_symbol: 'ETH' }]),
+      )
       const chains = await client.chains.list()
       expect(chains[0]?.chain_id).toBe(84532)
     })
@@ -55,7 +57,9 @@ describe('resource alignment', () => {
 
   describe('tokens.list', () => {
     it('sends no query for no args, chain_id for a number, and both filters', async () => {
-      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ok([{ symbol: 'USDC' }]))
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async () => ok([{ symbol: 'USDC' }]))
       await client.tokens.list()
       await client.tokens.list(84532)
       await client.tokens.list(84532, 'USDC')
@@ -85,7 +89,11 @@ describe('resource alignment', () => {
       const spy = vi
         .spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(okList([{ id: WALLET_ID, address: '0xabc' }], 1))
-      const res = await client.wallets.list(ACCOUNT_ID, { chain_id: 84532, default: true, active: true })
+      const res = await client.wallets.list(ACCOUNT_ID, {
+        chain_id: 84532,
+        default: true,
+        active: true,
+      })
       expect(res.meta).toEqual({ page: 1, per_page: 25, total: 1 })
       const url = String(spy.mock.calls[0]?.[0])
       expect(url).toContain(`/accounts/${ACCOUNT_ID}/wallets`)
@@ -218,7 +226,9 @@ describe('resource alignment', () => {
 
   describe('payments.disputes', () => {
     it('returns a paginated envelope and forwards the status filter', async () => {
-      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okList([{ status: 'open' }], 1))
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(okList([{ status: 'open' }], 1))
       const res = await client.payments.disputes(RAIL0_ID, { status: 'open' })
       expect(res.data[0]?.status).toBe('open')
       expect(res.meta.total).toBe(1)
@@ -228,7 +238,9 @@ describe('resource alignment', () => {
 
   describe('payments.create idempotency', () => {
     it('sends the Idempotency-Key header only when provided', async () => {
-      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ok({ rail0_id: RAIL0_ID }))
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async () => ok({ rail0_id: RAIL0_ID }))
       const body = {
         chain_id: 84532,
         mode: 'charge' as const,
@@ -251,14 +263,19 @@ describe('resource alignment', () => {
 
   describe('disputes.list', () => {
     it('returns paginated disputes with embedded payment and forwards status', async () => {
-      const spy = vi
-        .spyOn(globalThis, 'fetch')
-        .mockResolvedValueOnce(
-          okList(
-            [{ id: 'd1', status: 'closed', closed_by: 'payee', payment: { rail0_id: RAIL0_ID, status: 'refunded' } }],
-            1,
-          ),
-        )
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        okList(
+          [
+            {
+              id: 'd1',
+              status: 'closed',
+              closed_by: 'payee',
+              payment: { rail0_id: RAIL0_ID, status: 'refunded' },
+            },
+          ],
+          1,
+        ),
+      )
       const res = await client.disputes.list({ status: 'closed' })
       expect(res.data[0]?.status).toBe('closed')
       expect(res.data[0]?.payment?.rail0_id).toBe(RAIL0_ID)
@@ -276,10 +293,14 @@ describe('resource alignment', () => {
 
       await client.payments.disputeSubmitByHash(RAIL0_ID, { transaction_hash: '0xdisp' })
       expect(String(spy.mock.calls[0]?.[0])).toContain(`/payments/${RAIL0_ID}/dispute/submitted`)
-      expect(JSON.parse((spy.mock.calls[0]?.[1] as RequestInit).body as string).transaction_hash).toBe('0xdisp')
+      expect(
+        JSON.parse((spy.mock.calls[0]?.[1] as RequestInit).body as string).transaction_hash,
+      ).toBe('0xdisp')
 
       await client.payments.closeDisputeSubmitByHash(RAIL0_ID, { transaction_hash: '0xclose' })
-      expect(String(spy.mock.calls[1]?.[0])).toContain(`/payments/${RAIL0_ID}/dispute/close/submitted`)
+      expect(String(spy.mock.calls[1]?.[0])).toContain(
+        `/payments/${RAIL0_ID}/dispute/close/submitted`,
+      )
     })
   })
 
@@ -356,7 +377,9 @@ describe('resource alignment', () => {
     })
 
     it('breakdown works with no filters (undefined)', async () => {
-      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok([{ key: 'charged', orders: 2 }]))
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(ok([{ key: 'charged', orders: 2 }]))
       await client.analytics.breakdown(undefined, { by: 'status' })
       const url = String(spy.mock.calls[0]?.[0])
       expect(url).toContain('/analytics/breakdown?by=status')
@@ -369,7 +392,13 @@ describe('resource alignment', () => {
     it('embeds chainId 1 by default and a custom chainId when given', async () => {
       const nonce = () => ok({ nonce: 'testNonce123', expires_at: '2099-01-01T00:00:00Z' })
       const session = () =>
-        ok({ token: 't', address: '0x0', account_id: ACCOUNT_ID, name: 'M', expires_at: '2026-01-02T00:00:00Z' })
+        ok({
+          token: 't',
+          address: '0x0',
+          account_id: ACCOUNT_ID,
+          name: 'M',
+          expires_at: '2026-01-02T00:00:00Z',
+        })
 
       const spy = vi.spyOn(globalThis, 'fetch')
       spy.mockResolvedValueOnce(nonce()).mockResolvedValueOnce(session())
@@ -389,7 +418,13 @@ describe('resource alignment', () => {
       // rather than coercing to a string.
       const nonce = () => ok({ nonce: 'testNonce123', expires_at: '2099-01-01T00:00:00Z' })
       const session = () =>
-        ok({ token: 't', address: '0x0', account_id: null, name: null, expires_at: '2026-01-02T00:00:00Z' })
+        ok({
+          token: 't',
+          address: '0x0',
+          account_id: null,
+          name: null,
+          expires_at: '2026-01-02T00:00:00Z',
+        })
 
       const spy = vi.spyOn(globalThis, 'fetch')
       spy.mockResolvedValueOnce(nonce()).mockResolvedValueOnce(session())
