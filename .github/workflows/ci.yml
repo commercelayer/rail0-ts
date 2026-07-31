@@ -1,0 +1,56 @@
+# Lint, type-check, test and build on every push and pull request.
+#
+# There was no CI here, and `pnpm lint` was already failing on `main` (src/index.ts
+# and test/resources.test.ts were unformatted) with nothing to notice it. This repo
+# is the source of the types rail0-admin vendors, so a break here propagates.
+#
+# The four steps mirror `pnpm release` minus the publish half, in the same order:
+# lint (biome), typecheck (three tsconfigs — src, examples, test), test (vitest),
+# build (tsup, which is what actually emits the .d.ts consumers rely on).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version from package.json's packageManager field, so CI and local installs
+      # resolve the lockfile identically.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22   # package.json engines: node >=22
+          cache: pnpm
+
+      # --frozen-lockfile: a PR that changes a dependency must commit the updated
+      # lockfile, rather than CI silently resolving something else.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint (biome)
+        run: pnpm lint
+
+      - name: Type-check (src, examples, test)
+        run: pnpm typecheck
+
+      - name: Test (vitest)
+        run: pnpm test
+
+      # Emits dist/, including the .d.ts. rail0-admin consumes exactly this output as
+      # a vendored tarball, so a build that only breaks under tsup must fail here.
+      - name: Build
+        run: pnpm build
+
+# NOTE — src/api.ts is generated from rail0-gateway/docs/openapi.json, a PRIVATE
+# sibling repo, so staleness cannot be gated from here (and a fork PR would have no
+# secrets for it anyway). After a gateway spec change run `pnpm generate` and commit
+# src/. commercelayer/rail0-gateway#177 is the drift that motivated writing this down.
