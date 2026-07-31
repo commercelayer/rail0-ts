@@ -427,7 +427,7 @@ export interface paths {
             header?: never;
             path: {
                 id: string;
-                /** @description Payment operation namespace. */
+                /** @description Payment operation namespace. These six are the operations reachable through the generic namespace; `dispute`/`close_dispute` are payer-only and have their own dedicated routes. The set of operations a stored transaction can CARRY is wider — see `Transaction.operation`. */
                 operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
             };
             cookie?: never;
@@ -451,7 +451,7 @@ export interface paths {
             header?: never;
             path: {
                 id: string;
-                /** @description Payment operation namespace. */
+                /** @description Payment operation namespace. These six are the operations reachable through the generic namespace; `dispute`/`close_dispute` are payer-only and have their own dedicated routes. The set of operations a stored transaction can CARRY is wider — see `Transaction.operation`. */
                 operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
             };
             cookie?: never;
@@ -475,7 +475,7 @@ export interface paths {
             header?: never;
             path: {
                 id: string;
-                /** @description Payment operation namespace. */
+                /** @description Payment operation namespace. These six are the operations reachable through the generic namespace; `dispute`/`close_dispute` are payer-only and have their own dedicated routes. The set of operations a stored transaction can CARRY is wider — see `Transaction.operation`. */
                 operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
             };
             cookie?: never;
@@ -960,14 +960,18 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** @description Gateway liveness/readiness. Only the database gates the HTTP code (200 healthy, 503 when the DB is unreachable); Sidekiq is reported but never flips the code, since the API still serves synchronous requests when workers are down. `status` is the global signal: `ok` (all good), `degraded` (DB ok but Sidekiq not ok), `error` (DB down — the only 503). */
+        /**
+         * @description Gateway liveness/readiness. Only the database gates the HTTP code (200 healthy, 503 when the DB is unreachable); Sidekiq is reported but never flips the code, since the API still serves synchronous requests when workers are down. `status` is the global signal: `ok` (all good), `degraded` (DB ok but Sidekiq not ok), `error` (DB down — the only 503).
+         *
+         *     The endpoint is public so the platform liveness probe can call it unauthenticated, but the DETAIL is session-gated: an anonymous caller receives only `status`, `db` and `timestamp`. `sidekiq`, `api_version`, `contract_version`, `active_chains` and `active_contracts` are returned only with a valid bearer token — queue depth and fleet size are operational internals. A missing or invalid token is treated as anonymous, never as a 401.
+         */
         Health: {
             /** @enum {string} */
-            status?: "ok" | "degraded" | "error";
+            status: "ok" | "degraded" | "error";
             api_version?: string;
             contract_version?: string;
             /** @enum {string} */
-            db?: "ok" | "error";
+            db: "ok" | "error";
             /** @description Worker fleet health (does not gate liveness). */
             sidekiq?: {
                 /**
@@ -985,7 +989,7 @@ export interface components {
             active_chains?: number;
             active_contracts?: number;
             /** Format: date-time */
-            timestamp?: string;
+            timestamp: string;
         };
         /** @description A single-use SIWE nonce to embed in the sign-in message. */
         Nonce: {
@@ -1140,8 +1144,11 @@ export interface components {
             id?: string;
             /** Format: uuid */
             payment_id?: string;
-            /** @enum {string} */
-            operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund";
+            /**
+             * @description Which on-chain call this row attempts. A SUPERSET of the `{operation}` path enum: `dispute` and `close_dispute` have their own hand-written routes rather than living under the generic namespace, but they mint transaction rows like any other operation, so a generated client must be able to represent them.
+             * @enum {string}
+             */
+            operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund" | "dispute" | "close_dispute";
             /** @enum {string} */
             status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
             /** @description Decoded failure code, null unless `status` is "failed". Same catalogue as an error body's `code`: a RAIL0 custom error (`not_payee`), a token-level revert (`insufficient_token_balance`, `invalid_token_signature`, `authorization_already_used`), a Solidity panic, or a rejection that stopped the broadcast before the chain saw it (`insufficient_gas_funds`, `nonce_too_low`). */
@@ -1228,7 +1235,11 @@ export interface components {
         /** @description Sweeper view of a stale submitted transaction. */
         SyncTransaction: {
             transaction_hash?: string;
-            operation?: string;
+            /**
+             * @description Same vocabulary as `Transaction.operation` — dispute rows go stale too.
+             * @enum {string}
+             */
+            operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund" | "dispute" | "close_dispute";
             /** @description Protocol-level rail0_id. */
             payment_id?: string;
             chain_id?: number;
@@ -1356,7 +1367,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Service healthy. */
+            /** @description Service healthy. Full body with a bearer token; status/db/timestamp only when anonymous. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1365,7 +1376,7 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
-            /** @description Degraded (database unreachable). */
+            /** @description Degraded (database unreachable). Same session-gated detail as the 200. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -2029,7 +2040,6 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -2061,7 +2071,6 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             /** @description Payment not signable or signer mismatch. */
             422: {
@@ -2083,7 +2092,7 @@ export interface operations {
                 per_page?: components["parameters"]["PerPage"];
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
                 sort?: components["parameters"]["Sort"];
-                operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
+                operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund" | "dispute" | "close_dispute";
                 status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
             };
             header?: never;
@@ -2107,7 +2116,6 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -2117,7 +2125,7 @@ export interface operations {
             header?: never;
             path: {
                 id: string;
-                /** @description Payment operation namespace. */
+                /** @description Payment operation namespace. These six are the operations reachable through the generic namespace; `dispute`/`close_dispute` are payer-only and have their own dedicated routes. The set of operations a stored transaction can CARRY is wider — see `Transaction.operation`. */
                 operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
             };
             cookie?: never;
@@ -2127,7 +2135,7 @@ export interface operations {
                 "application/json": {
                     /** @description Amount (required for capture/refund). */
                     amount?: string;
-                    /** @description Payee's EIP-3009 refund signature (refund phase-2 only). */
+                    /** @description Payee's EIP-3009 refund signature (refund phase-2 only; 0x + 130 hex). */
                     signature?: string;
                     /** @description Submitter address (release; defaults to payer). */
                     from?: string;
@@ -2184,7 +2192,7 @@ export interface operations {
             header?: never;
             path: {
                 id: string;
-                /** @description Payment operation namespace. */
+                /** @description Payment operation namespace. These six are the operations reachable through the generic namespace; `dispute`/`close_dispute` are payer-only and have their own dedicated routes. The set of operations a stored transaction can CARRY is wider — see `Transaction.operation`. */
                 operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
             };
             cookie?: never;
@@ -2224,7 +2232,7 @@ export interface operations {
             header?: never;
             path: {
                 id: string;
-                /** @description Payment operation namespace. */
+                /** @description Payment operation namespace. These six are the operations reachable through the generic namespace; `dispute`/`close_dispute` are payer-only and have their own dedicated routes. The set of operations a stored transaction can CARRY is wider — see `Transaction.operation`. */
                 operation: "authorize" | "capture" | "charge" | "void" | "release" | "refund";
             };
             cookie?: never;
@@ -2257,7 +2265,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The operation's transaction is already confirmed or failed — its hash is not overwritable. */
+            /** @description The operation's transaction is already confirmed — its hash is not overwritable. A `failed` row IS overwritable: re-reporting the hash repairs an orphan (mined on-chain, recorded failed) by moving it back to `submitted`. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2303,7 +2311,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The dispute transaction is already confirmed or failed — its hash is not overwritable. */
+            /** @description The operation's transaction is already confirmed — its hash is not overwritable. A `failed` row IS overwritable: re-reporting the hash repairs an orphan (mined on-chain, recorded failed) by moving it back to `submitted`. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2349,7 +2357,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The close-dispute transaction is already confirmed or failed — its hash is not overwritable. */
+            /** @description The operation's transaction is already confirmed — its hash is not overwritable. A `failed` row IS overwritable: re-reporting the hash repairs an orphan (mined on-chain, recorded failed) by moving it back to `submitted`. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2370,7 +2378,7 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description bytes32 reason code (0x…); defaults to zero. */
+                    /** @description bytes32 reason code (0x + 64 hex); defaults to zero. */
                     reason?: string;
                 };
             };
@@ -2394,7 +2402,6 @@ export interface operations {
                     "application/json": components["schemas"]["Transaction"];
                 };
             };
-            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -2448,7 +2455,7 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description bytes32 reason code (0x…); defaults to zero. */
+                    /** @description bytes32 reason code (0x + 64 hex); defaults to zero. */
                     reason?: string;
                 };
             };
@@ -2463,7 +2470,6 @@ export interface operations {
                     "application/json": components["schemas"]["Transaction"];
                 };
             };
-            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -2535,7 +2541,6 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3002,6 +3007,8 @@ export interface operations {
                     refundable_amount?: string;
                     /** @description Block the event was mined in (required on confirm). */
                     block_number?: number;
+                    /** @description Event position within the block (orders same-block confirms; optional, older indexers omit it). */
+                    log_index?: number;
                     /** @description On-chain bytes32 paymentId (diagnostics; recorded on a SyncError). */
                     payment_id?: string;
                     /** @description Revert reason / raw error data (fail only). */

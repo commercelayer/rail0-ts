@@ -1,6 +1,8 @@
 // GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.
 
 // Raw generated types for advanced use.
+import type { components } from '../api.js'
+
 export type { components, operations } from '../api.js'
 
 // ── Primitive aliases ────────────────────────────────────────────────
@@ -26,18 +28,13 @@ export type PaymentStatus =
   | 'partially_refunded'
 /**
  * The six fund operations that have prepare/submit endpoints — the values that
- * can appear in a `/payments/:id/:operation` path.
+ * can appear in a `/payments/:id/:operation` path, and the argument type of
+ * prepare/submit/submitByHash.
  *
- * DELIBERATELY NARROWER than what a transaction ROW can hold: the gateway also
- * stores `dispute` and `close_dispute` (payments.rb TRANSACTION_OPERATIONS, a
- * superset of OPERATIONS), and those rows come back from
- * `payments.transactions()`. Widening this type here would be wrong in the other
- * direction — it is also the argument type of prepare/submit/submitByHash, and
- * dispute/close-dispute have their own hand-written paths. The proper fix is a
- * separate 8-value record type, which waits on the gateway spec: openapi.json's
- * `Transaction.operation` enum is missing both values (its transactions-FILTER
- * enum has all eight) — commercelayer/rail0-gateway#177. Until that lands,
- * comparing a row's `operation` to 'dispute' needs a cast.
+ * DELIBERATELY NARROWER than what a transaction ROW can hold: see
+ * `StoredTransactionOperation` for that. The two are genuinely different
+ * questions — which endpoints exist, versus which values the stored column can
+ * carry — and conflating them is what produced the bug below.
  */
 export type TransactionOperation =
   | 'authorize'
@@ -46,6 +43,21 @@ export type TransactionOperation =
   | 'void'
   | 'release'
   | 'refund'
+/**
+ * Every operation a transaction ROW can carry: the six above plus `dispute` and
+ * `close_dispute`, which have their own payer-only routes rather than living
+ * under the generic namespace but mint rows like any other operation.
+ *
+ * This is the type to compare a row's `operation` against, and the type of the
+ * `operation` filter on `payments.transactions()`. It used to be missing, so
+ * `tx.operation === 'dispute'` was a TS2367 "comparison appears unintentional"
+ * for a value that genuinely arrives at runtime, and the row was reachable only
+ * through a cast — the gateway spec's `Transaction.operation` enum listed only
+ * six (commercelayer/rail0-gateway#177, fixed).
+ */
+export type StoredTransactionOperation = NonNullable<
+  components['schemas']['Transaction']['operation']
+>
 export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
 export type DisputeStatus = 'open' | 'closed'
 export type CircuitState = 'closed' | 'open'
@@ -207,7 +219,13 @@ export interface PaymentDetail extends Payment {
 export interface Transaction {
   id: string
   payment_id?: string
-  operation: TransactionOperation
+  /**
+   * The RECORD vocabulary, not the endpoint one: a dispute/close_dispute row comes
+   * back from `payments.transactions()` like any other. Typed as
+   * TransactionOperation, `tx.operation === 'dispute'` was a TS2367 error for a
+   * value that arrives at runtime.
+   */
+  operation: StoredTransactionOperation
   status: TransactionStatus
   unsigned_transaction?: string | null
   transaction_hash?: string | null

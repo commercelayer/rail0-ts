@@ -1,8 +1,8 @@
+export { formatAmount, toBaseUnits } from './amounts.js'
 export type { Rail0ClientOptions } from './client.js'
 export { Rail0Client } from './client.js'
 // ── Errors & logging ─────────────────────────────────────────────────
-export { Rail0ApiError, describeError } from './core/error.js'
-export { toBaseUnits, formatAmount } from './amounts.js'
+export { describeError, Rail0ApiError } from './core/error.js'
 export type { LogEntry, Logger } from './core/http.js'
 export { debugLogger } from './core/http.js'
 export type {
@@ -23,15 +23,19 @@ export { DisputesResource } from './resources/disputes.js'
 export { HealthResource } from './resources/health.js'
 export type { PaymentMethodsQuery } from './resources/payment_methods.js'
 export { PaymentMethodsResource } from './resources/payment_methods.js'
-export type { ListDisputesParams, ListPaymentsParams, ListTransactionsParams } from './resources/payments.js'
+export type {
+  ListDisputesParams,
+  ListPaymentsParams,
+  ListTransactionsParams,
+} from './resources/payments.js'
 // ── Resources ────────────────────────────────────────────────────────
 export { PaymentsResource } from './resources/payments.js'
 export { TokensResource } from './resources/tokens.js'
 // ── Types ────────────────────────────────────────────────────────────
 export type {
-  AddWalletTokenRequest,
   // Primitives
   Address,
+  AddWalletTokenRequest,
   // Analytics
   AnalyticsBucket,
   AnalyticsRow,
@@ -75,6 +79,7 @@ export type {
   PrepareRequest,
   Session,
   SigningPayload,
+  StoredTransactionOperation,
   SubmitTransactionRequest,
   Token,
   Transaction,

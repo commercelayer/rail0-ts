@@ -12,6 +12,7 @@ import type {
   PaymentMode,
   PaymentStatus,
   PrepareRequest,
+  StoredTransactionOperation,
   SubmitByHashRequest,
   SubmitTransactionRequest,
   Transaction,
@@ -48,14 +49,13 @@ export interface ListPaymentsParams {
 
 export interface ListTransactionsParams {
   /**
-   * Filter by operation. Left as `string` on purpose: the gateway accepts all
-   * EIGHT stored operations here (TRANSACTION_OPERATIONS — the six fund ops plus
-   * `dispute` and `close_dispute`), so TransactionOperation, which carries only
-   * the six that have prepare/submit endpoints, would wrongly reject
-   * `?operation=dispute` — the very filter rail0-cli#47 was fixed to allow.
-   * Narrow once the gateway spec splits the two (commercelayer/rail0-gateway#177).
+   * Filter by operation. Typed as the RECORD vocabulary, not the endpoint one: the
+   * gateway accepts all eight stored operations here, so `?operation=dispute` —
+   * the very filter rail0-cli#47 was fixed to allow — must type-check. It was
+   * `string` while the spec's record enum was missing those two values
+   * (commercelayer/rail0-gateway#177, fixed).
    */
-  operation?: string
+  operation?: StoredTransactionOperation
   status?: TransactionStatus
   sort?: string
   page?: number
