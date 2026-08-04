@@ -388,6 +388,27 @@ describe('resource alignment', () => {
 
   // ── Auth login chainId ───────────────────────────────────────────────────
 
+  describe('auth.logout', () => {
+    it('POSTs to /auth/logout and returns the revocation outcome', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok({ revoked: true }))
+
+      const res = await client.auth.logout()
+
+      expect(res.revoked).toBe(true)
+      expect(String(spy.mock.calls[0]?.[0])).toContain('/auth/logout')
+      expect((spy.mock.calls[0]?.[1] as RequestInit).method).toBe('POST')
+    })
+
+    // The gateway's denylist fails open, so `false` is a real answer and not an
+    // error: the token is still usable until its exp. A caller that treats logout
+    // as fire-and-forget would never learn that.
+    it('reports revoked: false without throwing', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok({ revoked: false }))
+
+      await expect(client.auth.logout()).resolves.toEqual({ revoked: false })
+    })
+  })
+
   describe('auth.login chainId', () => {
     it('embeds chainId 1 by default and a custom chainId when given', async () => {
       const nonce = () => ok({ nonce: 'testNonce123', expires_at: '2099-01-01T00:00:00Z' })
