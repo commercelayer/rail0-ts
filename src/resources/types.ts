@@ -273,6 +273,12 @@ export interface Wallet {
   updated_at?: string
 }
 export interface WalletTokenHolding {
+  /**
+   * The token's UUID — the handle for wallets.enableToken/disableToken
+   * (PATCH/DELETE …/tokens/:token_id). Without it a client that lists holdings
+   * can enable one (addToken upserts by chain+address) but cannot disable it.
+   */
+  token_id?: string
   token?: Token
   active?: boolean
   default?: boolean
