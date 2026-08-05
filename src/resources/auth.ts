@@ -161,6 +161,21 @@ export class AuthResource {
       .then((r) => ({ nonce: r.nonce, expiresAt: r.expires_at }))
   }
 
+  /**
+   * POST /auth/logout — end the session whose token this client carries.
+   *
+   * Per TOKEN, not per address: signing out one device leaves the others signed in.
+   * Requires the session it revokes, so the client must be holding one.
+   *
+   * `revoked` is the outcome, not a formality. The gateway's denylist fails open by
+   * design — a store outage must not sign out the whole platform — so `false` means
+   * the token is STILL USABLE until its `exp` and the caller should treat its own
+   * copy as compromised rather than assume the session is gone.
+   */
+  logout(): Promise<{ revoked: boolean }> {
+    return this.http.post<{ revoked: boolean }>('/auth/logout', {})
+  }
+
   /** POST /auth — submit a signed SIWE message and receive a JWT. */
   verify(message: string, signature: string): Promise<AuthResponse> {
     return this.http
