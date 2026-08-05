@@ -384,8 +384,14 @@ export interface Health {
 }
 
 // ── Analytics (merchant sales rollups) ───────────────────────────────
-/** Gross/captured/refunded volume for one (token, chain). Amounts are token
- *  base-unit integer strings (sums within a single token); format with `decimals`. */
+/** Volume for one (token, chain). Amounts are token base-unit integer strings
+ *  (sums within a single token); format with `decimals`.
+ *
+ *  BREAKING (was `captured`/`refunded`): those were summed from the full payment
+ *  `amount` filtered by status, which is wrong for every partial operation — the
+ *  gateway's state machine does not move status on one, so a capture of 30/100 read
+ *  as 100 captured and a refund of 40 as 0 refunded. `settled` and `escrowed` come
+ *  from the mirrored on-chain residuals and are exact. */
 export interface AnalyticsVolume {
   chain_id: number | null
   chain_name: string | null
@@ -393,8 +399,15 @@ export interface AnalyticsVolume {
   symbol: string | null
   decimals: number | null
   orders: number
+  /** Value authorized or charged. */
   gross: Uint256String
+  /** Value the payee holds, net of refunds (the payment's `refundable_amount`). */
+  settled: Uint256String
+  /** Value still in escrow — not yet captured nor returned (`capturable_amount`). */
+  escrowed: Uint256String
+  /** Gross captured, from the confirmed capture transactions. */
   captured: Uint256String
+  /** Gross refunded, from the confirmed refund transactions. */
   refunded: Uint256String
 }
 /** Headline sales KPIs. `by_status` is a status→count map (only present statuses);

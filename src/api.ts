@@ -2637,7 +2637,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) gross/captured/refunded volume (base units). */
+            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). */
             200: {
                 headers: {
                     [name: string]: unknown;
