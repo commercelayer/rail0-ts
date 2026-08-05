@@ -208,7 +208,7 @@ Account-level dispute list — every dispute (open **and** closed) across the ca
 
 Merchant sales analytics over the account's **own** payments as payee. Account-only: every method needs a JWT with a non-null account — `401` without a token, `403` for an account-less (buyer) session. All three take the same optional `AnalyticsFilters`: `{ mode?, status?, token?, chain_id?, from?, to? }` (`from`/`to` are ISO-8601; `token` + `chain_id` together scope monetary volume to a single token, so sums never mix decimals).
 
-- `summary(filters?)` → `AnalyticsSummary` — `{ orders, disputed, refund_rate, dispute_rate, by_status, volume }`, where `volume` is one `AnalyticsVolume` per `(token, chain)` with base-unit `gross`/`captured`/`refunded` strings.
+- `summary(filters?)` → `AnalyticsSummary` — `{ orders, disputed, refund_rate, dispute_rate, by_status, volume }`, where `volume` is one `AnalyticsVolume` per `(token, chain)` with base-unit `gross` (authorized), `settled` (net of refunds) and `escrowed` (still held) strings.
 - `timeseries(filters?, { interval? })` → `AnalyticsBucket[]` — order count per bucket (oldest first); `interval` is `'day'` (default) | `'week'` | `'month'`. `volume` is a base-unit string only when both `token` and `chain_id` are filtered, else `null`.
 - `breakdown(filters, { by })` → `AnalyticsRow[]` — aggregate by `by`: `'token'` | `'chain'` | `'mode'` | `'status'`. `token`/`chain` rows carry `volume`; `mode`/`status` rows are counts only.
 
