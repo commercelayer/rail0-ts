@@ -391,9 +391,7 @@ export interface Health {
  *  `amount` filtered by status, which is wrong for every partial operation — the
  *  gateway's state machine does not move status on one, so a capture of 30/100 read
  *  as 100 captured and a refund of 40 as 0 refunded. `settled` and `escrowed` come
- *  from the mirrored on-chain residuals and are exact. The gross per-operation
- *  totals are not recoverable from those residuals (refundable = captured −
- *  refunded is one equation in two unknowns), so they are simply not reported. */
+ *  from the mirrored on-chain residuals and are exact. */
 export interface AnalyticsVolume {
   chain_id: number | null
   chain_name: string | null
@@ -407,6 +405,10 @@ export interface AnalyticsVolume {
   settled: Uint256String
   /** Value still in escrow — not yet captured nor returned (`capturable_amount`). */
   escrowed: Uint256String
+  /** Gross captured, from the confirmed capture transactions. */
+  captured: Uint256String
+  /** Gross refunded, from the confirmed refund transactions. */
+  refunded: Uint256String
 }
 /** Headline sales KPIs. `by_status` is a status→count map (only present statuses);
  *  `volume` is per (token, chain), only ever summed within a single token. */
