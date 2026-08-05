@@ -90,6 +90,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End the current session
+         * @description Revokes the token presented in the Authorization header, so it stops authenticating before its `exp`. PER TOKEN, not per address: signing out one device leaves the others signed in — revoking every session of an address is a different operation and is not this one. Requires the session it revokes, which is what keeps it from being a way to sign someone else out.
+         *
+         *     Best-effort by construction. The revocation list fails OPEN: if its store cannot be reached, a token cannot be known to be revoked and the request proceeds — one store outage must not sign out the whole platform. `revoked` in the response therefore reports whether the revocation was durably written; `false` means the token remains usable until `exp`, and the caller should treat its own copy as compromised.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Session ended (see `revoked`). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description true when the revocation was durably recorded. false when it was not — the token is still valid until `exp`. */
+                            revoked: boolean;
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/blockchains": {
         parameters: {
             query?: never;
@@ -484,7 +529,7 @@ export interface paths {
         put?: never;
         /**
          * Record an externally-broadcast operation transaction (MetaMask)
-         * @description For wallets that sign and broadcast in one step (MetaMask `eth_sendTransaction`) and so cannot hand the gateway a raw `signed_transaction`. The caller broadcasts the prepared transaction themselves and reports its hash here; the gateway attaches the hash to the operation's open transaction and moves it straight to `submitted`, WITHOUT the broadcaster — the indexer then confirms it by hash exactly as for a gateway-broadcast tx. JWT-gated (bearerAuth) since a bare hash carries no signature to authorize it: payee-only for the merchant operations (authorize/capture/charge/void/refund); `release` is payer-or-payee on-chain so it accepts EITHER participant (a MetaMask buyer can report a payer-side release). The payer operations dispute/close_dispute have their own payer-only /submitted endpoints. Re-callable while the tx is still unconfirmed to OVERWRITE a stuck or wrong hash; a confirmed/failed operation is terminal and returns 422.
+         * @description For wallets that sign and broadcast in one step (MetaMask `eth_sendTransaction`) and so cannot hand the gateway a raw `signed_transaction`. The caller broadcasts the prepared transaction themselves and reports its hash here; the gateway VERIFIES on-chain that the transaction targets this payment's RAIL0 deployment and carries this payment's id in its calldata (422 `foreign_transaction_hash` otherwise — a hash no node has seen yet is accepted, since propagation is not instant), then attaches it to the operation's open transaction and moves it straight to `submitted`, WITHOUT the broadcaster — the indexer then confirms it by hash exactly as for a gateway-broadcast tx. JWT-gated (bearerAuth) since a bare hash carries no signature to authorize it: payee-only for the merchant operations (authorize/capture/charge/void/refund); `release` is payer-or-payee on-chain so it accepts EITHER participant (a MetaMask buyer can report a payer-side release). The payer operations dispute/close_dispute have their own payer-only /submitted endpoints. Re-callable while the tx is still unconfirmed to OVERWRITE a stuck or wrong hash; a confirmed/failed operation is terminal and returns 422.
          */
         post: operations["submitPaymentOperationByHash"];
         delete?: never;
@@ -841,6 +886,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/webhooks/{id}/event_callbacks/{callback_id}/redeliver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The event_callback row whose recorded payload to re-send. */
+                callback_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-deliver a recorded event callback's exact payload
+         * @description Re-sends the stored delivery payload verbatim (same embedded event `id`, so a consumer that already processed it deduplicates) under a fresh timestamped signature, through the standard async delivery job. A disabled or circuit-open webhook drops the replay like any delivery - reset the circuit first.
+         */
+        post: operations["redeliverEventCallback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sync/transactions": {
         parameters: {
             query?: never;
@@ -1052,6 +1121,11 @@ export interface components {
         };
         /** @description A wallet's token holding as nested under its wallet (GET /accounts/:id/wallets): the token plus this wallet's per-token flags, without re-nesting the wallet. */
         WalletTokenHolding: {
+            /**
+             * Format: uuid
+             * @description The token's UUID — the handle for PATCH/DELETE /accounts/{account_id}/wallets/{id}/tokens/{token_id}.
+             */
+            token_id?: string;
             token?: components["schemas"]["Token"];
             active?: boolean;
             default?: boolean;
@@ -1417,7 +1491,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description EIP-4361 SIWE message text. */
+                    /** @description EIP-4361 SIWE message text. Purpose-bound: its `statement` must be exactly "Sign in to RAIL0" — a proof signed for wallet registration (or with no statement) is refused with 422 `siwe_purpose_mismatch`, so a signature obtained for one flow can never be spent at the other. */
                     message: string;
                     /** @description Wallet signature over the SIWE message (0x…). */
                     signature: string;
@@ -1553,7 +1627,7 @@ export interface operations {
                 "application/json": {
                     /** @description EVM wallet address to add (0x, 40 hex). Must be the address that signed the SIWE message. */
                     address: string;
-                    /** @description EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). */
+                    /** @description EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). Purpose-bound: its `statement` must be exactly "Add this wallet to your RAIL0 account" — a login-shaped proof is refused with 422 `siwe_purpose_mismatch`, so a login signature can never be replayed here to bind someone else's wallet to the caller's account. */
                     message: string;
                     /** @description Signature over the SIWE message (0x…), proving control of the address's private key. */
                     signature: string;
@@ -2563,7 +2637,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) gross/captured/refunded volume (base units). */
+            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2926,6 +3000,36 @@ export interface operations {
                     "application/json": components["schemas"]["EventCallback"][];
                 };
             };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    redeliverEventCallback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The event_callback row whose recorded payload to re-send. */
+                callback_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Replay queued. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example queued */
+                        status?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
