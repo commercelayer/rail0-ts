@@ -240,6 +240,12 @@ export interface UpdateWebhookRequest {
 export interface Payment {
   id?: string
   contract_id?: string
+  /**
+   * EVM chain id of the payment's deployment. On list rows too, not only on
+   * \`PaymentDetail\`: \`amount\` is in base units and the token's \`decimals\` resolve from
+   * \`token\` together with its chain, so a lister without it cannot render an amount.
+   */
+  chain_id: number
   rail0_id: Bytes32
   status: PaymentStatus
   mode: PaymentMode
@@ -261,9 +267,8 @@ export interface Payment {
   created_at: string
   updated_at?: string
 }
-/** Single-payment view: adds chain context, embedded transactions, and (when unsigned) the signing payload. */
+/** Single-payment view: adds the deployment address, embedded transactions, and (when unsigned) the signing payload. \`chain_id\` comes from \`Payment\`. */
 export interface PaymentDetail extends Payment {
-  chain_id: number
   rail0_contract?: Address
   transactions?: Transaction[]
   signing_payload?: SigningPayload | null

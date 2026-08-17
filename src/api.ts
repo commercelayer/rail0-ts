@@ -2088,7 +2088,7 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentDetail"];
                 };
             };
-            /** @description Validation error. `code` is one of `no_active_contract`, `unknown_token`, `unsupported_payment_method` (the payee does not offer that token/chain), `invalid_amount`. */
+            /** @description Validation error. `code` is one of `no_active_contract`, `unknown_token`, `unsupported_payment_method` (the payee does not offer that token/chain), `invalid_amount`, `idempotency_key_reused` (the `Idempotency-Key` was already used by this payer for a payment with DIFFERENT terms — retry the original request with that key, or use a new key for the new terms; the response carries the existing `payment_id`). */
             422: {
                 headers: {
                     [name: string]: unknown;
