@@ -700,8 +700,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Merchant sales KPIs (counts + per-token/chain volume)
-         * @description Account-only (require_account!): headline sales analytics over the merchant account's own payments as payee. 403 for an account-less (buyer) session. Counts are token-agnostic; monetary volume is grouped per (token, chain) and only summed within one token.
+         * Merchant sales KPIs (counts, per-token/chain volume, per-chain gas)
+         * @description Account-only (require_account!): headline sales analytics over the merchant account's own payments as payee. 403 for an account-less (buyer) session. Counts are token-agnostic; monetary volume is grouped per (token, chain) and only summed within one token; gas is grouped per chain and denominated in that chain's native token, so it is never summed across chains either.
          */
         get: operations["analyticsSummary"];
         put?: never;
@@ -1139,12 +1139,14 @@ export interface components {
             active?: boolean;
             tokens?: components["schemas"]["WalletTokenHolding"][];
         };
-        /** @description Base persisted payment fields. */
+        /** @description Base persisted payment fields, plus the `chain_id` of the payment's deployment. */
         Payment: {
             /** Format: uuid */
             id?: string;
             /** Format: uuid */
             contract_id?: string;
+            /** @description EVM chain id of the payment's deployment. Present on the list view too: `amount` is in base units, and the token's `decimals` can only be resolved from `token` together with its chain. */
+            chain_id?: number;
             /** @description Protocol-level identifier (66-char hex). */
             rail0_id?: string;
             /** @enum {string} */
@@ -1206,7 +1208,6 @@ export interface components {
             payment?: components["schemas"]["Payment"];
         };
         PaymentDetail: components["schemas"]["Payment"] & {
-            chain_id?: number;
             /** @description Deployed rail0 contract address. */
             rail0_contract?: string;
             transactions?: components["schemas"]["Transaction"][];
@@ -1322,7 +1323,13 @@ export interface components {
         SyncBlockchain: {
             chain_id?: number;
             start_block?: number;
+            /** @description Fallback burial depth, used where the chain serves no finality tag. */
             required_confirmations?: number;
+            /**
+             * @description Which block the chain calls settled; the indexer gates every notify on it.
+             * @enum {string}
+             */
+            finality_tag?: "safe" | "finalized" | "depth";
             /** @description Block explorer base URL; null when the chain has none. */
             explorer_url?: string | null;
             /** @description "testnet" or "mainnet"; selects which chains a deployment indexes. */
@@ -2637,7 +2644,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). */
+            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). Plus `gas` per chain — `spent` on confirmed transactions and `wasted` by on-chain reverts, as wei-scale base-unit strings in the chain's native token (decimals 18) — with `confirmed`/`failed` resolved transaction counts, and `failed_rate` derived from them (per resolved transaction, not per order). Gas covers only the operations the merchant broadcasts; dispute/close_dispute are the buyer's cost and release has no stored sender, so both are excluded. */
             200: {
                 headers: {
                     [name: string]: unknown;
