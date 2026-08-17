@@ -109,6 +109,11 @@ token's decimals. Amounts you **read** back (`amount`, `capturable_amount`,
 `refundable_amount`, analytics volumes, the `min_amount`/`max_amount` list
 filters) are base-unit integer strings (`'50000000'`).
 
+Rendering one needs the token's `decimals`, and those resolve from `token`
+**together with** `chain_id` — a token address identifies a token only within one
+chain. Both fields are on every `Payment`, list rows included, so displaying an
+amount from `list()` never needs a per-row `get(id)`.
+
 Convert between a human decimal and the token's base-unit integer string, with
 string/BigInt math (no float rounding):
 

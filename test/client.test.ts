@@ -125,6 +125,26 @@ describe('Rail0Client', () => {
       expect(result.meta.page).toBe(1)
     })
 
+    // chain_id is on list rows, not only on the single-payment view: `amount` is in base
+    // units and the token's decimals resolve from token + chain, so a lister that cannot
+    // read the chain cannot render the amount. (gateway #193)
+    it('exposes chain_id on list rows', async () => {
+      // A bare array body + pagination headers, as the gateway sends it (getPaginated).
+      const rows = [
+        { id: 'pay_1', token: '0x3333333333333333333333333333333333333333', chain_id: 8453 },
+      ]
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify(rows), {
+          status: 200,
+          headers: { 'x-total-count': '1', 'x-page': '1', 'x-per-page': '20' },
+        }),
+      )
+
+      const result = await client.payments.list()
+
+      expect(result.data[0]?.chain_id).toBe(8453)
+    })
+
     it('serializes every filter param into the query string', async () => {
       const mockList = { data: [], meta: { page: 2, per_page: 25, total: 0 } }
       const spy = vi
