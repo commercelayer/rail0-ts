@@ -113,6 +113,20 @@ const errorHints: Record<string, string> = {
   already_captured: 'already (partially) captured — use release for the remainder, not void',
   token_not_accepted: "the token isn't in this deployment's allowlist",
   payment_already_exists: 'a payment with this id already exists on-chain',
+  // create-time rejections. Wording kept identical to rail0-go, which is the reference
+  // table: this one had drifted six codes behind it — the same drift rail0-ruby fixed
+  // in its #13, and it matters most here, because rail0-admin renders these strings to
+  // a merchant through describeError. A code missing from this map is not a missing
+  // hint, it is a developer-facing gateway `detail` shown to someone who did not send
+  // the request.
+  unsupported_payment_method:
+    "the payee (merchant) doesn't accept this token/chain — check the merchant's payment methods",
+  unknown_token: "the token isn't configured on this chain",
+  no_active_contract: 'no active RAIL0 contract on that chain',
+  missing_param: 'a required parameter is missing from the request',
+  forbidden: 'not permitted for this session — on create the payer must be the signed-in address',
+  idempotency_key_reused:
+    'that Idempotency-Key was already used for a payment with different terms — reuse it only to retry the same request, or pick a new key',
 }
 
 /**
