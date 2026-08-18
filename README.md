@@ -203,6 +203,44 @@ for (const w of methods) for (const h of w.tokens ?? []) {
 
 `list(params?)` · `create({ name, callback_url, topic })` → `WebhookWithSecret` (secret shown once) · `get(id)` · `update(id, params)` · `enable(id)` · `disable(id)` · `rotateSecret(id)` → `WebhookWithSecret` · `resetCircuit(id)` · `eventCallbacks(id, params?)` → `PaginatedResponse<EventCallback>` · `delete(id)`.
 
+#### Verifying a delivery
+
+Every delivery carries `X-Rail0-Topic`, `X-Rail0-Timestamp` (unix seconds) and
+`X-Rail0-Signature` — a hex HMAC-SHA256 over `"{timestamp}.{body}"`, keyed with the
+`shared_secret` shown once at create/rotate. `verifyWebhookSignature` checks the digest
+in constant time **and** the timestamp against a ±300s window; the timestamp is inside
+the signed string precisely so that a captured delivery cannot be replayed forever, so
+checking the digest alone is not verification.
+
+```ts
+import { verifyWebhookSignature, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER } from '@rail0/sdk'
+
+export async function POST(request: Request) {
+  // The RAW body. Verify before JSON.parse — re-serialising a parsed object changes
+  // key order and whitespace, and the digest with it.
+  const body = await request.text()
+  const ok = verifyWebhookSignature({
+    body,
+    signature: request.headers.get(WEBHOOK_SIGNATURE_HEADER),
+    timestamp: request.headers.get(WEBHOOK_TIMESTAMP_HEADER),
+    secret: process.env.RAIL0_WEBHOOK_SECRET!,
+  })
+  if (!ok) return new Response('invalid signature', { status: 401 })
+
+  const event = JSON.parse(body)
+  // …handle event.topic
+  return new Response(null, { status: 204 })
+}
+```
+
+It returns a boolean and never throws — a spoofed request is an expected condition on a
+public endpoint, and every failure (missing header, blank secret, unparseable timestamp,
+stale clock, bad digest) deserves the same 401. `expectedWebhookSignature(body,
+timestamp, secret)` is exposed for when you need to diff the two sides to debug a
+rejection, and `tolerance` / `nowSeconds` are injectable. No `node:crypto`: the digest
+comes from `@noble/hashes`, already a dependency, so the helper works wherever the rest
+of the SDK does (a test pins byte-equality with node's implementation).
+
 ### `client.disputes` (JWT)
 
 Account-level dispute list — every dispute (open **and** closed) across the caller's payments, each with its parent `payment` embedded. Complements `payments.disputes(id)` (one payment's history); unlike the `disputed` filter on `payments.list` (current-state), it still surfaces closed disputes.
@@ -327,6 +365,7 @@ src/
     health.ts     HealthResource
     auth.ts       AuthResource (SIWE)
   signing.ts      EIP-3009 / EIP-1559 signing helpers
+  webhook-signature.ts  webhook delivery verification (HMAC + freshness)
   client.ts       Rail0Client — assembles the resources
   index.ts        public re-exports
 ```

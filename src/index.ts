@@ -121,3 +121,14 @@ export {
 export type { StablecoinChain, StablecoinInfo, StablecoinSymbol } from './stablecoins.js'
 // ── Stablecoin registry ──────────────────────────────────────────────
 export { chainInfo, eip2612Tokens, eip3009Tokens, stablecoins } from './stablecoins.js'
+
+// ── Webhook delivery verification ────────────────────────────────────
+export type { VerifyWebhookOptions } from './webhook-signature.js'
+export {
+  expectedWebhookSignature,
+  verifyWebhookSignature,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_TIMESTAMP_HEADER,
+  WEBHOOK_TOLERANCE_SECONDS,
+  WEBHOOK_TOPIC_HEADER,
+} from './webhook-signature.js'

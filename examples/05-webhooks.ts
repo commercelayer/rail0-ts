@@ -2,12 +2,18 @@
  * Webhooks — subscribe to payment lifecycle events.
  *
  * The gateway POSTs to your callback URL when a payment transitions (authorized,
- * captured, refunded, …), signed with an HMAC-SHA256 over the raw body using the
- * shared secret returned at creation (X-Rail0-Signature header). One topic per
- * webhook — create several to cover multiple events. All calls require a JWT.
+ * captured, refunded, …), signed with an HMAC-SHA256 over `"{timestamp}.{body}"` using
+ * the shared secret returned at creation — carried in X-Rail0-Signature alongside
+ * X-Rail0-Timestamp. One topic per webhook — create several to cover multiple events.
+ * All calls require a JWT.
+ *
+ * (This comment used to say the digest covered the raw body alone. It has not since
+ * rail0-gateway#174 put the timestamp inside the signed string, which is what bounds a
+ * replay — and a consumer who implemented the old description would reject every live
+ * delivery.)
  */
 
-import { Rail0ApiError, Rail0Client } from '../src/index.js'
+import { Rail0ApiError, Rail0Client, verifyWebhookSignature } from '../src/index.js'
 
 // Authenticate first (or pass a token you already hold via `headers`).
 const client = new Rail0Client({
@@ -31,6 +37,18 @@ try {
   // Inspect recent delivery attempts.
   const callbacks = await client.webhooks.eventCallbacks(created.id as string, { status: 'failed' })
   console.log('Failed deliveries:', callbacks.meta.total)
+
+  // Verifying a delivery in your own handler. The body must be the RAW bytes as
+  // received: re-serialising a parsed object changes key order and whitespace, and the
+  // digest with it. The timestamp is checked too — a matching digest on a three-day-old
+  // delivery is a replay, not an event.
+  const authentic = verifyWebhookSignature({
+    body: '{"id":"evt_1","topic":"payments.captured"}', // await request.text()
+    signature: '<X-Rail0-Signature>',
+    timestamp: '<X-Rail0-Timestamp>',
+    secret: created.shared_secret as string,
+  })
+  console.log('Delivery authentic:', authentic) // false here — the values are placeholders
 
   // Rotate the secret, or clean up.
   // await client.webhooks.rotateSecret(created.id as string)
