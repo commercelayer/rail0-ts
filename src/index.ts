@@ -1,6 +1,9 @@
 export { formatAmount, toBaseUnits } from './amounts.js'
 export type { Rail0ClientOptions } from './client.js'
 export { Rail0Client } from './client.js'
+// ── Rate-limit backoff ───────────────────────────────────────────────────
+export type { ThrottleDelayArgs } from './core/backoff.js'
+export { throttleDelayMs } from './core/backoff.js'
 // ── Errors & logging ─────────────────────────────────────────────────
 export { describeError, Rail0ApiError } from './core/error.js'
 export type { LogEntry, Logger } from './core/http.js'

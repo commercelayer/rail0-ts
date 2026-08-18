@@ -137,9 +137,48 @@ const client = new Rail0Client({
   timeout:    30_000,                          // ms, default 30 000
   maxRetries: 3,                               // default 0 (network errors only)
   retryDelay: 200,                             // ms base, doubles each attempt
+  retryOn429: false,                           // retry a rate limit (default false)
+  retryAfterCapMs: 60_000,                     // longest Retry-After to honour
+  signal:     controller.signal,               // optional — cancels the request and any wait
   logger:     debugLogger,                     // optional — see Logging
 })
 ```
+
+#### Rate limits
+
+The gateway throttles the public surface **per IP** (100 requests / 60s by default) and
+everything authenticated **per session**, keyed on the JWT subject (300 / 60s). Over
+budget it answers **429** with `code: "rate_limited"`, a `Retry-After`, and (since
+rail0-gateway#201) `RateLimit-Limit`/`-Remaining`/`-Reset` on *every* response so you can
+pace instead of discovering the wall.
+
+`Rail0ApiError.retryAfter` carries the header in seconds. Read it when you handle the
+error yourself:
+
+```typescript
+try {
+  await client.payments.list()
+} catch (err) {
+  if (err instanceof Rail0ApiError && err.status === 429) {
+    await new Promise((r) => setTimeout(r, (err.retryAfter ?? 5) * 1000))
+  }
+}
+```
+
+`retryOn429: true` makes the client do that waiting — `Retry-After`, clamped to
+`retryAfterCapMs`, plus a little jitter (callers sharing one session are told the same
+number and would otherwise wake in lockstep). It is **off by default** on purpose: an
+automatic sleep hides back-pressure from the code that could react to it, and in a browser
+it turns a rate limit into a frozen click. It also works on its own — you do not need
+`maxRetries` as well, which would have made the flag a silent no-op.
+
+A **429 is the only HTTP status this client retries**, on any method including `POST`,
+because the gateway rejects it in middleware *before* the request reaches the application:
+nothing ran, so nothing can run twice. That is not true of a 502 or a timeout on a
+capture, where the broadcast may already be in flight — those are never retried.
+
+`signal` cancels the request **and any retry that is waiting**, which matters precisely
+because `retryOn429` can hold a promise for up to a minute.
 
 Resources: `client.payments`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.disputes`, `client.analytics`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
 
