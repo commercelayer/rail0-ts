@@ -50,9 +50,12 @@ describe('throttleDelayMs', () => {
     }
   })
 
-  it('backs off exponentially, jittered and capped, when there is no instruction', () => {
+  it('backs off exponentially, capped, keeping a floor of half the delay', () => {
+    // EQUAL jitter, not full: a wait that can land near zero is indistinguishable from the
+    // bug where a "0" Retry-After is honoured as a duration and the retry fires at once.
     expect(throttleDelayMs({ attempt: 3, baseMs: 200, capMs: 60_000, jitter: 1 })).toBe(800)
-    expect(throttleDelayMs({ attempt: 3, baseMs: 200, capMs: 60_000, jitter: 0.5 })).toBe(400)
+    expect(throttleDelayMs({ attempt: 3, baseMs: 200, capMs: 60_000, jitter: 0 })).toBe(400)
+    expect(throttleDelayMs({ attempt: 3, baseMs: 200, capMs: 60_000, jitter: 0.5 })).toBe(600)
     expect(throttleDelayMs({ attempt: 20, baseMs: 200, capMs: 60_000, jitter: 1 })).toBe(60_000)
   })
 

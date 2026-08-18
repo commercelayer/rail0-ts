@@ -5,12 +5,16 @@
  * backwards and impossible to notice once they are wrong — a client that waits too little
  * walks straight back into the limiter, and one that waits too long looks hung.
  *
- * 1. JITTER IS ADDITIVE ON A SERVER-INSTRUCTED WAIT, MULTIPLICATIVE ON A GUESS.
- *    Textbook "full jitter" multiplies the delay by random(), which is right for a backoff
- *    we invented — it spreads a thundering herd — and wrong for a Retry-After: scaling the
- *    server's own number DOWN means retrying before the window it named has passed, which
- *    is a second 429 by construction. So an instructed wait is honoured in full and a small
- *    random tail is ADDED; a guessed one is jittered the usual way.
+ * 1. JITTER NEVER SHORTENS THE WAIT BELOW WHAT IT IS FOR.
+ *    On a server-instructed wait it is ADDITIVE: scaling a Retry-After down means retrying
+ *    before the window the server named has passed, which is a second 429 by construction.
+ *    So the instruction is honoured in full and a small random tail is added.
+ *
+ *    On a guessed wait it is EQUAL jitter — half the delay fixed, half random — not the
+ *    textbook "full jitter" that multiplies the whole delay by random(). Full jitter can
+ *    land arbitrarily close to zero, which makes a real pause indistinguishable from the
+ *    bug where a Retry-After of "0" is honoured as a duration and the retry fires at once.
+ *    A floor spreads the herd just as well and leaves "did we actually wait" observable.
  *
  *    Why jitter at all when the server named the time: because callers align on it.
  *    rail0-admin proxies every merchant over ONE session, so they share the per-session
@@ -57,5 +61,7 @@ export function throttleDelayMs(args: ThrottleDelayArgs): number {
     // not wake in lockstep.
     return Math.min(instructed, capMs) + random * baseMs
   }
-  return Math.min(baseMs * 2 ** (attempt - 1) * random, capMs)
+  // Equal jitter: half the delay fixed, half random — see the note above.
+  const full = baseMs * 2 ** (attempt - 1)
+  return Math.min(full / 2 + (full / 2) * random, capMs)
 }

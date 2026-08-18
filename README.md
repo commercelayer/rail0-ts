@@ -167,7 +167,9 @@ try {
 
 `retryOn429: true` makes the client do that waiting — `Retry-After`, clamped to
 `retryAfterCapMs`, plus a little jitter (callers sharing one session are told the same
-number and would otherwise wake in lockstep). It is **off by default** on purpose: an
+number and would otherwise wake in lockstep). The jitter never shortens a wait below what
+it is for: additive on the server's own number, equal jitter — half fixed, half random —
+on a guessed one. It is **off by default** on purpose: an
 automatic sleep hides back-pressure from the code that could react to it, and in a browser
 it turns a rate limit into a frozen click. It also works on its own — you do not need
 `maxRetries` as well, which would have made the flag a silent no-op.
