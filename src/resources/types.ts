@@ -431,6 +431,11 @@ export interface AnalyticsGas {
   chain_name: string | null
   symbol: string | null
   decimals: number | null
+  /** Orders behind these figures — the denominator for the average cost of an order.
+   *  Counts every payment in scope, INCLUDING those that produced no transaction and
+   *  so cost nothing, since leaving them out would average only the expensive ones.
+   *  Null on `gas_by_operation`, where one order spans several operations. */
+  orders: number | null
   /** Gas that bought a settled operation. */
   spent: Uint256String
   /** Gas an on-chain revert burned. */
@@ -449,6 +454,7 @@ export interface AnalyticsGas {
 export interface AnalyticsGasSlice extends AnalyticsGas {
   key: PaymentStatus | TransactionOperation
 }
+
 /** Headline sales KPIs. `by_status` is a status→count map (only present statuses);
  *  `volume` is per (token, chain), only ever summed within a single token; gas is per
  *  chain, in that chain's native token, with the two slices adding back up to it. */

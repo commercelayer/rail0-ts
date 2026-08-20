@@ -317,10 +317,19 @@ describe('resource alignment', () => {
           failed_rate: 0.25,
           by_status: { charged: 2, refunded: 1 },
           volume: [{ chain_id: 84532, token: '0xtok', gross: '3000000' }],
-          gas: [{ chain_id: 84532, symbol: 'ETH', decimals: 18, spent: '72000', wasted: '10000' }],
+          gas: [
+            {
+              chain_id: 84532,
+              symbol: 'ETH',
+              decimals: 18,
+              orders: 3,
+              spent: '72000',
+              wasted: '10000',
+            },
+          ],
           gas_by_status: [
-            { chain_id: 84532, key: 'charged', spent: '62000', wasted: '0' },
-            { chain_id: 84532, key: 'refunded', spent: '10000', wasted: '10000' },
+            { chain_id: 84532, key: 'charged', orders: 2, spent: '62000', wasted: '0' },
+            { chain_id: 84532, key: 'refunded', orders: 1, spent: '10000', wasted: '10000' },
           ],
           gas_by_operation: [
             { chain_id: 84532, key: 'charge', spent: '52000', wasted: '0' },
@@ -348,6 +357,9 @@ describe('resource alignment', () => {
         expect(cut.reduce((n, r) => n + BigInt(r.spent), 0n)).toBe(BigInt(res.gas[0]?.spent ?? 0))
       }
       expect(res.gas_by_status.map((r) => r.key)).toEqual(['charged', 'refunded'])
+      // The order count is what makes these an average: 62000 wei over 2 charged orders.
+      expect(res.gas_by_status[0]?.orders).toBe(2)
+      expect(res.gas[0]?.orders).toBe(3)
       expect(res.gas_by_operation.map((r) => r.key)).toEqual(['charge', 'refund'])
 
       const url = String(spy.mock.calls[0]?.[0])
