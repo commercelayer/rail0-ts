@@ -415,8 +415,49 @@ export interface AnalyticsVolume {
   /** Gross refunded, from the confirmed refund transactions. */
   refunded: Uint256String
 }
+/** Gas the merchant's own transactions cost on ONE chain, in that chain's NATIVE
+ *  token — not the payment token. `spent`/`wasted` are wei-scale base-unit integer
+ *  strings and `decimals` is always 18, as it is for every EVM native token.
+ *
+ *  Per chain and NEVER summed across chains: Base ETH and Polygon POL are different
+ *  currencies, the same reason volume is only summed within one token. `wasted` is
+ *  gas an on-chain revert burned — money spent for nothing. `confirmed`/`failed` are
+ *  resolved transaction counts (`failed_rate` is derived from them).
+ *
+ *  Covers only the operations the merchant broadcasts: dispute/close_dispute are the
+ *  buyer's cost on-chain, and release has no stored sender, so both are excluded. */
+export interface AnalyticsGas {
+  chain_id: number | null
+  chain_name: string | null
+  symbol: string | null
+  decimals: number | null
+  /** Orders behind these figures — the denominator for the average cost of an order.
+   *  Counts every payment in scope, INCLUDING those that produced no transaction and
+   *  so cost nothing, since leaving them out would average only the expensive ones.
+   *  Null on `gas_by_operation`, where one order spans several operations. */
+  orders: number | null
+  /** Gas that bought a settled operation. */
+  spent: Uint256String
+  /** Gas an on-chain revert burned. */
+  wasted: Uint256String
+  confirmed: number
+  failed: number
+}
+/** One slice of a chain's gas: the same fields as `AnalyticsGas` plus the `key`
+ *  naming the slice. Both cuts are the same rows regrouped, so a chain's slices always
+ *  add back up to its `AnalyticsGas` row.
+ *
+ *  A `gas_by_status` key is a payment status and is a SNAPSHOT: status moves, so an
+ *  authorize's gas sits under `authorized` until the payment is captured and then
+ *  under `captured` — the same period's rows change over time. A `gas_by_operation`
+ *  key is an operation and never moves. Show the difference if you render both. */
+export interface AnalyticsGasSlice extends AnalyticsGas {
+  key: PaymentStatus | TransactionOperation
+}
+
 /** Headline sales KPIs. `by_status` is a status→count map (only present statuses);
- *  `volume` is per (token, chain), only ever summed within a single token. */
+ *  `volume` is per (token, chain), only ever summed within a single token; gas is per
+ *  chain, in that chain's native token, with the two slices adding back up to it. */
 export interface AnalyticsSummary {
   orders: number
   disputed: number
@@ -424,8 +465,18 @@ export interface AnalyticsSummary {
   refund_rate: number
   /** Fraction of orders disputed (0–1, 4 dp). */
   dispute_rate: number
+  /** Fraction of RESOLVED transactions that failed (0–1, 4 dp) — per TRANSACTION, not
+   *  per order: one order can carry several attempts, and a retried capture that
+   *  eventually confirms is what this surfaces. */
+  failed_rate: number
   by_status: Partial<Record<PaymentStatus, number>>
   volume: AnalyticsVolume[]
+  /** Gas per chain, in each chain's native token — never summed across chains. */
+  gas: AnalyticsGas[]
+  /** The same gas keyed by the payment's CURRENT status (a moving snapshot). */
+  gas_by_status: AnalyticsGasSlice[]
+  /** The same gas keyed by the operation that paid it — the stable cut. */
+  gas_by_operation: AnalyticsGasSlice[]
 }
 /** One point of the order-count time series (oldest first). `volume` is a
  *  base-unit string only when a single token+chain is filtered, else null. */

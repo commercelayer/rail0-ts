@@ -41,7 +41,7 @@ export type AnalyticsDimension = 'token' | 'chain' | 'mode' | 'status'
 export class AnalyticsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** Headline KPIs: order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume. */
+  /** Headline KPIs: order counts, by-status counts, refund/dispute/failed rates, per-(token, chain) volume, and per-chain gas (also sliced by status and by operation). */
   summary(filters?: AnalyticsFilters): Promise<AnalyticsSummary> {
     return this.http.get(`/analytics/summary${buildQuery(filters)}`)
   }
