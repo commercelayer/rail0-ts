@@ -1,0 +1,7 @@
+# Written by pnpm 11's migration, which leaves a placeholder to fill in by hand.
+#
+# esbuild's install script is what links the platform binary its optional dependency
+# ships; tsup and vitest both go through esbuild, so without it the build and the test
+# run have no compiler. It comes from the esbuild project itself — approved.
+allowBuilds:
+  esbuild: true

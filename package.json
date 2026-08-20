@@ -68,7 +68,7 @@
     "node": ">=22",
     "pnpm": ">=9"
   },
-  "packageManager": "pnpm@9.15.0",
+  "packageManager": "pnpm@11.22.0",
   "dependencies": {
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0"
