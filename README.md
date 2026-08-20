@@ -292,7 +292,9 @@ Account-level dispute list — every dispute (open **and** closed) across the ca
 
 Merchant sales analytics over the account's **own** payments as payee. Account-only: every method needs a JWT with a non-null account — `401` without a token, `403` for an account-less (buyer) session. All three take the same optional `AnalyticsFilters`: `{ mode?, status?, token?, chain_id?, from?, to? }` (`from`/`to` are ISO-8601; `token` + `chain_id` together scope monetary volume to a single token, so sums never mix decimals).
 
-- `summary(filters?)` → `AnalyticsSummary` — `{ orders, disputed, refund_rate, dispute_rate, by_status, volume }`, where `volume` is one `AnalyticsVolume` per `(token, chain)` with base-unit `gross` (authorized), `settled` (net of refunds), `escrowed` (still held), and gross `captured`/`refunded` strings from the confirmed transactions.
+- `summary(filters?)` → `AnalyticsSummary` — `{ orders, disputed, refund_rate, dispute_rate, failed_rate, by_status, volume, gas, gas_by_status, gas_by_operation }`, where `volume` is one `AnalyticsVolume` per `(token, chain)` with base-unit `gross` (authorized), `settled` (net of refunds), `escrowed` (still held), and gross `captured`/`refunded` strings from the confirmed transactions.
+  `gas` is one `AnalyticsGas` per **chain** — `spent` on confirmed transactions, `wasted` by on-chain reverts, in that chain's **native** token (wei-scale strings, `decimals` 18), so it is never summed across chains — plus `confirmed`/`failed` counts and the `failed_rate` derived from them (per resolved **transaction**, not per order). It covers only the operations the merchant broadcasts: `dispute`/`close_dispute` are the buyer's cost and `release` has no stored sender.
+  `gas_by_status` and `gas_by_operation` are those same rows regrouped as `AnalyticsGasSlice[]`, each carrying a `key`; every cut sums back to its chain's `gas` row. The status cut is a **snapshot** — a payment's status moves and its gas moves with it, so the same period changes over time — while the operation cut is stable.
 - `timeseries(filters?, { interval? })` → `AnalyticsBucket[]` — order count per bucket (oldest first); `interval` is `'day'` (default) | `'week'` | `'month'`. `volume` is a base-unit string only when both `token` and `chain_id` are filtered, else `null`.
 - `breakdown(filters, { by })` → `AnalyticsRow[]` — aggregate by `by`: `'token'` | `'chain'` | `'mode'` | `'status'`. `token`/`chain` rows carry `volume`; `mode`/`status` rows are counts only.
 
@@ -300,6 +302,8 @@ Merchant sales analytics over the account's **own** payments as payee. Account-o
 const { token } = await client.auth.login(privateKeyHex, 'api.rail0.xyz')
 client.setAuthToken(token)
 const kpis  = await client.analytics.summary({ mode: 'charge' })
+// Gas is per chain: format each row with its own symbol, never add them up.
+for (const g of kpis.gas) console.log(g.chain_name, formatAmount(g.spent, g.decimals ?? 18), g.symbol)
 const daily = await client.analytics.timeseries({}, { interval: 'day' })
 const byTok = await client.analytics.breakdown(undefined, { by: 'token' })
 ```

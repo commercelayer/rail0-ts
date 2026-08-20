@@ -314,8 +314,18 @@ describe('resource alignment', () => {
           disputed: 1,
           refund_rate: 0.3333,
           dispute_rate: 0.3333,
+          failed_rate: 0.25,
           by_status: { charged: 2, refunded: 1 },
           volume: [{ chain_id: 84532, token: '0xtok', gross: '3000000' }],
+          gas: [{ chain_id: 84532, symbol: 'ETH', decimals: 18, spent: '72000', wasted: '10000' }],
+          gas_by_status: [
+            { chain_id: 84532, key: 'charged', spent: '62000', wasted: '0' },
+            { chain_id: 84532, key: 'refunded', spent: '10000', wasted: '10000' },
+          ],
+          gas_by_operation: [
+            { chain_id: 84532, key: 'charge', spent: '52000', wasted: '0' },
+            { chain_id: 84532, key: 'refund', spent: '20000', wasted: '10000' },
+          ],
         }),
       )
       const res = await client.analytics.summary({
@@ -329,6 +339,16 @@ describe('resource alignment', () => {
       expect(res.orders).toBe(3)
       expect(res.by_status.charged).toBe(2)
       expect(res.volume[0]?.gross).toBe('3000000')
+      expect(res.failed_rate).toBe(0.25)
+      // Gas is the chain's NATIVE token, and the two cuts are the same rows regrouped:
+      // each must add back up to the per-chain row.
+      expect(res.gas[0]?.symbol).toBe('ETH')
+      expect(res.gas[0]?.spent).toBe('72000')
+      for (const cut of [res.gas_by_status, res.gas_by_operation]) {
+        expect(cut.reduce((n, r) => n + BigInt(r.spent), 0n)).toBe(BigInt(res.gas[0]?.spent ?? 0))
+      }
+      expect(res.gas_by_status.map((r) => r.key)).toEqual(['charged', 'refunded'])
+      expect(res.gas_by_operation.map((r) => r.key)).toEqual(['charge', 'refund'])
 
       const url = String(spy.mock.calls[0]?.[0])
       expect(url).toContain('/analytics/summary?')
