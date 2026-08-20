@@ -286,6 +286,12 @@ export interface Transaction {
   status: TransactionStatus
   unsigned_transaction?: string | null
   transaction_hash?: string | null
+  /** The address that SIGNED the submitted transaction, recovered from the signature by the
+   *  gateway at submit — a fact, not a claim. Null where the gateway held no signature to
+   *  recover from (a report-by-hash submit, where the wallet broadcast it itself) or where
+   *  nothing has been submitted yet. It is what makes a \`release\` attributable: that
+   *  operation is payer-OR-payee, so whose gas it is depends on who signed. */
+  sender?: Address | null
   amount?: Uint256String | null
   block_number?: number | null
   /** Decoded on-chain failure (null unless status is "failed"): error_code is the RAIL0 custom error in snake_case (e.g. "not_payee"), or "revert" when the selector is unknown; error_message is its human-readable form (e.g. "NotPayee"). */
@@ -319,6 +325,15 @@ export interface Dispute {
   closed_at?: string | null
   /** Parent payment (public-safe view), embedded by the account-level GET /disputes list. */
   payment?: Payment
+}
+/** A merchant account, as its own holder reads it (GET /accounts/:id). Email is included
+ *  because that endpoint is behind an ownership guard — the holder is its only caller. */
+export interface Account {
+  id: string
+  name: string
+  email: string
+  created_at?: string
+  updated_at?: string
 }
 export interface Wallet {
   id?: string
@@ -804,6 +819,32 @@ export class PaymentsResource {
 }
 ${BUILD_QUERY}`
 
+const ACCOUNTS = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import type { Account } from './types.js'
+
+/**
+ * The merchant account itself (GET /accounts/:id).
+ *
+ * Behind SIWE and behind an ownership guard: the gateway requires a JWT whose account
+ * matches the path, so this only ever reads the caller's OWN account — there is no
+ * endpoint here for reading someone else's, by design. An id that is not an account
+ * answers 404, the same shape the ownership guard gives for another account's id, so the
+ * pair cannot be used to tell whether an account exists.
+ *
+ * The account's wallets live on WalletsResource (they are a collection under the same
+ * path), and buyer-facing discovery on PaymentMethodsResource.
+ */
+export class AccountsResource {
+  constructor(private readonly http: HttpClient) {}
+
+  /** The account's own profile: id, name, email, timestamps. */
+  get(account_id: string): Promise<Account> {
+    return this.http.get(\`/accounts/\${account_id}\`)
+  }
+}
+`
+
 const WALLETS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
 import type {
@@ -1201,6 +1242,7 @@ await generateApiTypes()
 await mkdir(RESOURCES_DIR, { recursive: true })
 await writeFile(resolve(RESOURCES_DIR, 'types.ts'), TYPES, 'utf-8')
 console.log(`Generated: ${resolve(RESOURCES_DIR, 'types.ts')}`)
+await writeResource('accounts.ts', ACCOUNTS)
 await writeResource('payments.ts', PAYMENTS)
 await writeResource('disputes.ts', DISPUTES)
 await writeResource('wallets.ts', WALLETS)

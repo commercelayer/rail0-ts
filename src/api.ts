@@ -169,6 +169,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read the account's own profile
+         * @description The account's own row: id, name, email and timestamps. Behind the accounts section's ownership guard — a JWT whose account matches the path — so a caller can only ever read its own profile. Another account's id and an id that is not an account answer alike, so this cannot be used to tell whether an account exists.
+         */
+        get: operations["getAccount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{account_id}/wallets": {
         parameters: {
             query?: never;
@@ -701,7 +723,7 @@ export interface paths {
         };
         /**
          * Merchant sales KPIs (counts, per-token/chain volume, per-chain gas)
-         * @description Account-only (require_account!): headline sales analytics over the merchant account's own payments as payee. 403 for an account-less (buyer) session. Counts are token-agnostic; monetary volume is grouped per (token, chain) and only summed within one token; gas is grouped per chain and denominated in that chain's native token, so it is never summed across chains either.
+         * @description Account-only (require_account!): headline sales analytics over the merchant account's own payments as payee. 403 for an account-less (buyer) session. Counts are token-agnostic; monetary volume is grouped per (token, chain) and only summed within one token; gas is grouped per chain and denominated in that chain's native token, so it is never summed across chains either, and is additionally sliced by payment status and by operation.
          */
         get: operations["analyticsSummary"];
         put?: never;
@@ -1576,6 +1598,31 @@ export interface operations {
                     "application/json": components["schemas"]["Token"][];
                 };
             };
+        };
+    };
+    getAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's profile: id, name, email, created_at, updated_at. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     listAccountWallets: {
@@ -2644,7 +2691,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). Plus `gas` per chain — `spent` on confirmed transactions and `wasted` by on-chain reverts, as wei-scale base-unit strings in the chain's native token (decimals 18) — with `confirmed`/`failed` resolved transaction counts, and `failed_rate` derived from them (per resolved transaction, not per order). Gas covers only the operations the merchant broadcasts; dispute/close_dispute are the buyer's cost and release has no stored sender, so both are excluded. */
+            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). Plus `gas` per chain — `spent` on confirmed transactions and `wasted` by on-chain reverts, as wei-scale base-unit strings in the chain's native token (decimals 18) — with `confirmed`/`failed` resolved transaction counts, and `failed_rate` derived from them (per resolved transaction, not per order). `gas_by_status` and `gas_by_operation` are those same rows regrouped, each carrying a `key` (the payment status / the operation) alongside the same fields; every cut sums back to its chain's `gas` row. The status cut is a SNAPSHOT — a payment's status moves and its gas moves with it, so the same period changes over time; the operation cut is stable. Each chain/status row carries `orders`, the count of payments behind it (including those that produced no transaction), so `(spent + wasted) / orders` is the average cost of an order in that state; it is null on the operation cut, where one order spans several operations and `spent / confirmed` is the meaningful average instead. Gas covers only the operations the merchant broadcasts; dispute/close_dispute are the buyer's cost and release has no stored sender, so both are excluded. */
             200: {
                 headers: {
                     [name: string]: unknown;

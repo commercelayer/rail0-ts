@@ -308,6 +308,23 @@ const daily = await client.analytics.timeseries({}, { interval: 'day' })
 const byTok = await client.analytics.breakdown(undefined, { by: 'token' })
 ```
 
+### `client.accounts` (merchant, JWT)
+
+`get(accountId)` → `Account` — the caller's OWN profile (`id`, `name`, `email`, timestamps).
+
+Behind SIWE and behind an ownership guard: the gateway requires a JWT whose account matches
+the path, so there is no way to read another merchant's account here. An id that is not an
+account answers `404`, the same shape another account's id gets, so the pair cannot be used
+to tell whether an account exists.
+
+```ts
+const me = await client.accounts.get(session.accountId)
+console.log(me.name, me.email)
+```
+
+The account's wallets are on `client.wallets` (a collection under the same path), and
+buyer-facing discovery on `client.paymentMethods`.
+
 ### `client.chains` / `client.tokens` / `client.health`
 
 `chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`) · `tokens.list(chainId?, symbol?)` → `Token[]` · `health.get()` → `Health`.

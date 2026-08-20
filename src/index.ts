@@ -8,6 +8,7 @@ export { throttleDelayMs } from './core/backoff.js'
 export { describeError, Rail0ApiError } from './core/error.js'
 export type { LogEntry, Logger } from './core/http.js'
 export { debugLogger } from './core/http.js'
+export { AccountsResource } from './resources/accounts.js'
 export type {
   AnalyticsDimension,
   AnalyticsFilters,
@@ -37,6 +38,7 @@ export { TokensResource } from './resources/tokens.js'
 // ── Types ────────────────────────────────────────────────────────────
 export type {
   // Primitives
+  Account,
   Address,
   AddWalletTokenRequest,
   // Analytics

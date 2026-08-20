@@ -306,6 +306,28 @@ describe('resource alignment', () => {
 
   // ── Analytics (merchant sales rollups, account-scoped) ─────────────────────
 
+  describe('accounts', () => {
+    // The only account read there is: the caller's own. The gateway's ownership guard is
+    // what makes email part of the answer, so the SDK does not need to narrow it.
+    it('reads the account profile', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        ok({
+          id: '019f8a3d-b781-7b00-8b75-8427f7e591d2',
+          name: 'Test Merchant',
+          email: 'merchant@rail0.test',
+          created_at: '2026-08-01T00:00:00Z',
+        }),
+      )
+
+      const account = await client.accounts.get('019f8a3d-b781-7b00-8b75-8427f7e591d2')
+
+      expect(account.email).toBe('merchant@rail0.test')
+      expect(String(spy.mock.calls[0]?.[0])).toMatch(
+        /\/accounts\/019f8a3d-b781-7b00-8b75-8427f7e591d2$/,
+      )
+    })
+  })
+
   describe('analytics', () => {
     it('summary returns KPIs and forwards every shared filter', async () => {
       const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(

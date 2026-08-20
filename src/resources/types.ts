@@ -234,6 +234,12 @@ export interface Transaction {
   status: TransactionStatus
   unsigned_transaction?: string | null
   transaction_hash?: string | null
+  /** The address that SIGNED the submitted transaction, recovered from the signature by the
+   *  gateway at submit — a fact, not a claim. Null where the gateway held no signature to
+   *  recover from (a report-by-hash submit, where the wallet broadcast it itself) or where
+   *  nothing has been submitted yet. It is what makes a `release` attributable: that
+   *  operation is payer-OR-payee, so whose gas it is depends on who signed. */
+  sender?: Address | null
   amount?: Uint256String | null
   block_number?: number | null
   /** Decoded on-chain failure (null unless status is "failed"): error_code is the RAIL0 custom error in snake_case (e.g. "not_payee"), or "revert" when the selector is unknown; error_message is its human-readable form (e.g. "NotPayee"). */
@@ -267,6 +273,15 @@ export interface Dispute {
   closed_at?: string | null
   /** Parent payment (public-safe view), embedded by the account-level GET /disputes list. */
   payment?: Payment
+}
+/** A merchant account, as its own holder reads it (GET /accounts/:id). Email is included
+ *  because that endpoint is behind an ownership guard — the holder is its only caller. */
+export interface Account {
+  id: string
+  name: string
+  email: string
+  created_at?: string
+  updated_at?: string
 }
 export interface Wallet {
   id?: string
