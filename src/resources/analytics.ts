@@ -29,7 +29,7 @@ export interface AnalyticsFilters {
 /** Time-bucket granularity for the timeseries endpoint (gateway default: "day"). */
 export type AnalyticsInterval = 'day' | 'week' | 'month'
 /** Dimension to aggregate by for the breakdown endpoint. */
-export type AnalyticsDimension = 'token' | 'chain' | 'mode' | 'status'
+export type AnalyticsDimension = 'token' | 'chain' | 'mode' | 'status' | 'operation'
 
 /**
  * Merchant sales analytics (GET /analytics/*). Account-scoped and account-ONLY:

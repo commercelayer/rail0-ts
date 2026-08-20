@@ -43,6 +43,7 @@ export type {
   AddWalletTokenRequest,
   // Analytics
   AnalyticsBucket,
+  AnalyticsFailure,
   AnalyticsGas,
   AnalyticsGasSlice,
   AnalyticsRow,

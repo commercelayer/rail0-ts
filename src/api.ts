@@ -1258,6 +1258,8 @@ export interface components {
             error_message?: string | null;
             unsigned_transaction?: string | null;
             transaction_hash?: string | null;
+            /** @description The address that SIGNED the submitted transaction, recovered from the signature by the gateway at submit — a fact, not a client claim. Null where the gateway held no signature to recover from (a report-by-hash submit, where the wallet broadcast it itself) or where nothing has been submitted yet. This is what makes `release` gas attributable: that operation is payer-OR-payee, so whose cost it is depends on who signed. */
+            sender?: string | null;
             amount?: string | null;
             block_number?: number | null;
             /** @description Gas units used, mirrored from the indexer on confirm. */
@@ -2691,7 +2693,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). Plus `gas` per chain — `spent` on confirmed transactions and `wasted` by on-chain reverts, as wei-scale base-unit strings in the chain's native token (decimals 18) — with `confirmed`/`failed` resolved transaction counts, and `failed_rate` derived from them (per resolved transaction, not per order). `gas_by_status` and `gas_by_operation` are those same rows regrouped, each carrying a `key` (the payment status / the operation) alongside the same fields; every cut sums back to its chain's `gas` row. The status cut is a SNAPSHOT — a payment's status moves and its gas moves with it, so the same period changes over time; the operation cut is stable. Each chain/status row carries `orders`, the count of payments behind it (including those that produced no transaction), so `(spent + wasted) / orders` is the average cost of an order in that state; it is null on the operation cut, where one order spans several operations and `spent / confirmed` is the meaningful average instead. Gas covers only the operations the merchant broadcasts; dispute/close_dispute are the buyer's cost and release has no stored sender, so both are excluded. */
+            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). Plus `gas` per chain — `spent` on confirmed transactions and `wasted` by on-chain reverts, as wei-scale base-unit strings in the chain's native token (decimals 18) — with `confirmed`/`failed` resolved transaction counts, and `failed_rate` derived from them (per resolved transaction, not per order). `gas_by_status` and `gas_by_operation` are those same rows regrouped, each carrying a `key` (the payment status / the operation) alongside the same fields; every cut sums back to its chain's `gas` row. The status cut is a SNAPSHOT — a payment's status moves and its gas moves with it, so the same period changes over time; the operation cut is stable. Each chain/status row carries `orders`, the count of payments behind it (including those that produced no transaction), so `(spent + wasted) / orders` is the average cost of an order in that state; it is null on the operation cut, where one order spans several operations and `spent / confirmed` is the meaningful average instead. Gas covers only the operations the merchant broadcasts; dispute/close_dispute are the buyer's cost and release has no stored sender, so both are excluded. Also `failures` — one row per decoded failure code with the number of the merchant's transactions that hit it, commonest first — and `confirmation_secs` on each gas row: the mean seconds from broadcast to confirmation on that chain, weighted by its confirmations and null when none confirmed. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2749,7 +2751,7 @@ export interface operations {
                 from?: string;
                 /** @description Only payments created at/before this time (ISO-8601). */
                 to?: string;
-                by: "token" | "chain" | "mode" | "status";
+                by: "token" | "chain" | "mode" | "status" | "operation";
             };
             header?: never;
             path?: never;
@@ -3171,6 +3173,16 @@ export interface operations {
                     payment_id?: string;
                     /** @description Revert reason / raw error data (fail only). */
                     revert_reason?: string;
+                    /** @description Gas units used (confirm and fail — a reverted transaction still burns gas). Decimal digits. */
+                    gas_used?: string;
+                    /** @description Gas limit. Decimal digits. */
+                    gas_limit?: string;
+                    /** @description Effective gas price in wei. Decimal digits. */
+                    effective_gas_price?: string;
+                    /** @description Block base fee per gas in wei. Decimal digits. */
+                    base_fee_per_gas?: string;
+                    /** @description Transaction sender, from the receipt the indexer already reads for the gas fields. Mirrored ONLY into an empty column: when the gateway broadcast the transaction it recovered the sender from the signature, which is the verified fact — this fills the gap left by a wallet that broadcast for itself, where a release's gas would otherwise stay unattributable to either party. */
+                    sender?: string;
                 };
             };
         };

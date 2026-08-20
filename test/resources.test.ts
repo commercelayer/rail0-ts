@@ -339,6 +339,10 @@ describe('resource alignment', () => {
           failed_rate: 0.25,
           by_status: { charged: 2, refunded: 1 },
           volume: [{ chain_id: 84532, token: '0xtok', gross: '3000000' }],
+          failures: [
+            { code: 'insufficient_gas_funds', transactions: 2 },
+            { code: 'nonce_too_low', transactions: 1 },
+          ],
           gas: [
             {
               chain_id: 84532,
@@ -347,6 +351,7 @@ describe('resource alignment', () => {
               orders: 3,
               spent: '72000',
               wasted: '10000',
+              confirmation_secs: 15,
             },
           ],
           gas_by_status: [
@@ -382,6 +387,10 @@ describe('resource alignment', () => {
       // The order count is what makes these an average: 62000 wei over 2 charged orders.
       expect(res.gas_by_status[0]?.orders).toBe(2)
       expect(res.gas[0]?.orders).toBe(3)
+      // Per chain, and null rather than 0 when nothing confirmed — 0 would read as instant.
+      expect(res.gas[0]?.confirmation_secs).toBe(15)
+      // failed_rate says how much fails; failures says what to act on, commonest first.
+      expect(res.failures[0]).toEqual({ code: 'insufficient_gas_funds', transactions: 2 })
       expect(res.gas_by_operation.map((r) => r.key)).toEqual(['charge', 'refund'])
 
       const url = String(spy.mock.calls[0]?.[0])

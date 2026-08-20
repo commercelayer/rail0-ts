@@ -509,6 +509,10 @@ export interface AnalyticsGas {
   wasted: Uint256String
   confirmed: number
   failed: number
+  /** Mean seconds from broadcast to on-chain confirmation for this chain's confirmed
+   *  transactions, weighted by their count; null when none confirmed. Per chain because a
+   *  chain that wants 60 confirmations and one that wants 4 are not comparable. */
+  confirmation_secs: number | null
 }
 /** One slice of a chain's gas: the same fields as \`AnalyticsGas\` plus the \`key\`
  *  naming the slice. Both cuts are the same rows regrouped, so a chain's slices always
@@ -522,6 +526,12 @@ export interface AnalyticsGasSlice extends AnalyticsGas {
   key: PaymentStatus | TransactionOperation
 }
 
+/** One failure code and how many of the merchant's transactions hit it. \`code\` is the same
+ *  catalogue an error body uses; "unknown" when the raw reason decodes to nothing. */
+export interface AnalyticsFailure {
+  code: string
+  transactions: number
+}
 /** Headline sales KPIs. \`by_status\` is a status→count map (only present statuses);
  *  \`volume\` is per (token, chain), only ever summed within a single token; gas is per
  *  chain, in that chain's native token, with the two slices adding back up to it. */
@@ -537,6 +547,11 @@ export interface AnalyticsSummary {
    *  eventually confirms is what this surfaces. */
   failed_rate: number
   by_status: Partial<Record<PaymentStatus, number>>
+  /** Why the merchant's transactions failed, commonest first. \`failed_rate\` says how much
+   *  fails; this says what to act on — a revert is a state problem (an amount above the
+   *  residual, a closed window), a rejection that never reached the chain is a wallet
+   *  problem (no gas money, a used nonce). */
+  failures: AnalyticsFailure[]
   volume: AnalyticsVolume[]
   /** Gas per chain, in each chain's native token — never summed across chains. */
   gas: AnalyticsGas[]
@@ -563,6 +578,9 @@ export interface AnalyticsRow {
   chain_id?: number | null
   decimals?: number | null
   volume?: Uint256String | null
+  /** \`operation\` rows only: how often the operation RAN. Not the same as \`orders\` — a
+   *  partial capture runs several times on one order. Null on every other dimension. */
+  transactions?: number | null
 }
 
 // ── Pagination ───────────────────────────────────────────────────────
@@ -1177,7 +1195,7 @@ export interface AnalyticsFilters {
 /** Time-bucket granularity for the timeseries endpoint (gateway default: "day"). */
 export type AnalyticsInterval = 'day' | 'week' | 'month'
 /** Dimension to aggregate by for the breakdown endpoint. */
-export type AnalyticsDimension = 'token' | 'chain' | 'mode' | 'status'
+export type AnalyticsDimension = 'token' | 'chain' | 'mode' | 'status' | 'operation'
 
 /**
  * Merchant sales analytics (GET /analytics/*). Account-scoped and account-ONLY:
