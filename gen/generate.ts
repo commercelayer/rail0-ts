@@ -1033,6 +1033,7 @@ import type {
   PaginatedResponse,
   UpdateWebhookRequest,
   Webhook,
+  WebhookTopic,
   WebhookWithSecret,
 } from './types.js'
 
@@ -1048,6 +1049,19 @@ export interface ListWebhooksParams {
 
 export interface ListEventCallbacksParams {
   status?: 'pending' | 'delivered' | 'failed'
+  /**
+   * Which EVENT's deliveries — singular, and unrelated to the subscription's set: one
+   * subscription covering four topics has four kinds of delivery in this log, and
+   * "why did the captures stop arriving" is a question about one of them.
+   */
+  topic?: WebhookTopic
+  payment_id?: string
+  /** The subscriber's exact HTTP response code, e.g. '500' — "the 500s, not the 429s". */
+  response_code?: string
+  /** ISO-8601. Deliveries at or after this instant. */
+  since?: string
+  /** ISO-8601. Deliveries at or before this instant. */
+  until?: string
   sort?: string
   page?: number
   per_page?: number
