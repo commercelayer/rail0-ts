@@ -26,6 +26,15 @@ export type PaymentStatus =
   | 'released'
   | 'refunded'
   | 'partially_refunded'
+  /**
+   * A never-captured authorization whose window lapsed, marked by the gateway's Janitor
+   * and announced by the payments.expired topic.
+   *
+   * NOT terminal, and that is the part worth knowing: the escrow is still on-chain, so
+   * release still works from here (and closes the payment as `released`). Treating this
+   * as closed leaves the buyer's funds where they are.
+   */
+  | 'expired'
 /**
  * The six fund operations that have prepare/submit endpoints — the values that
  * can appear in a `/payments/:id/:operation` path, and the argument type of
@@ -61,7 +70,12 @@ export type StoredTransactionOperation = NonNullable<
 export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
 export type DisputeStatus = 'open' | 'closed'
 export type CircuitState = 'closed' | 'open'
-export type EventCallbackStatus = 'pending' | 'delivered' | 'failed'
+/**
+ * A delivery either arrived or did not. There is no 'pending': the row is written after
+ * the attempt, and the gateway's CHECK constraint allows exactly these two — so typing a
+ * third value invited a filter that can only ever return nothing.
+ */
+export type EventCallbackStatus = 'delivered' | 'failed'
 export type HealthStatus = 'ok' | 'degraded'
 /** Webhook event topics. Mirrors the gateway's WebhookTopic enum. */
 export type WebhookTopic =
@@ -208,6 +222,13 @@ export interface Payment {
   amount: Uint256String
   capturable_amount?: Uint256String
   refundable_amount?: Uint256String
+  /**
+   * True inside the window after a PARTIAL capture where neither void nor release can
+   * return the buyer's remaining escrow — the answer to "why did both just refuse?".
+   */
+  escrow_stranded?: boolean
+  /** When that window ends, ISO-8601; null when the payment is not in it. */
+  escrow_returnable_at?: string | null
   config_hash?: Bytes32
   payer: Address
   payee: Address
@@ -555,17 +576,16 @@ export interface PaginatedResponse<T> {
 }
 
 // ── Error ────────────────────────────────────────────────────────────
+/**
+ * Exactly what an error body carries now: the gateway trimmed it to these three and
+ * DELETED the aliases (`status`, `message`, `error`) rather than dual-sending them —
+ * see rail0-gateway#252. `code` is the only discriminator, and it is always present.
+ */
 export interface ApiErrorBody {
   /** The specific condition and the only field to branch on, e.g. "not_capturable", "insufficient_token_balance". */
-  code?: string
+  code: string
   /** Short label for the failure, e.g. "Not enough balance". */
   title?: string
   /** One or two sentences fit to show a user verbatim. */
   detail?: string
-  /** The wider family the code sits in (e.g. "forbidden", "invalid_state"), under its pre-code/title/detail name. Also the code itself on errors with no wider family. */
-  status: string
-  /** Legacy alias of detail. */
-  message?: string
-  /** The specific sub-code under its older name, sent on invalid_state and contract_revert responses. */
-  error?: string
 }

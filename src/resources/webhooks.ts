@@ -21,7 +21,7 @@ export interface ListWebhooksParams {
 }
 
 export interface ListEventCallbacksParams {
-  status?: 'pending' | 'delivered' | 'failed'
+  status?: 'delivered' | 'failed'
   /**
    * Which EVENT's deliveries — singular, and unrelated to the subscription's set: one
    * subscription covering four topics has four kinds of delivery in this log, and

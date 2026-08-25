@@ -4,11 +4,14 @@ export class Rail0ApiError extends Error {
   readonly status: number
   /**
    * The specific condition, and the only field to branch on — e.g. "not_capturable",
-   * "insufficient_token_balance", "insufficient_gas_funds". Read from the gateway's
-   * `code`, falling back to the older `error` sub-code and then to `status` (the
-   * wider family) so an older gateway still yields the most specific value it sent.
+   * "insufficient_token_balance", "insufficient_gas_funds".
+   *
+   * Straight from the gateway's `code`, with no fallback chain any more: the error body
+   * was trimmed to exactly code/title/detail and the `error`/`status` aliases were
+   * deleted rather than dual-sent (rail0-gateway#252), so a fallback would only ever
+   * read fields that cannot arrive.
    */
-  readonly error: string
+  readonly code: string
   /** Short label for the failure, e.g. "Not enough balance". */
   readonly title?: string
   /**
@@ -24,16 +27,27 @@ export class Rail0ApiError extends Error {
   readonly retryAfter?: number
 
   constructor(status: number, body: ApiErrorBody, retryAfter?: number) {
-    super(body.detail ?? body.message ?? `HTTP ${status}`)
+    super(body.detail ?? `HTTP ${status}`)
     this.name = 'Rail0ApiError'
     this.status = status
-    this.error = body.code ?? body.error ?? body.status
+    this.code = body.code
     // Assigned only when present: exactOptionalPropertyTypes rejects an explicit
     // undefined on an optional field (same reason retryAfter is guarded below).
-    const detail = body.detail ?? body.message
+    const detail = body.detail
     if (body.title !== undefined) this.title = body.title
     if (detail !== undefined) this.detail = detail
     if (retryAfter !== undefined) this.retryAfter = retryAfter
+  }
+
+  /**
+   * @deprecated Use `code`. Kept as an alias, deliberately rather than removed: it is
+   * what consumers branch on today (rail0-starter's checkout retry guard reads
+   * `error.error === 'already_signed'`), and a property that quietly became undefined
+   * would turn every such guard into a silently-never-matching condition — the failure
+   * mode a rename is supposed to prevent. It now always equals `code`.
+   */
+  get error(): string {
+    return this.code
   }
 
   /**
@@ -41,7 +55,7 @@ export class Rail0ApiError extends Error {
    * A SUPPLEMENT to `detail` (which the gateway always sends), not a replacement.
    */
   get hint(): string | undefined {
-    return describeError(this.error)
+    return describeError(this.code)
   }
 }
 
@@ -73,6 +87,19 @@ const errorHints: Record<string, string> = {
   transaction_not_overwritable:
     'a transaction for this operation is already in flight — wait for it to settle',
   signer_mismatch: "the signing key doesn't match the payment's payer/payee",
+  // The SIWE BINDING failures, split out of signer_mismatch so a login failure says
+  // WHICH part of the proof did not bind (rail0-gateway#216). None of these hints names
+  // the server's expectation — a 422 here is unauthenticated, so echoing the allow-list
+  // or the expected chain id would turn each one into a probe.
+  siwe_domain_not_allowed:
+    "sign with the origin the front-end is served from, and have it added to the gateway's SIWE domain allow-list",
+  siwe_uri_mismatch: "the message's uri host must equal its own domain",
+  siwe_chain_mismatch:
+    'use the chain id the client library sends — this login is off-chain and nominal',
+  siwe_proof_expired: 'get a fresh nonce and sign again',
+  // Address-wide, not one token: "sign in again", not "that token is dead".
+  sessions_revoked:
+    "every session issued before this address's revoke-all cutoff is refused — sign in again",
   config_hash_mismatch:
     'the payment record and its on-chain deployment disagree — the payment cannot be operated as recorded',
   payment_not_on_chain:

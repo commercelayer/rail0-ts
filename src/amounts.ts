@@ -6,8 +6,14 @@
 
 /**
  * toBaseUnits converts a human decimal amount ("1.50") to its base-unit integer
- * string ("1500000") for the given decimals. Fractional digits beyond `decimals`
- * are truncated (not rounded). Throws on a malformed amount or negative decimals.
+ * string ("1500000") for the given decimals. Throws on a malformed amount, negative
+ * decimals, or more fractional digits than the token has.
+ *
+ * It used to TRUNCATE the extra digits, and that was the wrong answer for the one thing
+ * this function is for: the gateway answers 422 on an amount a token cannot express, so
+ * silently dropping them meant the SDK sent a DIFFERENT amount than the caller wrote and
+ * the caller learned about it from a rejected request — or worse, from a successful one
+ * for less money. Refusing here names the actual mistake, at the call site. (#26)
  */
 export function toBaseUnits(human: string, decimals: number): string {
   if (!Number.isInteger(decimals) || decimals < 0) {
@@ -18,6 +24,11 @@ export function toBaseUnits(human: string, decimals: number): string {
     throw new Error(`invalid amount: ${human}`)
   }
   const [whole, frac = ''] = s.split('.')
+  if (frac.length > decimals) {
+    throw new Error(
+      `amount ${human} has ${frac.length} decimal places, but this token has ${decimals}`,
+    )
+  }
   const fracPadded = (frac + '0'.repeat(decimals)).slice(0, decimals)
   const combined = (whole + fracPadded).replace(/^0+/, '')
   return combined === '' ? '0' : combined
