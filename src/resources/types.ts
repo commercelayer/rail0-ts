@@ -73,6 +73,7 @@ export type WebhookTopic =
   | 'payments.voided'
   | 'payments.released'
   | 'payments.refunded'
+  | 'payments.expired'
   | 'payments.failed'
   | 'payments.disputed'
   | 'payments.dispute_closed'
