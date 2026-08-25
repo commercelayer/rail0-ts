@@ -52,14 +52,14 @@ describe('Rail0Client', () => {
 
     it('throws Rail0ApiError on 404', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: 'PaymentNotFound', message: 'No payment found.' }), {
+        new Response(JSON.stringify({ code: 'not_found', detail: 'No payment found.' }), {
           status: 404,
         }),
       )
 
       await expect(client.payments.get(mockPaymentId)).rejects.toMatchObject({
         status: 404,
-        error: 'PaymentNotFound',
+        code: 'not_found',
       })
     })
   })
@@ -276,56 +276,75 @@ describe('Rail0Client', () => {
   })
 
   describe('Rail0ApiError', () => {
-    it('uses the canonical `status` as the code when no `error` sub-code is present', () => {
-      const err = new Rail0ApiError(404, { status: 'not_found', message: 'No payment found.' })
+    it('takes `code` as the discriminator and `detail` as the message', () => {
+      // The body is exactly code/title/detail since gateway #252 — `status` and
+      // `message` were deleted, not dual-sent, so there is nothing to fall back to.
+      const err = new Rail0ApiError(404, { code: 'not_found', detail: 'No payment found.' })
 
       expect(err.status).toBe(404)
+      expect(err.code).toBe('not_found')
+      // Deprecated but still answering: consumers branch on this today, and a property
+      // that silently became undefined would make every such guard stop matching.
       expect(err.error).toBe('not_found')
       expect(err.message).toBe('No payment found.')
       expect(err.retryAfter).toBeUndefined()
       expect(err).toBeInstanceOf(Error)
     })
 
-    it('prefers the more specific `error` sub-code over `status` (invalid_state / contract_revert)', () => {
+    it('keys the hint on the code, which is now the only code there is', () => {
+      // This used to assert that the specific `error` sub-code won over the wider
+      // `status` family. Both aliases are gone: the gateway sends the specific value AS
+      // `code`, so the preference has nothing left to choose between.
       const err = new Rail0ApiError(422, {
-        status: 'invalid_state',
-        error: 'not_capturable',
-        message: 'Cannot capture.',
+        code: 'not_capturable',
+        title: 'Not capturable',
+        detail: 'Cannot capture.',
       })
 
-      expect(err.error).toBe('not_capturable')
-      // hint map is keyed on the sub-code
+      expect(err.code).toBe('not_capturable')
       expect(err.hint).toBe("the payment must be 'authorized' or 'partially_captured' to capture")
     })
 
+    it('carries a hint for each SIWE binding failure', () => {
+      // Split out of signer_mismatch (gateway #216) so a failed login says WHICH part of
+      // the proof did not bind — and none of the hints echoes the server's expectation,
+      // since a 422 here is unauthenticated.
+      for (const code of [
+        'siwe_domain_not_allowed',
+        'siwe_uri_mismatch',
+        'siwe_chain_mismatch',
+        'siwe_proof_expired',
+        'sessions_revoked',
+      ]) {
+        const err = new Rail0ApiError(422, { code })
+        expect(err.hint, code).toBeTruthy()
+      }
+    })
+
     it('exposes retryAfter when provided', () => {
-      const err = new Rail0ApiError(
-        429,
-        { status: 'rate_limited', message: 'Too many requests.' },
-        30,
-      )
+      const err = new Rail0ApiError(429, { code: 'rate_limited', detail: 'Too many requests.' }, 30)
       expect(err.retryAfter).toBe(30)
     })
   })
 
   describe('error body mapping over HTTP', () => {
-    it('surfaces the canonical `status` as the code for a status-only error body', async () => {
+    it('surfaces the body code over HTTP', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify({ status: 'not_found', message: 'No payment found.' }), {
+        new Response(JSON.stringify({ code: 'not_found', detail: 'No payment found.' }), {
           status: 404,
         }),
       )
 
       await expect(client.payments.get(mockPaymentId)).rejects.toMatchObject({
         status: 404,
-        error: 'not_found',
+        code: 'not_found',
       })
     })
 
     it('reads Retry-After (seconds) off a 429 and exposes it as retryAfter', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(
-          JSON.stringify({ status: 'rate_limited', message: 'Too many requests. Retry later.' }),
+          JSON.stringify({ code: 'rate_limited', detail: 'Too many requests. Retry later.' }),
           {
             status: 429,
             headers: { 'Retry-After': '42' },
@@ -335,14 +354,14 @@ describe('Rail0Client', () => {
 
       await expect(client.payments.get(mockPaymentId)).rejects.toMatchObject({
         status: 429,
-        error: 'rate_limited',
+        code: 'rate_limited',
         retryAfter: 42,
       })
     })
 
     it('leaves retryAfter undefined on a 429 without a Retry-After header', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify({ status: 'rate_limited' }), { status: 429 }),
+        new Response(JSON.stringify({ code: 'rate_limited' }), { status: 429 }),
       )
 
       const err = (await client.payments.get(mockPaymentId).catch((e) => e)) as Rail0ApiError

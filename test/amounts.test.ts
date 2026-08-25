@@ -13,8 +13,13 @@ describe('toBaseUnits', () => {
     expect(toBaseUnits('1.5', 18)).toBe('1500000000000000000')
   })
 
-  it('truncates fractional digits beyond decimals', () => {
-    expect(toBaseUnits('1.2345678', 6)).toBe('1234567')
+  it('refuses more fractional digits than the token has, rather than truncating', () => {
+    // It used to answer '1234567' — a DIFFERENT amount than the caller wrote, which the
+    // gateway then 422s (or, worse, accepts for less money). The mistake belongs at the
+    // call site. (#26)
+    expect(() => toBaseUnits('1.2345678', 6)).toThrow(/7 decimal places, but this token has 6/)
+    // The boundary itself is fine: exactly `decimals` digits is exact, not over-precise.
+    expect(toBaseUnits('1.234567', 6)).toBe('1234567')
   })
 
   it('rejects malformed amounts and bad decimals', () => {
@@ -57,11 +62,17 @@ describe('describeError', () => {
   })
 
   it('exposes the hint on Rail0ApiError', () => {
+    // One field to key on: the body is exactly code/title/detail now, with the `status`
+    // and `error` aliases deleted rather than dual-sent (gateway #252).
     const err = new Rail0ApiError(422, {
-      status: 'invalid_state',
-      error: 'amount_exceeds_capturable',
-      message: 'rejected',
+      code: 'amount_exceeds_capturable',
+      title: 'Amount exceeds capturable',
+      detail: 'rejected',
     })
     expect(err.hint).toBeTruthy()
+    expect(err.code).toBe('amount_exceeds_capturable')
+    // The deprecated alias still answers, so a consumer branching on `.error` keeps
+    // working instead of matching undefined forever.
+    expect(err.error).toBe('amount_exceeds_capturable')
   })
 })
