@@ -225,12 +225,19 @@ export interface AddWalletTokenRequest {
 export interface CreateWebhookRequest {
   name: string
   callback_url: string
-  topic: WebhookTopic
+  /**
+   * One subscription, several events. Two subscriptions for the same
+   * \`callback_url\` must not overlap: the gateway answers 409 and names the topic
+   * that collided, because delivering one event twice under two different secrets
+   * is indistinguishable from a duplicate at the receiving end.
+   */
+  topics: WebhookTopic[]
 }
 export interface UpdateWebhookRequest {
   name?: string
   callback_url?: string
-  topic?: WebhookTopic
+  /** REPLACES the set — so this is also how a topic is removed. The secret is untouched. */
+  topics?: WebhookTopic[]
 }
 
 // ── Domain models (gateway vocabulary) ───────────────────────────────
@@ -420,7 +427,11 @@ export interface Webhook {
   id?: string
   name?: string
   callback_url?: string
-  topic?: WebhookTopic
+  /**
+   * Every event this subscription delivers — one shared secret and one circuit breaker
+   * for all of them. The delivery names the one that fired in \`X-Rail0-Topic\`.
+   */
+  topics?: WebhookTopic[]
   active?: boolean
   circuit_state?: CircuitState
   circuit_failure_count?: number
@@ -1026,6 +1037,7 @@ import type {
 } from './types.js'
 
 export interface ListWebhooksParams {
+  /** Narrow to the subscriptions that INCLUDE this event. */
   topic?: string
   active?: boolean
   circuit_state?: 'closed' | 'open'

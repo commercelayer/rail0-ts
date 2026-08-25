@@ -23,10 +23,12 @@ const client = new Rail0Client({
 
 try {
   // Register a webhook — the shared_secret is returned ONLY here (and on rotate).
+  // One subscription for every event this endpoint cares about: one shared secret to
+  // verify against and one circuit breaker, rather than one of each per topic.
   const created = await client.webhooks.create({
-    name: 'capture-notifier',
+    name: 'order-lifecycle',
     callback_url: 'https://merchant.example.com/rail0/webhooks',
-    topic: 'payments.captured',
+    topics: ['payments.authorized', 'payments.captured', 'payments.voided', 'payments.refunded'],
   })
   console.log('Webhook id:', created.id, '— store this secret:', created.shared_secret)
 

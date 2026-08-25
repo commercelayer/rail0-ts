@@ -10,6 +10,7 @@ import type {
 } from './types.js'
 
 export interface ListWebhooksParams {
+  /** Narrow to the subscriptions that INCLUDE this event. */
   topic?: string
   active?: boolean
   circuit_state?: 'closed' | 'open'
