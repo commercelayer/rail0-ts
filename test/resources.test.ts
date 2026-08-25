@@ -191,11 +191,16 @@ describe('resource alignment', () => {
       const created = await client.webhooks.create({
         name: 'orders',
         callback_url: 'https://m.example/hook',
-        topic: 'payments.captured',
+        topics: ['payments.captured', 'payments.refunded'],
       })
       expect(created.shared_secret).toBe('whsec_x')
+      // The set goes out as `topics`. The gateway still accepts the singular, so a body
+      // that kept sending `topic` would create a DIFFERENT subscription and pass silently.
+      const sent = JSON.parse(String((spy.mock.calls[0]?.[1] as RequestInit).body))
+      expect(sent.topics).toEqual(['payments.captured', 'payments.refunded'])
+      expect(sent).not.toHaveProperty('topic')
 
-      spy.mockResolvedValueOnce(okList([{ id: WEBHOOK_ID, topic: 'payments.captured' }], 1))
+      spy.mockResolvedValueOnce(okList([{ id: WEBHOOK_ID, topics: ['payments.captured'] }], 1))
       const list = await client.webhooks.list({ topic: 'payments.captured', active: true })
       expect(list.data[0]?.id).toBe(WEBHOOK_ID)
       expect(String(spy.mock.calls[1]?.[0])).toContain('topic=payments.captured')

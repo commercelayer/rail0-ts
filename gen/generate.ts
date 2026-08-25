@@ -125,6 +125,7 @@ export type WebhookTopic =
   | 'payments.voided'
   | 'payments.released'
   | 'payments.refunded'
+  | 'payments.expired'
   | 'payments.failed'
   | 'payments.disputed'
   | 'payments.dispute_closed'
@@ -225,12 +226,19 @@ export interface AddWalletTokenRequest {
 export interface CreateWebhookRequest {
   name: string
   callback_url: string
-  topic: WebhookTopic
+  /**
+   * One subscription, several events. Two subscriptions for the same
+   * \`callback_url\` must not overlap: the gateway answers 409 and names the topic
+   * that collided, because delivering one event twice under two different secrets
+   * is indistinguishable from a duplicate at the receiving end.
+   */
+  topics: WebhookTopic[]
 }
 export interface UpdateWebhookRequest {
   name?: string
   callback_url?: string
-  topic?: WebhookTopic
+  /** REPLACES the set — so this is also how a topic is removed. The secret is untouched. */
+  topics?: WebhookTopic[]
 }
 
 // ── Domain models (gateway vocabulary) ───────────────────────────────
@@ -420,7 +428,11 @@ export interface Webhook {
   id?: string
   name?: string
   callback_url?: string
-  topic?: WebhookTopic
+  /**
+   * Every event this subscription delivers — one shared secret and one circuit breaker
+   * for all of them. The delivery names the one that fired in \`X-Rail0-Topic\`.
+   */
+  topics?: WebhookTopic[]
   active?: boolean
   circuit_state?: CircuitState
   circuit_failure_count?: number
@@ -1022,10 +1034,12 @@ import type {
   PaginatedResponse,
   UpdateWebhookRequest,
   Webhook,
+  WebhookTopic,
   WebhookWithSecret,
 } from './types.js'
 
 export interface ListWebhooksParams {
+  /** Narrow to the subscriptions that INCLUDE this event. */
   topic?: string
   active?: boolean
   circuit_state?: 'closed' | 'open'
@@ -1036,6 +1050,19 @@ export interface ListWebhooksParams {
 
 export interface ListEventCallbacksParams {
   status?: 'pending' | 'delivered' | 'failed'
+  /**
+   * Which EVENT's deliveries — singular, and unrelated to the subscription's set: one
+   * subscription covering four topics has four kinds of delivery in this log, and
+   * "why did the captures stop arriving" is a question about one of them.
+   */
+  topic?: WebhookTopic
+  payment_id?: string
+  /** The subscriber's exact HTTP response code, e.g. '500' — "the 500s, not the 429s". */
+  response_code?: string
+  /** ISO-8601. Deliveries at or after this instant. */
+  since?: string
+  /** ISO-8601. Deliveries at or before this instant. */
+  until?: string
   sort?: string
   page?: number
   per_page?: number

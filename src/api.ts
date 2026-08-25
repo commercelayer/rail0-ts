@@ -46,7 +46,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Liveness/readiness check (incl. DB connectivity) */
+        /**
+         * Liveness/readiness check (incl. DB connectivity)
+         * @description **Public and token-blind**: one body for every caller, and the Authorization header is never read — a missing, invalid or revoked token changes nothing and never yields a 401. The Sidekiq worker figures moved to the operator-only GET /admin/health.
+         *
+         *     **Alert on `status`, not on the HTTP status code.** The code is liveness for the load balancer — 503 only when the database is down — and a dead Sidekiq fleet stays 200 on purpose, because the API still serves every synchronous request while jobs queue. A monitor watching only the code therefore reports a healthy gateway while nothing broadcasts or confirms. `status` carries `ok` / `degraded` / `error`.
+         */
         get: operations["getHealth"];
         put?: never;
         post?: never;
@@ -135,6 +140,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/revoke_all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke every session of an address (fresh SIWE proof, not a session)
+         * @description Writes an address-wide cutoff: every JWT issued to the address before it is refused with 401 sessions_revoked. Gated on a fresh SIWE proof carrying its own statement ("Sign out of RAIL0 everywhere") rather than on a session — an operator reacting to a leaked key holds the wallet, not the stolen token, and purpose-binding keeps a login signature from being replayed here. Self-revoking: the cutoff is now+1, so any token the caller holds dies too; sign in again afterwards. The revocation propagates within seconds (a short per-process cache pays the hot-path read), and the write is durable in Postgres — unlike the per-token denylist, this lever fails closed.
+         */
+        post: operations["revokeAllSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/blockchains": {
         parameters: {
             query?: never;
@@ -169,6 +194,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every account (admin)
+         * @description Admin only (require_admin!: the session account must hold the operator grant — a row in administrators — and be active, re-read from the rows per request, so a revocation bites on the next request; the session wallet must be active even for reads, because these reads are cross-account). Every account, Full entity, each carrying `admin` (whether the account holds the grant). Filters: admin, active; sort and pagination.
+         */
+        get: operations["listAccounts"];
+        put?: never;
+        /**
+         * Create an account with its first wallet (admin)
+         * @description Admin only. The first wallet is required and registered WITHOUT a SIWE proof — the admin vouches: auth resolves the account FROM the wallet, so a walletless account could never be signed into to add one. Ownership is still proven at the owner's first SIWE login; a typo is recoverable by deactivating the wallet before first use. One transaction — the account cannot exist without its wallet. Unique name/email/address collisions answer 409. Creation never carries the operator grant — granting is a separate POST /admin/administrators/{account_id}.
+         */
+        post: operations["createAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{account_id}": {
         parameters: {
             query?: never;
@@ -179,8 +228,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Read the account's own profile
-         * @description The account's own row: id, name, email and timestamps. Behind the accounts section's ownership guard — a JWT whose account matches the path — so a caller can only ever read its own profile. Another account's id and an id that is not an account answer alike, so this cannot be used to tell whether an account exists.
+         * Read an account profile (own account; any account for an admin)
+         * @description The account row. The owner reads their own profile (id, name, email and timestamps — the explicit allow-list, with no admin/role field: the operator axis leaves no trace on a standard response); an active admin reads ANY account, whole record (Full entity) plus `admin`, whether the account holds the operator grant. For a non-admin, another account's id and an id that is not an account answer alike, so this cannot be used to tell whether an account exists.
          */
         get: operations["getAccount"];
         put?: never;
@@ -188,7 +237,88 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update an account: own profile; an admin may also set active
+         * @description The one write on the account row. The owner updates name and/or email; active is an operator field — supplying it requires the operator grant (403 otherwise), and an admin may patch ANY account. The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    account_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description Display name. Unique across accounts. */
+                        name?: string;
+                        /** @description Contact email. Unique across accounts. */
+                        email?: string;
+                        /** @description Active status (admin only). */
+                        active?: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description The updated account profile. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Account"];
+                    };
+                };
+                /** @description Neither field was supplied, or a value was blank/malformed. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or invalid token. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Another account's id, or the session wallet is deactivated. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The name or email is already taken by another account. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description last_admin: the change would leave zero active admins. */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": Record<string, never>;
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/accounts/{account_id}/wallets": {
@@ -413,6 +543,8 @@ export interface paths {
         /**
          * Create a payment
          * @description Session required (an account-less token is fine); the `payer` in the body must equal the authenticated address (403 otherwise) — a buyer only drafts payments payable from its own wallet. `payer` and `payee` must be different addresses (a payment to oneself is rejected with 422). Idempotent on the `Idempotency-Key` header, scoped to the caller: when a payment already exists for the key AND the same payer, that record is returned with 200 instead of 201. A key already used by a different account is not shared — it falls through to create and hits the global unique key, returning 409.
+         *
+         *     **Idempotency-Key** (optional header) REJECTS a reused key rather than replaying it: the same key with different terms answers 422 `idempotency_key_reused`, not 200 carrying the first payment — silently returning a payment whose terms are not the ones just sent is how a client charges the wrong amount. Same key + same terms replays with 200 (amounts compare converted, so "1.0" and "1.00" match). A key already used by another account answers 409, never that account's payment. Rotate per logical order.
          */
         post: operations["createPayment"];
         delete?: never;
@@ -433,7 +565,7 @@ export interface paths {
         };
         /**
          * Get a payment with embedded transactions and optional signing payload
-         * @description Participant-only: readable only by the payment's payer or payee (bearerAuth), not by anyone who learns the id. The payer authenticates with an account-less SIWE token. 401 without a token, 403 for a non-participant.
+         * @description Participant-only: readable only by the payment's payer or payee (bearerAuth), not by anyone who learns the id. The payer authenticates with an account-less SIWE token. 401 without a token, 403 for a non-participant. An active admin reads ANY payment, whole record (Full entity): signatures, broadcast bookkeeping, error diagnostics — the operator's debugging view.
          */
         get: operations["getPayment"];
         put?: never;
@@ -488,6 +620,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payments/{id}/transactions/{transaction_id}/redrive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The transaction row to redrive, resolved through the payment's own transactions - an id belonging to another payment answers 404. */
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-enqueue a stuck broadcast for this transaction (payee only)
+         * @description On-demand doorbell for the recovery the Janitor already performs at cadence: a `pending` transaction still holding its `signed_transaction` is a broadcast the queue lost (a hard worker kill drops the in-flight job), and this re-enqueues the broadcaster for it NOW instead of waiting for the recovery tick. Same redrivable predicate, same enqueue, no new state and no new worker. Payee-only, like the other operation writes. Idempotent under double-click: the broadcaster re-checks under the row lock before sending, so a duplicate enqueue is harmless and never double-broadcasts. Any other state is refused with 422 `not_redrivable`, the detail naming the state the row IS in (a pending row without its signed transaction has nothing to broadcast; submitting/submitted already reached the send; confirmed is settled; a failed row's repair path is the operation's /submitted endpoint, not another send).
+         */
+        post: operations["redrivePaymentTransaction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payments/{id}/{operation}/prepare": {
         parameters: {
             query?: never;
@@ -503,7 +659,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare an operation's unsigned transaction
-         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Session required (bearerAuth) for every operation. The payee operations additionally require the caller to be the payee; `release` is not payee-gated (it is payer-or-payee on-chain and the payer has no gateway account, so its acting party is authorized on-chain — the signed tx + the contract's NotPayerOrPayee gate) but its prepare is still restricted to a payment participant. `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2).
+         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Session required (bearerAuth) for every operation. The payee operations additionally require the caller to be the payee; `release` is not payee-gated (it is payer-or-payee on-chain and the payer has no gateway account, so its acting party is authorized on-chain — the signed tx + the contract's NotPayerOrPayee gate) but its prepare is still restricted to a payment participant. `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2). `release` is also the one operation with an INVERTED time window: it returns the *uncaptured remainder* of an authorization, which the contract keeps available to the merchant until the authorization expires, so release opens only AFTER `authorization_expiry` and answers 422 `authorization_not_expired` before then (the refusal carries the timestamp). The operation whose card-processing analogue is “cancel the hold early” is `void`, not release — and void requires the authorization to be fully intact, so any capture rules it out permanently.
          */
         post: operations["preparePaymentOperation"];
         delete?: never;
@@ -997,6 +1153,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/administrators/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account being granted/revoked. */
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Grant the operator role to an account (admin)
+         * @description Admin only. Inserts the account's administrators row — the operator grant — recording the granting admin as granted_by, an optional free-text audit note, and an optional expiry: a time-boxed grant past its expires_at no longer opens the surface (checked per request) and no longer counts for the last-admin guard, but the row lingers as audit history. One grant per account: a duplicate answers 409 (the unique index is the authority, no pre-check race). A past expires_at answers 422 expiry_in_the_past. The grant is deliberately not a field on the account: standard responses carry no trace of the operator axis.
+         */
+        post: operations["grantAdministrator"];
+        /**
+         * Revoke the operator role (admin; refused for the last active admin)
+         * @description Admin only. Deletes the account's administrators row. Read from the row per request everywhere, so the revocation bites on the target's very next request — no token tail. Last-admin guard: revoking the grant that would leave zero operative admins (grants on active accounts) is refused with 422 last_admin — including revoking yourself as the last one.
+         */
+        delete: operations["revokeAdministrator"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Operator diagnostics: worker fleet + divergence signal (admin)
+         * @description The worker fleet figures GET /health used to return to any valid JWT (Redis reachability, live worker process count, enqueued backlog), plus `divergences`: the standing count of `balance_divergence` sync errors — confirms whose reported balances disagreed with the gateway's own mirror, which the Syncer records and never rejects. Admin only, and deliberately not on the public GET /health: that endpoint is token-blind, and publishing a detector's own verdicts would tell whoever is probing /sync whether their payload landed. Always 200 — this is operator diagnostics, never a liveness probe: a down fleet is the content (`sidekiq.status: "down"`), and the only 503 in the health surface is the public GET /health's DB gate. Backed by the same 5s-cached probe as GET /health, so polling adds no Redis load.
+         */
+        get: operations["getAdminHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/sync_errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List sync errors (admin)
+         * @description Why a /sync callback could not be applied — written by the Syncer for exactly this. Admin only. Filters: reason, outcome (confirmed|failed), tx_hash; sort and pagination. Full entity.
+         */
+        get: operations["listSyncErrors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1033,7 +1256,7 @@ export interface components {
             code?: "rpc_unavailable" | "rpc_error" | "timeout" | "error";
             message?: string;
         };
-        /** @description Error envelope. Every error this API returns carries `code` (stable and machine-readable — the only field to branch on), `title` (a short label) and `detail` (one or two sentences fit to show a user verbatim). The wording comes from the gateway's error catalogue, so the same condition always reads the same way wherever it surfaces. `status` and `message` are the pre-code/title/detail names, derived from the same entry and kept for existing clients: `status` carries the family a client used to switch on (e.g. `forbidden`, `invalid_state`) where `code` is narrower, and `message` equals `detail`. Context fields may also be present (`resource`, `param`, `chain_id`, `token`, `payee`, `errors`). */
+        /** @description The error envelope: exactly code (stable, the only field to branch on), title (short label) and detail (a sentence a UI can print verbatim). The legacy status/message/error aliases were removed in #252. */
         Error: {
             /** @example amount_exceeds_refundable */
             code: string;
@@ -1041,30 +1264,26 @@ export interface components {
             title: string;
             /** @example The amount is higher than the balance the merchant still holds for this payment. */
             detail: string;
-            /**
-             * @description Legacy: the error family, or the code itself when there is no wider family.
-             * @example invalid_state
-             */
-            status: string;
-            /** @description Legacy alias of `detail`. */
-            message?: string;
         } & {
             [key: string]: unknown;
         };
-        /**
-         * @description Gateway liveness/readiness. Only the database gates the HTTP code (200 healthy, 503 when the DB is unreachable); Sidekiq is reported but never flips the code, since the API still serves synchronous requests when workers are down. `status` is the global signal: `ok` (all good), `degraded` (DB ok but Sidekiq not ok), `error` (DB down — the only 503).
-         *
-         *     The endpoint is public so the platform liveness probe can call it unauthenticated, but the DETAIL is session-gated: an anonymous caller receives only `status`, `db` and `timestamp`. `sidekiq`, `api_version`, `contract_version`, `active_chains` and `active_contracts` are returned only with a valid bearer token — queue depth and fleet size are operational internals. A missing or invalid token is treated as anonymous, never as a 401.
-         */
+        /** @description Gateway liveness/readiness — public and token-blind: one body for every caller, and every field is public by nature (the versions are on-chain / on the root descriptor; the counts are derivable from the public catalog reads). Only the database gates the HTTP code (200 healthy, 503 when the DB is unreachable); the Sidekiq worker fleet never flips the code, since the API still serves synchronous requests when workers are down. `status` is the global signal: `ok` (all good), `degraded` (DB ok but the worker fleet not ok), `error` (DB down — the only 503). The fleet FIGURES (queue depth, worker count, Redis reachability) are operational internals and live on the operator-only GET /admin/health. */
         Health: {
             /** @enum {string} */
             status: "ok" | "degraded" | "error";
-            api_version?: string;
-            contract_version?: string;
             /** @enum {string} */
             db: "ok" | "error";
-            /** @description Worker fleet health (does not gate liveness). */
-            sidekiq?: {
+            /** Format: date-time */
+            timestamp: string;
+            api_version: string;
+            contract_version: string;
+            active_chains: number;
+            active_contracts: number;
+        };
+        /** @description Operator diagnostics for GET /admin/health: the Sidekiq worker fleet detail and the balance-divergence signal, always 200 (a down fleet is the content, not an error — this is not a liveness probe). */
+        AdminHealth: {
+            /** @description Worker fleet health (does not gate liveness anywhere). */
+            sidekiq: {
                 /**
                  * @description ok = Redis up and >=1 live worker; degraded = Redis up but no live worker; down = Redis unreachable.
                  * @enum {string}
@@ -1077,8 +1296,18 @@ export interface components {
                 /** @description Total enqueued jobs across queues (present only when Redis is up). */
                 enqueued?: number;
             };
-            active_chains?: number;
-            active_contracts?: number;
+            /** @description Balance-divergence signal over `sync_errors` rows with `reason: balance_divergence` — confirms the gateway applied even though the reported capturable/refundable disagreed with its own mirror. Filtered on that one reason: the all-reasons ledger is GET /admin/sync_errors. */
+            divergences: {
+                /** @description All-time count. The table is never pruned, so this is the full history — context, not the alert. */
+                total: number;
+                /** @description Rows created in the trailing 24 hours. */
+                last_24h: number;
+                /**
+                 * Format: date-time
+                 * @description When the most recent divergence landed, or null when there are none. The figure to act on: a monotonic total says nothing about now.
+                 */
+                latest_at: string | null;
+            };
             /** Format: date-time */
             timestamp: string;
         };
@@ -1092,7 +1321,7 @@ export interface components {
              */
             expires_at: string;
         };
-        /** @description Issued after a successful SIWE verification. SIWE alone proves control of the address, so a token is issued even when the address is not registered to any account; in that case `account_id` and `name` are null (an account-less session, e.g. a buyer). Clients that require an account must treat a null `account_id` as not-allowed. */
+        /** @description Issued after a successful SIWE verification. SIWE alone proves control of the address, so a token is issued even when the address is not registered to any account; in that case `account_id` and `name` are null (an account-less session, e.g. a buyer). Clients that require an account must treat a null `account_id` as not-allowed. A session whose account holds the operator grant additionally carries `admin: true` (the Session::Admin variant); a standard or account-less session has no admin/role field at all. */
         Session: {
             /** @description JWT bearer token. */
             token?: string;
@@ -1171,8 +1400,11 @@ export interface components {
             chain_id?: number;
             /** @description Protocol-level identifier (66-char hex). */
             rail0_id?: string;
-            /** @enum {string} */
-            status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
+            /**
+             * @description Lifecycle state. Deliberately a HAPPY-PATH label, not a ledger: a partial operation does NOT move it, so a payment captured 100 and refunded 40 still reads `captured`, and a full refund that leaves uncaptured escrow does too. `capturable_amount` / `refundable_amount` are the authoritative residuals — reconcile on those, not on this. `partially_refunded` is retained for historical rows only and is no longer produced.
+             * @enum {string}
+             */
+            status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
             /** @enum {string} */
             mode?: "authorize" | "charge";
             amount?: string;
@@ -1186,6 +1418,13 @@ export interface components {
             token?: string;
             authorization_expiry?: number;
             refund_expiry?: number;
+            /** @description True exactly inside the stranded-escrow window (#233): a partial capture has permanently ruled void out, and release only opens at authorization_expiry — so no verb can return the buyer's uncaptured escrow until then. Mirrors RAIL0.sol; the gateway names the window, it cannot shorten it. */
+            escrow_stranded?: boolean;
+            /**
+             * Format: date-time
+             * @description When the stranded escrow becomes returnable (release opens) — the authorization expiry as ISO-8601. Null whenever nothing is stranded, so presence alone is the signal.
+             */
+            escrow_returnable_at?: string | null;
             /** @description True while an open dispute exists. */
             disputed?: boolean;
             /** @description Decoded reason of the last failed on-chain attempt; null once the payment makes forward progress. Non-null means the latest attempt failed. */
@@ -1248,18 +1487,19 @@ export interface components {
             operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund" | "dispute" | "close_dispute";
             /** @enum {string} */
             status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
+            /** @description True when this transaction's broadcast can be re-enqueued: it is `pending` and the gateway holds its signed transaction, i.e. a send that was prepared and signed but never reached the chain. The same predicate `POST /payments/{id}/transactions/{transaction_id}/redrive` guards on, so a client can offer the action exactly when it will succeed instead of on a 422. False on a `pending` row that holds no signed transaction - there the next step is submitting the signature, not a redrive. */
+            redrivable?: boolean;
             /** @description Decoded failure code, null unless `status` is "failed". Same catalogue as an error body's `code`: a RAIL0 custom error (`not_payee`), a token-level revert (`insufficient_token_balance`, `invalid_token_signature`, `authorization_already_used`), a Solidity panic, or a rejection that stopped the broadcast before the chain saw it (`insufficient_gas_funds`, `nonce_too_low`). */
             error_code?: string | null;
             /** @description Short label for `error_code`; null unless failed. */
             error_title?: string | null;
             /** @description Sentence explaining the failure; null unless failed. Carries the chain's own words when the revert was not one the gateway recognises. */
             error_detail?: string | null;
-            /** @description Legacy alias of `error_detail`. */
-            error_message?: string | null;
             unsigned_transaction?: string | null;
             transaction_hash?: string | null;
             /** @description The address that SIGNED the submitted transaction, recovered from the signature by the gateway at submit — a fact, not a client claim. Null where the gateway held no signature to recover from (a report-by-hash submit, where the wallet broadcast it itself) or where nothing has been submitted yet. This is what makes `release` gas attributable: that operation is payer-OR-payee, so whose cost it is depends on who signed. */
             sender?: string | null;
+            /** @description Amount in token BASE units. On capture and refund it is the amount the caller asked for. On void and release it is PROVISIONAL — those operations carry no amount and move the whole uncaptured escrow, so this is the capturable residual as of prepare, re-sealed with the exact on-chain amount when the indexer confirms. */
             amount?: string | null;
             block_number?: number | null;
             /** @description Gas units used, mirrored from the indexer on confirm. */
@@ -1293,13 +1533,25 @@ export interface components {
             error_reason?: string | null;
         };
         /** @enum {string} */
-        WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
+        WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
+        /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
+        Account: {
+            /** Format: uuid */
+            id?: string;
+            name?: string;
+            email?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
         Webhook: {
             /** Format: uuid */
             id?: string;
             name?: string;
             callback_url?: string;
-            topic?: components["schemas"]["WebhookTopic"];
+            /** @description Every event this subscription delivers. The delivery itself names the one that fired, in X-Rail0-Topic. */
+            topics?: components["schemas"]["WebhookTopic"][];
             active?: boolean;
             /** @enum {string} */
             circuit_state?: "closed" | "open";
@@ -1407,7 +1659,7 @@ export interface components {
         Page: number;
         /** @description Items per page (capped at 100). */
         PerPage: number;
-        /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+        /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
         Sort: string;
     };
     requestBodies: never;
@@ -1472,7 +1724,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Service healthy. Full body with a bearer token; status/db/timestamp only when anonymous. */
+            /** @description Service healthy. One public body for every caller — the endpoint is token-blind. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1481,7 +1733,7 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
-            /** @description Degraded (database unreachable). Same session-gated detail as the 200. */
+            /** @description Degraded (database unreachable). Same public body as the 200. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1539,7 +1791,45 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, or `signer_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (200). */
+            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or one of the four binding failures `siwe_domain_not_allowed` / `siwe_uri_mismatch` / `siwe_chain_mismatch` / `siwe_proof_expired` (each names the value the caller sent, never the gateway's expected value). An address with no gateway account is NOT a failure — it yields an account-less token (200). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    revokeAllSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description EIP-4361 SIWE message signed by the address, carrying the revoke-all statement. */
+                    message: string;
+                    /** @description Signature over the SIWE message (0x…). */
+                    signature: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Every session of the address issued before cutoff_at is revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description The proof failed verification (same SIWE codes as POST /auth) or carries the wrong statement (siwe_purpose_mismatch). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1582,7 +1872,7 @@ export interface operations {
                 chain_id?: number;
                 /** @description Token symbol to filter by (case-insensitive, e.g. USDC). */
                 symbol?: string;
-                /** @description Filter by active flag; omit for every token. */
+                /** @description Filter by active flag. OMITTED RETURNS EVERY TOKEN, retired ones included — this endpoint is the historical catalogue, so a payment created years ago still resolves its token. Only an active token may be used for a NEW payment (POST /payments answers 422 unknown_token otherwise), so a checkout picker should pass ?active=true. */
                 active?: boolean;
             };
             header?: never;
@@ -1598,6 +1888,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Token"][];
+                };
+            };
+        };
+    };
+    listAccounts: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Filter by whether the account holds the operator grant. */
+                admin?: boolean;
+                /** @description Filter by active status. */
+                active?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The accounts, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Display name. Unique. */
+                    name: string;
+                    /** @description Contact email. Unique. */
+                    email: string;
+                    /** @description The owner's wallet address (0x…40 hex). Vouched, not proven. */
+                    address: string;
+                    /** @description Label for the first wallet. */
+                    label?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The created account, whole record (Full entity). */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description A required field is missing or malformed. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description name, email or wallet address already taken. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
                 };
             };
         };
@@ -1634,7 +2010,7 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
-                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Restrict nested tokens to this chain ID (does not hide wallets). */
                 chain_id?: number;
@@ -2010,7 +2386,7 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
-                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Filter by dispute status. */
                 status?: "open" | "closed";
@@ -2043,9 +2419,10 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
-                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
-                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
+                /** @description Lifecycle state. Deliberately a HAPPY-PATH label, not a ledger: a partial operation does NOT move it, so a payment captured 100 and refunded 40 still reads `captured`, and a full refund that leaves uncaptured escrow does too. `capturable_amount` / `refundable_amount` are the authoritative residuals — reconcile on those, not on this. `partially_refunded` is retained for historical rows only and is no longer produced. */
+                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
                 mode?: "authorize" | "charge";
                 payer?: string;
                 payee?: string;
@@ -2064,6 +2441,8 @@ export interface operations {
                 created_from?: string;
                 /** @description Only payments created at/before this time (ISO-8601). */
                 created_to?: string;
+                /** @description Only payments carrying at least one transaction with this operation. */
+                operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund" | "dispute" | "close_dispute";
             };
             header?: never;
             path?: never;
@@ -2220,7 +2599,7 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
-                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund" | "dispute" | "close_dispute";
                 status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
@@ -2247,6 +2626,40 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    redrivePaymentTransaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The transaction row to redrive, resolved through the payment's own transactions - an id belonging to another payment answers 404. */
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted; the broadcaster was re-enqueued and the broadcast happens asynchronously. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The transaction is not in the redrivable state (`pending` with its `signed_transaction` stored). Code `not_redrivable`; the detail names the state the row is in. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     preparePaymentOperation: {
@@ -2305,7 +2718,7 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Payment not in a state that permits this operation. */
+            /** @description Payment not in a state that permits this operation. Inside the stranded-escrow window (after a partial capture, before authorization_expiry) the void and release refusals each name the other verb and the timestamp when release opens — the codes (not_voidable / authorization_not_expired) are unchanged and remain the field to branch on. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2591,8 +3004,17 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Pending close-dispute transaction with the unsigned payload (closing acts on the existing dispute, so never 201). */
+            /** @description Reused the existing pending close-dispute transaction. */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            /** @description Pending close-dispute transaction with the unsigned payload. */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2648,7 +3070,7 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
-                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Filter by dispute status. */
                 status?: "open" | "closed";
@@ -2678,7 +3100,7 @@ export interface operations {
         parameters: {
             query?: {
                 mode?: "authorize" | "charge";
-                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
+                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
                 /** @description Token address (0x…) — scopes volume to one token. */
                 token?: string;
                 chain_id?: number;
@@ -2710,7 +3132,7 @@ export interface operations {
         parameters: {
             query?: {
                 mode?: "authorize" | "charge";
-                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
+                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
                 /** @description Token address (0x…) — scopes volume to one token. */
                 token?: string;
                 chain_id?: number;
@@ -2743,7 +3165,7 @@ export interface operations {
         parameters: {
             query: {
                 mode?: "authorize" | "charge";
-                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "voided" | "released" | "refunded" | "partially_refunded";
+                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
                 /** @description Token address (0x…) — scopes volume to one token. */
                 token?: string;
                 chain_id?: number;
@@ -2779,9 +3201,9 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
-                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
-                /** @description Filter by topic. */
+                /** @description Filter to subscriptions that include this topic. */
                 topic?: components["schemas"]["WebhookTopic"];
                 /** @description Filter by active status. */
                 active?: boolean;
@@ -2823,7 +3245,13 @@ export interface operations {
                     name: string;
                     /** @description HTTPS destination URL. */
                     callback_url: string;
-                    topic: components["schemas"]["WebhookTopic"];
+                    /** @description Event topics for this subscription — one secret and one circuit breaker for all of them. Repeated values are collapsed. Exactly one of `topics` or `topic` must be sent. */
+                    topics?: components["schemas"]["WebhookTopic"][];
+                    /**
+                     * @deprecated
+                     * @description Deprecated alias for a single-element `topics`.
+                     */
+                    topic?: components["schemas"]["WebhookTopic"];
                 };
             };
         };
@@ -2901,6 +3329,12 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     callback_url?: string;
+                    /** @description REPLACES the whole set, so this is also how a topic is removed. The shared secret is untouched. */
+                    topics?: components["schemas"]["WebhookTopic"][];
+                    /**
+                     * @deprecated
+                     * @description Deprecated alias for a single-element `topics`.
+                     */
                     topic?: components["schemas"]["WebhookTopic"];
                 };
             };
@@ -3023,7 +3457,7 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
-                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). */
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Filter by delivery status. */
                 status?: "delivered" | "failed";
@@ -3031,6 +3465,8 @@ export interface operations {
                 topic?: components["schemas"]["WebhookTopic"];
                 /** @description Filter by the payment the delivery is for. */
                 payment_id?: string;
+                /** @description Filter by the subscriber's exact HTTP response code (e.g. 500). */
+                response_code?: string;
                 /** @description Only deliveries at/after this time (ISO-8601). */
                 since?: string;
                 /** @description Only deliveries at/before this time (ISO-8601). */
@@ -3169,8 +3605,8 @@ export interface operations {
                     block_number?: number;
                     /** @description Event position within the block (orders same-block confirms; optional, older indexers omit it). */
                     log_index?: number;
-                    /** @description On-chain bytes32 paymentId (diagnostics; recorded on a SyncError). */
-                    payment_id?: string;
+                    /** @description On-chain bytes32 paymentId, read from the event. REQUIRED: it is the compensating control for the submit-by-hash hole — /{operation}/submitted accepts a transaction hash no node has seen yet, so the Syncer's comparison of this value against the payment the transaction row belongs to is what rejects a squatted hash. It was optional, which meant a caller omitting it silently skipped that check. */
+                    payment_id: string;
                     /** @description Revert reason / raw error data (fail only). */
                     revert_reason?: string;
                     /** @description Gas units used (confirm and fail — a reverted transaction still burns gas). Decimal digits. */
@@ -3209,6 +3645,152 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    grantAdministrator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account being granted/revoked. */
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Why the grant exists — free-text audit context. */
+                    note?: string;
+                    /**
+                     * Format: date-time
+                     * @description Time-box the grant: past this instant it no longer opens the surface. Omit for no expiry.
+                     */
+                    expires_at?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The grant, whole record (Full entity): id, account_id, granted_by, note, expires_at, created_at. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The account already holds the grant. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description expiry_in_the_past: expires_at is not in the future. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    revokeAdministrator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account being granted/revoked. */
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description last_admin: the revoke would leave zero active admins. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    getAdminHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The fleet diagnostics and the divergence signal. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminHealth"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listSyncErrors: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Filter by rejection reason (e.g. payment_mismatch). */
+                reason?: string;
+                /** @description Filter by outcome. */
+                outcome?: "confirmed" | "failed";
+                /** @description Filter by transaction hash. */
+                tx_hash?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sync errors, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
 }
