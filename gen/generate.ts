@@ -407,6 +407,19 @@ export interface Blockchain {
   native_symbol?: string
   network_type?: string
   explorer_url?: string
+  /**
+   * Confirmations the gateway waits for before treating a transaction as settled — and
+   * the FALLBACK rule, not usually the one in force. Where \`finality_tag\` is set the
+   * gateway gates on that tag instead, so showing this number on such a chain describes
+   * a wait nobody applies. Read the pair, not the number.
+   */
+  required_confirmations?: number
+  /**
+   * The block tag the chain calls settled (\`safe\`, \`finalized\`) and what the gateway
+   * actually waits for. Null only where the chain serves neither, in which case
+   * \`required_confirmations\` is counted instead.
+   */
+  finality_tag?: string | null
 }
 export interface AssetBalance {
   symbol?: string

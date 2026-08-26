@@ -1344,6 +1344,10 @@ export interface components {
             native_symbol?: string;
             network_type?: string;
             explorer_url?: string;
+            /** @description Confirmations this gateway waits for before treating a transaction as settled. The FALLBACK rule: where the chain serves a finality tag (see finality_tag) that tag governs instead, so a client showing this number on such a chain is describing a rule that is not in force. */
+            required_confirmations?: number;
+            /** @description The block tag the chain calls settled (`safe`, `finalized`), when it serves one — and what the gateway actually gates on. Null where the chain serves none, in which case required_confirmations is counted. */
+            finality_tag?: string | null;
         };
         /** @description Public accepted-token view. The listing is not implicitly active-only (a payment references its token address forever, so a retired token must stay resolvable), so `active` tells a usable token from a retired one. */
         Token: {
