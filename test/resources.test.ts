@@ -454,6 +454,40 @@ describe('resource alignment', () => {
     })
   })
 
+  describe('auth.revokeAll', () => {
+    // The distinction that makes this endpoint worth having: logout ends ONE token,
+    // this ends every session of the address — including the ones the caller has
+    // never seen, which is the whole case for a leaked key.
+    it('POSTs to /auth/revoke_all and returns the cutoff', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(ok({ revoked: true, cutoff: '2026-08-27T21:00:00Z' }))
+
+      const res = await client.auth.revokeAll()
+
+      expect(res).toEqual({ revoked: true, cutoff: '2026-08-27T21:00:00Z' })
+      expect(String(spy.mock.calls[0]?.[0])).toContain('/auth/revoke_all')
+      expect((spy.mock.calls[0]?.[1] as RequestInit).method).toBe('POST')
+    })
+  })
+
+  describe('payments.redrive', () => {
+    // The transaction id is scoped to the payment by the gateway, so the path must carry
+    // both — a redrive addressed to the wrong payment is a 404, not someone else's retry.
+    it('POSTs to the payment-scoped redrive path', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(ok({ id: 'tx-1', status: 'pending', operation: 'capture' }))
+
+      const res = await client.payments.redrive(`0x${'ab'.repeat(32)}`, 'tx-1')
+
+      expect(res.id).toBe('tx-1')
+      const url = String(spy.mock.calls[0]?.[0])
+      expect(url).toContain(`/payments/0x${'ab'.repeat(32)}/transactions/tx-1/redrive`)
+      expect((spy.mock.calls[0]?.[1] as RequestInit).method).toBe('POST')
+    })
+  })
+
   // ── Auth login chainId ───────────────────────────────────────────────────
 
   describe('auth.logout', () => {
