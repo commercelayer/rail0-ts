@@ -105,6 +105,23 @@ export class PaymentsResource {
     return this.http.getPaginated(`/payments/${id}/transactions${buildQuery(params)}`)
   }
 
+  /**
+   * POST /payments/:id/transactions/:transaction_id/redrive — re-enqueue a stuck broadcast.
+   *
+   * For the one shape a retry can fix: a transaction that is `pending` and whose SIGNED
+   * bytes the gateway holds — prepared and signed, never landed on the chain (a worker
+   * that died between the two, a Sidekiq queue drained by hand). Nothing about the
+   * payment changes; the same signed bytes are handed to the broadcaster again.
+   *
+   * `Transaction.redrivable` is the same predicate the gateway guards this with, so a
+   * caller can offer the action exactly when it will succeed rather than discovering a
+   * 422. A `pending` row with no signed transaction is NOT redrivable — there the next
+   * step is submitting the signature, not retrying a send that never happened.
+   */
+  redrive(id: Bytes32, transactionId: string): Promise<Transaction> {
+    return this.http.post(`/payments/${id}/transactions/${transactionId}/redrive`, {})
+  }
+
   /** Store the payer's EIP-3009 signature (moves the payment to `signed`). */
   sign(id: Bytes32, params: PayerSignatureRequest): Promise<PaymentDetail> {
     return this.http.put(`/payments/${id}/sign`, params)

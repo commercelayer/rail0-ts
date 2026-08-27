@@ -193,7 +193,7 @@ client.setAuthToken(token) // now client.analytics/webhooks/… are authenticate
 
 ### `client.payments`
 
-`create(params, idempotencyKey?)` → `PaymentDetail` (pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
+`create(params, idempotencyKey?)` → `PaymentDetail` (pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
 
 Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transaction`):
 `authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason?)`/`dispute`, `closeDisputePrepare(id, reason?)`/`closeDispute`. A generic `prepare(id, op, body?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only, `release` either participant) and the payer-only `disputeSubmitByHash(id, { transaction_hash })` / `closeDisputeSubmitByHash(id, { transaction_hash })`.
@@ -207,6 +207,8 @@ All wallet methods are behind SIWE — a merchant manages its **own** wallets. `
 Accepted tokens: `addToken(accountId, id, { chain_id, token, default? })` → `WalletTokenHolding` (upsert — reactivates a disabled holding instead of duplicating it) · `removeToken(accountId, id, tokenId)` → `void` (soft, keeps the row) · `enableToken(accountId, id, tokenId)` / `disableToken(accountId, id, tokenId)` → `WalletTokenHolding` (404 when the wallet has no holding for that token). `tokenId` is the **token's** UUID (as in `WalletTokenHolding.token.…`), not an id of the holding row.
 
 A wallet with no accepted token is invisible to buyers and unusable as a payee: `GET /payment_methods` skips it and `payments.create` answers 422 `unsupported_payment_method`. Onboarding a merchant is therefore `create` **plus at least one** `addToken`.
+
+**`redrive` is for one shape of stuck, and the SDK tells you which.** A transaction that is `pending` and whose SIGNED bytes the gateway holds — prepared and signed, never landed (a worker that died between the two, a queue drained by hand) — can be handed to the broadcaster again; nothing about the payment changes. `Transaction.redrivable` is the same predicate the gateway guards the route with, so offer the action on that flag rather than discovering a `422`: a `pending` row with no signed transaction is **not** redrivable, and there the next step is submitting the signature, not retrying a send that never happened.
 
 Adding a wallet requires a **SIWE proof-of-ownership** of the address being added — not just the session JWT. Obtain a single-use nonce (`POST /auth/nonces`), build an EIP-4361 message whose `address` is the wallet being added, and sign it with **that wallet's own key** (the same handshake as login, but signed by the added wallet rather than the session wallet). Pass the resulting `message` + `signature` to `create`. The gateway rejects a signature that does not recover to `address` (422) and an address already registered anywhere (409 — addresses are globally unique). This lets a merchant prove control of several payee wallets under one account.
 
@@ -332,7 +334,9 @@ buyer-facing discovery on `client.paymentMethods`.
 
 ### `client.auth`
 
-`getNonce()` · `verify(message, signature)` → `AuthResponse` · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs).
+`getNonce()` · `verify(message, signature)` → `AuthResponse` · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs) · `logout()` → `{ revoked }` (this TOKEN) · `revokeAll()` → `{ revoked, cutoff }`.
+
+**`logout` and `revokeAll` answer different questions.** `logout` ends the session whose token this client carries, so signing out one device leaves the others signed in. `revokeAll` ends **every** session of the calling address — including the ones you have never seen, which is the whole case for a key you no longer trust: five live sessions would otherwise need five tokens you do not hold. The gateway records a **cutoff instant** rather than enumerating tokens, so a session minted a moment earlier is refused by its own `iat`. That instant is what `cutoff` carries, and it is the value worth logging: it says exactly which sessions died, which a boolean cannot.
 
 ### Logging
 

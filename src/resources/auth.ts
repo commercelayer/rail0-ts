@@ -176,6 +176,22 @@ export class AuthResource {
     return this.http.post<{ revoked: boolean }>('/auth/logout', {})
   }
 
+  /**
+   * POST /auth/revoke_all — end EVERY session of the calling address, not just this one.
+   *
+   * The answer to a key you no longer trust. `logout` is per TOKEN, so a leaked key with
+   * five live sessions needs five tokens you do not have; this is per ADDRESS and reaches
+   * the ones you never saw. The gateway records a cutoff instant rather than enumerating
+   * tokens, so a session minted a moment earlier is refused by its own `iat` — including
+   * any the attacker is holding.
+   *
+   * `cutoff` is that instant. It is the value worth logging: it says exactly which
+   * sessions died, which a boolean cannot.
+   */
+  revokeAll(): Promise<{ revoked: boolean; cutoff: string }> {
+    return this.http.post<{ revoked: boolean; cutoff: string }>('/auth/revoke_all', {})
+  }
+
   /** POST /auth — submit a signed SIWE message and receive a JWT. */
   verify(message: string, signature: string): Promise<AuthResponse> {
     return this.http
