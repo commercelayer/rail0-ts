@@ -151,7 +151,14 @@ const errorHints: Record<string, string> = {
   unknown_token: "the token isn't configured on this chain",
   no_active_contract: 'no active RAIL0 contract on that chain',
   missing_param: 'a required parameter is missing from the request',
-  forbidden: 'not permitted for this session — on create the payer must be the signed-in address',
+  // A BARE forbidden is not a party mismatch: the gateway split those into codes of
+  // their own (not_the_payee, not_the_payer, wallet_deactivated, not_your_account)
+  // because they need different fixes, and its own catalogue reads "this session is
+  // not allowed to perform that operation". This entry kept describing one of the
+  // split-out cases long after the split, so an admin whose operator grant lapsed was
+  // told about payers — and the rule it named no longer exists in the gateway at all.
+  forbidden:
+    'not permitted for this session — typically the operator grant, a resource owned by another account, or a transaction signed by the wrong wallet',
   idempotency_key_reused:
     'that Idempotency-Key was already used for a payment with different terms — reuse it only to retry the same request, or pick a new key',
 }
