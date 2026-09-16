@@ -210,26 +210,22 @@ A wallet with no accepted token is invisible to buyers and unusable as a payee: 
 
 **`redrive` is for one shape of stuck, and the SDK tells you which.** A transaction that is `pending` and whose SIGNED bytes the gateway holds — prepared and signed, never landed (a worker that died between the two, a queue drained by hand) — can be handed to the broadcaster again; nothing about the payment changes. `Transaction.redrivable` is the same predicate the gateway guards the route with, so offer the action on that flag rather than discovering a `422`: a `pending` row with no signed transaction is **not** redrivable, and there the next step is submitting the signature, not retrying a send that never happened.
 
-Adding a wallet requires a **SIWE proof-of-ownership** of the address being added — not just the session JWT. Obtain a single-use nonce (`POST /auth/nonces`), build an EIP-4361 message whose `address` is the wallet being added, and sign it with **that wallet's own key** (the same handshake as login, but signed by the added wallet rather than the session wallet). Pass the resulting `message` + `signature` to `create`. The gateway rejects a signature that does not recover to `address` (422) and an address already registered anywhere (409 — addresses are globally unique). This lets a merchant prove control of several payee wallets under one account.
+Adding a wallet requires a **SIWE proof-of-ownership** of the address being added — not just the session JWT. `auth.proveAddress(privateKeyHex, domain, chainId?)` runs that handshake and returns the `message` + `signature` to hand to `create`. Sign with **the added wallet's own key**, not the session key: the gateway rejects a signature that does not recover to `address` (422), and an address already registered anywhere (409 — addresses are globally unique). This lets a merchant prove control of several payee wallets under one account.
 
 ```ts
-import { buildSiweMessage, checksumAddress, personalSign } from '@rail0/sdk'
-
-const { nonce } = await client.auth.getNonce()
 const added = checksumAddress(addedWalletKey)
-// Build + sign an EIP-4361 message for the wallet being added (its OWN key).
-// `address` must be EIP-55 checksummed and `uri`'s host must equal `domain`.
-const message = buildSiweMessage({
-  domain: 'api.rail0.xyz',
-  address: added,
-  uri: 'https://api.rail0.xyz',
-  chainId: 1,
-  nonce,
-  statement: 'Sign in to RAIL0',
-})
-const signature = personalSign(addedWalletKey, message)
+const { message, signature } = await client.auth.proveAddress(addedWalletKey, 'api.rail0.xyz')
 await client.wallets.create(accountId, { address: added, message, signature, label: 'Payouts' })
 ```
+
+**The proof is purpose-bound, and a login proof will not do.** The gateway pins each endpoint to one statement and refuses the other with 422 `siwe_purpose_mismatch`:
+
+| Endpoint | Statement | Constant |
+|---|---|---|
+| `POST /auth` | `Sign in to RAIL0` | `LOGIN_STATEMENT` |
+| `POST /accounts/:id/wallets` | `Add this wallet to your RAIL0 account` | `WALLET_LINK_STATEMENT` |
+
+That is a security boundary rather than a label: a login signature is handed out on every sign-in, so a wallet-link endpoint that accepted one would let anyone holding a captured login proof bind that address to their **own** account. `proveAddress` picks the right statement for you — reach for `buildSiweMessage` directly only if you are signing with an external wallet or hardware signer, and pass `WALLET_LINK_STATEMENT` when you do.
 
 ### `client.paymentMethods` (public)
 
