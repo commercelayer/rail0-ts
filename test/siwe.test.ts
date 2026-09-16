@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Rail0Client } from '../src/client.js'
-import { buildSiweMessage, checksumAddress } from '../src/resources/auth.js'
+import {
+  buildSiweMessage,
+  checksumAddress,
+  LOGIN_STATEMENT,
+  WALLET_LINK_STATEMENT,
+} from '../src/resources/auth.js'
 
 // The EIP-4361 message is built in-SDK (no `siwe`/`ethers` dependency), so these
 // tests are the ONLY thing standing between a whitespace slip and a gateway that
@@ -154,6 +159,70 @@ describe('auth.login message', () => {
         `Issued At: ${body.message.split('Issued At: ')[1]}`,
     )
     expect(body.signature).toMatch(/^0x[0-9a-f]{130}$/i)
+    vi.restoreAllMocks()
+  })
+})
+
+describe('SIWE statements are purpose-bound', () => {
+  // The gateway binds each endpoint to exactly one statement
+  // (Policy::SIWE_LOGIN_STATEMENT / SIWE_WALLET_LINK_STATEMENT) and answers the
+  // other with 422 siwe_purpose_mismatch. rail0-go shipped a ProveAddress that
+  // reused the login message verbatim, which broke `wallets create` outright and
+  // went unnoticed because no test had ever asserted the statement. These two
+  // pin both directions so the pair cannot converge again.
+  //
+  // The separation is a security property, not a label: a login signature is
+  // handed out on every sign-in, so a wallet-link endpoint that accepted one
+  // would let anyone holding a captured login proof bind that address to their
+  // own account.
+
+  it('login signs the login statement and not the wallet-link one', async () => {
+    const client = new Rail0Client({ baseUrl: 'http://localhost:3000' })
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ nonce: NONCE, expires_at: '2099-01-01T00:00:00Z' })),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            token: 't',
+            address: ADDRESS,
+            account_id: null,
+            name: null,
+            expires_at: '2099-01-01T00:00:00Z',
+          }),
+        ),
+      )
+
+    await client.auth.login(KEY, 'localhost:3000')
+    const body = JSON.parse((spy.mock.calls[1]?.[1] as RequestInit).body as string)
+
+    expect(body.message).toContain(LOGIN_STATEMENT)
+    expect(body.message).not.toContain(WALLET_LINK_STATEMENT)
+    vi.restoreAllMocks()
+  })
+
+  it('proveAddress signs the wallet-link statement, and does not authenticate', async () => {
+    const client = new Rail0Client({ baseUrl: 'http://localhost:3000' })
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ nonce: NONCE, expires_at: '2099-01-01T00:00:00Z' })),
+      )
+
+    const proof = await client.auth.proveAddress(KEY, 'localhost:3000')
+
+    expect(proof.message).toContain(WALLET_LINK_STATEMENT)
+    expect(proof.message).not.toContain(LOGIN_STATEMENT)
+    expect(proof.message).toContain(`Nonce: ${NONCE}`)
+    expect(proof.signature).toMatch(/^0x[0-9a-f]{130}$/i)
+
+    // Only the nonce endpoint is hit: proving an address must NOT POST /auth —
+    // the wallet write is authorized by the caller's own session, which may be a
+    // different address entirely.
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0]?.[0]).toContain('/auth/nonces')
     vi.restoreAllMocks()
   })
 })

@@ -20,7 +20,9 @@ export {
   AuthResource,
   buildSiweMessage,
   checksumAddress,
+  LOGIN_STATEMENT,
   personalSign,
+  WALLET_LINK_STATEMENT,
 } from './resources/auth.js'
 export { ChainsResource } from './resources/chains.js'
 export { DisputesResource } from './resources/disputes.js'

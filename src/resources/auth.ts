@@ -61,6 +61,28 @@ export interface SiweMessageParams {
  * answer `invalid_siwe` ("Could not parse SIWE message"). Joining the parts with
  * '\n' reproduces both cases exactly (the same construction the ruby gem uses).
  */
+/**
+ * The SIWE statement for signing in — `POST /auth`.
+ *
+ * Kept identical to rail0-go's and rail0-ruby's, so every SDK puts the same text
+ * in front of the user for the same handshake.
+ */
+export const LOGIN_STATEMENT = 'Sign in to RAIL0'
+
+/**
+ * The SIWE statement for proving ownership of a wallet being registered —
+ * `POST /accounts/:id/wallets`.
+ *
+ * A SEPARATE statement, and the separation is the security property rather than
+ * cosmetic: the gateway binds each endpoint to exactly one of these
+ * (Policy::SIWE_LOGIN_STATEMENT / SIWE_WALLET_LINK_STATEMENT) and refuses the
+ * other with 422 `siwe_purpose_mismatch`. A login signature is handed out on
+ * every sign-in, so a wallet-link endpoint that also accepted one would let
+ * anyone holding a captured login proof bind that address to their OWN account.
+ * Never collapse the two back into a single constant.
+ */
+export const WALLET_LINK_STATEMENT = 'Add this wallet to your RAIL0 account'
+
 export function buildSiweMessage(params: SiweMessageParams): string {
   const statement =
     params.statement === undefined || params.statement === '' ? '\n' : `\n${params.statement}\n`
@@ -228,23 +250,69 @@ export class AuthResource {
    *   is configured with a different login chain.
    */
   async login(privateKeyHex: string, domain: string, chainId = 1): Promise<AuthResponse> {
+    const { message, signature } = await this.signProof(
+      privateKeyHex,
+      domain,
+      chainId,
+      LOGIN_STATEMENT,
+    )
+    return this.verify(message, signature)
+  }
+
+  /**
+   * SIWE proof-of-ownership of the address controlled by `privateKeyHex`, to
+   * hand to `wallets.create` as its `message` + `signature`.
+   *
+   * The same handshake as {@link login} — fetch a single-use nonce, build an
+   * EIP-4361 message, sign it with EIP-191 personal_sign — but it stops short of
+   * POST /auth: it does NOT authenticate the client. Registering a wallet proves
+   * control of the ADDED address, while the request itself is authorized by the
+   * caller's existing session, and the two addresses may differ (a merchant may
+   * register several payee wallets).
+   *
+   * `privateKeyHex` must therefore be the key OF the address being added, not the
+   * session key — the gateway rejects a signature that does not recover to
+   * `address` with 422.
+   *
+   * @param privateKeyHex - 0x-prefixed or raw hex private key (32 bytes) of the
+   *   address being registered
+   * @param domain - host of the API server, e.g. "api.rail0.xyz"
+   * @param chainId - chain id embedded in the message; same meaning and default
+   *   as {@link login}
+   */
+  async proveAddress(
+    privateKeyHex: string,
+    domain: string,
+    chainId = 1,
+  ): Promise<{ message: string; signature: string }> {
+    return this.signProof(privateKeyHex, domain, chainId, WALLET_LINK_STATEMENT)
+  }
+
+  /**
+   * The shared core of both handshakes. Everything but the STATEMENT is
+   * identical, which is exactly why the statement is a parameter and never a
+   * default: see the note on the two constants above.
+   */
+  private async signProof(
+    privateKeyHex: string,
+    domain: string,
+    chainId: number,
+    statement: string,
+  ): Promise<{ message: string; signature: string }> {
     const { nonce } = await this.getNonce()
     const address = checksumAddress(privateKeyHex)
 
     // Strip port from domain — the API's siwe_domain is host-only (e.g. "localhost")
     const siweHost = domain.split(':')[0] as string
 
-    // Statement kept identical to rail0-go's signSIWE, so both SDKs put the same
-    // text in front of the user for the same handshake.
     const message = buildSiweMessage({
       domain: siweHost,
       address,
       uri: `http://${domain}`,
       chainId,
       nonce,
-      statement: 'Sign in to RAIL0',
+      statement,
     })
-    const signature = personalSign(privateKeyHex, message)
-    return this.verify(message, signature)
+    return { message, signature: personalSign(privateKeyHex, message) }
   }
 }
