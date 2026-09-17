@@ -196,7 +196,15 @@ client.setAuthToken(token) // now client.analytics/webhooks/… are authenticate
 `create(params, idempotencyKey?)` → `PaymentDetail` (pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
 
 Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transaction`):
-`authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason?)`/`dispute`, `closeDisputePrepare(id, reason?)`/`closeDispute`. A generic `prepare(id, op, body?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only, `release` either participant) and the payer-only `disputeSubmitByHash(id, { transaction_hash })` / `closeDisputeSubmitByHash(id, { transaction_hash })`.
+`authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason?)`/`dispute`, `closeDisputePrepare(id, reason?)`/`closeDispute`. A generic `prepare(id, op, body?, opts?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only, `release` either participant) and the payer-only `disputeSubmitByHash(id, { transaction_hash })` / `closeDisputeSubmitByHash(id, { transaction_hash })`.
+
+`getTransaction(id, transactionId)` reads ONE of a payment's transactions. This is the lookup for an `action_id`: anything handed a transaction id when an operation was accepted resolves it directly, instead of fetching the payment and scanning its transactions for an id it already holds. `redrive(id, transactionId)` re-enqueues a stuck broadcast.
+
+**Idempotency.** Every `prepare` takes an optional `{ idempotencyKey }`. Without it, a retry arriving after the first transaction was signed and broadcast opens a **second** one — correct for a genuine sequential partial capture, wrong for a retry, and only the caller can tell those apart. Same key with different terms is refused `422 idempotency_key_reused`; the key is scoped to the payment.
+
+```ts
+await client.payments.capturePrepare(id, '50.00', { idempotencyKey: orderId })
+```
 
 **Refund** is two-phase: `refundPrepare(id, { amount })` returns a `Transaction` carrying a `signing_payload`; sign it with `signRefund`, then `refundPrepare(id, { amount, signature })` returns the unsigned on-chain tx to sign + `refund()`.
 
@@ -279,6 +287,19 @@ timestamp, secret)` is exposed for when you need to diff the two sides to debug 
 rejection, and `tolerance` / `nowSeconds` are injectable. No `node:crypto`: the digest
 comes from `@noble/hashes`, already a dependency, so the helper works wherever the rest
 of the SDK does (a test pins byte-equality with node's implementation).
+
+### Pagination
+
+Every `PaginatedResponse<T>` carries `{ data, meta }`. `meta` is `{ page, per_page, total, total_pages, links }`.
+
+`total_pages` is **zero** for an empty collection — "no pages" is what there are, so a pager rendered off it renders none. `links` comes from the `Link` header: `first` and `last` are always present, `prev` and `next` only where they exist, and the object is empty when the collection is. The URIs are **relative** (path + query) and resolve against the URL you requested — the gateway emits them that way so they cannot advertise the wrong scheme through a TLS-terminating proxy.
+
+```ts
+let page = await client.payments.list({ per_page: 100 })
+while (page.meta.links.next) {
+  page = await client.payments.list({ page: page.meta.page + 1, per_page: 100 })
+}
+```
 
 ### `client.disputes` (JWT)
 

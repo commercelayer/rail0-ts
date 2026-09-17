@@ -70,6 +70,16 @@ export interface ListDisputesParams {
   per_page?: number
 }
 
+/** Opt-in idempotency for the prepare endpoints. */
+export interface IdempotentRequest {
+  /** Client-chosen key; replaying it returns the transaction the first call created. */
+  idempotencyKey?: string
+}
+
+function idempotencyHeader(opts?: IdempotentRequest): Record<string, string> | undefined {
+  return opts?.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined
+}
+
 export class PaymentsResource {
   constructor(private readonly http: HttpClient) {}
 
@@ -106,6 +116,19 @@ export class PaymentsResource {
   }
 
   /**
+   * Fetch ONE of a payment's transactions by id — the read the list could only answer by
+   * returning every row (commercelayer/rail0-gateway#330).
+   *
+   * This is the lookup for an `action_id`: anything that was handed a transaction id when
+   * an operation was accepted resolves it directly, instead of fetching the payment and
+   * scanning its transactions for an id it already holds. Participant-readable; an unknown,
+   * malformed or foreign transaction id all answer 404 alike.
+   */
+  getTransaction(id: Bytes32, transactionId: string): Promise<Transaction> {
+    return this.http.get(`/payments/${id}/transactions/${transactionId}`)
+  }
+
+  /**
    * POST /payments/:id/transactions/:transaction_id/redrive — re-enqueue a stuck broadcast.
    *
    * For the one shape a retry can fix: a transaction that is `pending` and whose SIGNED
@@ -138,12 +161,20 @@ export class PaymentsResource {
   // dispute/close/prepare) — use disputePrepare/dispute and closeDisputePrepare/
   // closeDispute, not this generic form.
   /** Build the unsigned transaction for an operation. */
+  /**
+   * `opts.idempotencyKey` makes a repeat safe. Without it, a retry that arrives after the
+   * first transaction was signed and broadcast opens a SECOND one — correct for a genuine
+   * sequential partial capture, wrong for a retry, and only the caller can tell those
+   * apart (commercelayer/rail0-gateway#331). Same key with different terms is refused 422
+   * `idempotency_key_reused`; the key is scoped to this payment.
+   */
   prepare(
     id: Bytes32,
     operation: TransactionOperation,
     body?: PrepareRequest,
+    opts?: IdempotentRequest,
   ): Promise<Transaction> {
-    return this.http.post(`/payments/${id}/${operation}/prepare`, body)
+    return this.http.post(`/payments/${id}/${operation}/prepare`, body, idempotencyHeader(opts))
   }
 
   /** Broadcast a signed transaction for an operation (HTTP 202, async). */
@@ -218,16 +249,28 @@ export class PaymentsResource {
   }
 
   /** Open a dispute (payer, signal-only). Optional bytes32 reason code. */
-  disputePrepare(id: Bytes32, reason?: string): Promise<Transaction> {
-    return this.http.post(`/payments/${id}/dispute/prepare`, reason ? { reason } : undefined)
+  disputePrepare(id: Bytes32, reason?: string, opts?: IdempotentRequest): Promise<Transaction> {
+    return this.http.post(
+      `/payments/${id}/dispute/prepare`,
+      reason ? { reason } : undefined,
+      idempotencyHeader(opts),
+    )
   }
   dispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(`/payments/${id}/dispute`, params)
   }
 
   /** Close a dispute (payer). Optional bytes32 reason code. */
-  closeDisputePrepare(id: Bytes32, reason?: string): Promise<Transaction> {
-    return this.http.post(`/payments/${id}/dispute/close/prepare`, reason ? { reason } : undefined)
+  closeDisputePrepare(
+    id: Bytes32,
+    reason?: string,
+    opts?: IdempotentRequest,
+  ): Promise<Transaction> {
+    return this.http.post(
+      `/payments/${id}/dispute/close/prepare`,
+      reason ? { reason } : undefined,
+      idempotencyHeader(opts),
+    )
   }
   closeDispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(`/payments/${id}/dispute/close`, params)

@@ -582,6 +582,14 @@ export interface PageMeta {
   page: number
   per_page: number
   total: number
+  /** Pages at this `per_page`. Zero for an empty collection: "no pages" is what there are. */
+  total_pages: number
+  /**
+   * RFC 8288 links off the `Link` header — `first`/`last` always, `prev`/`next` only
+   * where they exist, and none at all on an empty collection. The URIs are RELATIVE and
+   * resolve against the URL you requested.
+   */
+  links: { first?: string; prev?: string; next?: string; last?: string }
 }
 export interface PaginatedResponse<T> {
   data: T[]

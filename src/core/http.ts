@@ -140,6 +140,29 @@ function retryAfterSeconds(response: Response): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
+/**
+ * RFC 8288 `Link` into `{ rel: uri }`. The gateway emits RELATIVE references
+ * (path + query) so they cannot advertise the wrong scheme through a
+ * TLS-terminating proxy — resolve them against the URL you requested.
+ * Absent on an empty collection, which is why every rel is optional.
+ */
+function parseLinkHeader(raw: string | null): {
+  first?: string
+  prev?: string
+  next?: string
+  last?: string
+} {
+  const out: Record<string, string> = {}
+  if (!raw) return out
+  for (const part of raw.split(',')) {
+    const m = part.match(/<([^>]+)>\s*;\s*rel="([^"]+)"/)
+    const uri = m?.[1]
+    const rel = m?.[2]
+    if (uri && rel) out[rel] = uri
+  }
+  return out
+}
+
 export class HttpClient {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
@@ -199,9 +222,16 @@ export class HttpClient {
    * bare JSON array and carries pagination in the `x-total-count` / `x-page` /
    * `x-per-page` response headers, which we fold into `meta` (matching rail0-go).
    */
-  async getPaginated<T>(
-    path: string,
-  ): Promise<{ data: T[]; meta: { page: number; per_page: number; total: number } }> {
+  async getPaginated<T>(path: string): Promise<{
+    data: T[]
+    meta: {
+      page: number
+      per_page: number
+      total: number
+      total_pages: number
+      links: { first?: string; prev?: string; next?: string; last?: string }
+    }
+  }> {
     const { data, headers } = await this.send<T[]>('GET', path)
     const arr = Array.isArray(data) ? data : []
     const num = (name: string, fallback: number): number => {
@@ -215,6 +245,13 @@ export class HttpClient {
         page: num('x-page', 1),
         per_page: num('x-per-page', arr.length),
         total: num('x-total-count', arr.length),
+        // Derived locally when absent, so a gateway older than
+        // commercelayer/rail0-gateway#332 still yields a usable number instead of 0.
+        total_pages: num(
+          'x-total-pages',
+          Math.max(Math.ceil(arr.length / Math.max(arr.length, 1)), 1),
+        ),
+        links: parseLinkHeader(headers.get('link')),
       },
     }
   }
