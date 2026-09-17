@@ -406,7 +406,7 @@ export interface paths {
         put?: never;
         /**
          * Enable a token (chain) this wallet accepts
-         * @description Upserts an accepted token/chain combination for the wallet — the same combinations exposed by GET /payment_methods and enforced by POST /payments. Re-enabling a previously-disabled holding reactivates its row (never duplicates). 201 when created, 200 when an existing holding is updated.
+         * @description Upserts an accepted token/chain combination for the wallet — the same combinations exposed by GET /payment_methods and enforced by POST /payments. Re-enabling a previously-disabled holding reactivates its row rather than duplicating it (200 vs 201 on a first enable). THE DEFAULT: a wallet that accepts anything keeps exactly one, so the FIRST token enabled takes the role unasked, and `default: true` here is how it is switched OVER — the successor is promoted and the incumbent demoted in the same request. `default: false` on the CURRENT default is refused 422 `default_payment_method`: clearing it without naming a successor would leave the wallet with no preferred method and nothing saying so.
          */
         post: operations["enableWalletToken"];
         delete?: never;
@@ -433,7 +433,7 @@ export interface paths {
         post?: never;
         /**
          * Disable a token this wallet accepts (soft delete)
-         * @description Soft-disables the accepted token/chain holding (active:false), removing it from discovery/creation while keeping the row. Re-enable via POST.
+         * @description Soft-disables the accepted token/chain holding (active:false), removing it from discovery/creation while keeping the row. Re-enable via POST. Refused 422 `default_payment_method` when the holding is the wallet's ACTIVE default — switch the default over first (POST with default:true on its successor). An INACTIVE holding still carrying the flag is not protected: that is a row already stood down when its chain left service.
          */
         delete: operations["disableWalletToken"];
         options?: never;
@@ -488,7 +488,7 @@ export interface paths {
         head?: never;
         /**
          * Disable an existing token holding
-         * @description Disables an existing holding (active:false). Returns 404 if the wallet has no holding for the token.
+         * @description Disables an existing holding (active:false). Returns 404 if the wallet has no holding for the token, and 422 `default_payment_method` when it is the wallet's active default — switch the default over first.
          */
         patch: operations["disableExistingWalletToken"];
         trace?: never;
@@ -620,6 +620,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payments/{id}/transactions/{transaction_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The transaction row to read, resolved through the payment's own transactions - an id belonging to another payment answers 404. */
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Fetch one of a payment's transactions
+         * @description Reads a single transaction by id - the read the list endpoint could only answer by returning every row. Anything holding a transaction id (the `action_id` an asynchronous integration is handed when an operation is accepted) resolves it directly, instead of fetching the payment and scanning its transactions for an id it already has. Participant-only (bearerAuth): readable by the payment's payer or payee. A caller who is party to neither gets 404 rather than 403, so the response never confirms the payment exists; an unknown, malformed or foreign transaction id answers 404 the same way.
+         */
+        get: operations["getPaymentTransaction"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payments/{id}/transactions/{transaction_id}/redrive": {
         parameters: {
             query?: never;
@@ -635,7 +659,7 @@ export interface paths {
         put?: never;
         /**
          * Re-enqueue a stuck broadcast for this transaction (payee only)
-         * @description On-demand doorbell for the recovery the Janitor already performs at cadence: a `pending` transaction still holding its `signed_transaction` is a broadcast the queue lost (a hard worker kill drops the in-flight job), and this re-enqueues the broadcaster for it NOW instead of waiting for the recovery tick. Same redrivable predicate, same enqueue, no new state and no new worker. Payee-only, like the other operation writes. Idempotent under double-click: the broadcaster re-checks under the row lock before sending, so a duplicate enqueue is harmless and never double-broadcasts. Any other state is refused with 422 `not_redrivable`, the detail naming the state the row IS in (a pending row without its signed transaction has nothing to broadcast; submitting/submitted already reached the send; confirmed is settled; a failed row's repair path is the operation's /submitted endpoint, not another send).
+         * @description On-demand doorbell for the recovery the Recovery already performs at cadence: a `pending` transaction still holding its `signed_transaction` is a broadcast the queue lost (a hard worker kill drops the in-flight job), and this re-enqueues the broadcaster for it NOW instead of waiting for the recovery tick. Same redrivable predicate, same enqueue, no new state and no new worker. Payee-only, like the other operation writes. Idempotent under double-click: the broadcaster re-checks under the row lock before sending, so a duplicate enqueue is harmless and never double-broadcasts. Any other state is refused with 422 `not_redrivable`, the detail naming the state the row IS in (a pending row without its signed transaction has nothing to broadcast; submitting/submitted already reached the send; confirmed is settled; a failed row's repair path is the operation's /submitted endpoint, not another send).
          */
         post: operations["redrivePaymentTransaction"];
         delete?: never;
@@ -1188,10 +1212,50 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Operator diagnostics: worker fleet + divergence signal (admin)
-         * @description The worker fleet figures GET /health used to return to any valid JWT (Redis reachability, live worker process count, enqueued backlog), plus `divergences`: the standing count of `balance_divergence` sync errors — confirms whose reported balances disagreed with the gateway's own mirror, which the Syncer records and never rejects. Admin only, and deliberately not on the public GET /health: that endpoint is token-blind, and publishing a detector's own verdicts would tell whoever is probing /sync whether their payload landed. Always 200 — this is operator diagnostics, never a liveness probe: a down fleet is the content (`sidekiq.status: "down"`), and the only 503 in the health surface is the public GET /health's DB gate. Backed by the same 5s-cached probe as GET /health, so polling adds no Redis load.
+         * Operator diagnostics: every standing failure condition, with a verdict (admin)
+         * @description The operator's view of what is wrong RIGHT NOW: a top-level `status` (the worst of the checks) and a named check per condition, each carrying its figures AND a `describes` sentence saying what they mean. Admin only, and deliberately never on the public GET /health: queue depth tells an observer when settlement is lagging, which is when a load-based attack lands hardest (#153), and `indexer_intake` goes further — it says whether indexing is blind. Always 200: diagnostics, not a liveness probe, so a degraded system is the CONTENT; the only 503 in the health surface is the public probe's DB gate. BREAKING (Sep 2026): `sidekiq` and `divergences` were top-level and now live at `checks.workers.fleet` and `checks.balances` — nesting is what lets a caller read one `status` without knowing every check's name, and lets checks be added without a new top-level key each time.
          */
         get: operations["getAdminHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/catalog/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebuild this process's chain-config cache (admin)
+         * @description Chain config is read once at boot into an in-memory snapshot so hot paths never query the DB for it; after a seed changes a chain, a token or an RPC endpoint, the running process keeps serving what it read at boot. This rebuilds that snapshot. ONE PROCESS: it refreshes the process that serves this request, so a deployment with a web machine and a worker machine has two snapshots and several web machines have several — this is the tool for a single-process environment, not a fleet-wide invalidation, for which a restart is still the only honest instrument. Answers the counts it now holds, because "reloaded" alone cannot distinguish a snapshot that picked up the change from one that rebuilt the same rows.
+         */
+        post: operations["reloadCatalog"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/transactions/timeseries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Transactions handled per time bucket (admin)
+         * @description What the GATEWAY has been doing: transactions handled per slice of time, across every account, with the failed count beside each total. Not the merchant rollup with a wider scope — GET /analytics/timeseries counts one account's ORDERS, this counts the machine's broadcasts. Buckets: minute, hour, day, week, month (default hour). `from`/`to` bound the window; omitted, each interval defaults to a span sized for it (minute → 2h, hour → 48h, day → 30d, week → 26w, month → 24m). The window is echoed in the response, because a caller that named none cannot otherwise label an axis. A window wider than 750 buckets is REFUSED with 422 window_too_wide rather than truncated: a chart missing its tail reads as a quiet period rather than as a clipped answer.
+         */
+        get: operations["adminTransactionThroughput"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1212,6 +1276,70 @@ export interface paths {
          * @description Why a /sync callback could not be applied — written by the Syncer for exactly this. Admin only. Filters: reason, outcome (confirmed|failed), tx_hash; sort and pagination. Full entity.
          */
         get: operations["listSyncErrors"];
+        put?: never;
+        post?: never;
+        /**
+         * Clear sync errors (admin)
+         * @description Delete rows from the sync-error ledger, honouring the SAME filters as the listing (reason, outcome, tx_hash) — so a clear removes what the caller is looking at rather than whatever the table holds. Unfiltered it empties the table, which is what an operator's Clear button is for; the confirmation belongs at the click. The table is otherwise append-only — nothing prunes it on a clock — so this is the only way rows leave it. NOTE: balance_divergence rows live here too and GET /admin/health reports their standing count, so an unfiltered clear resets that count; filter by reason to keep them. Answers the number of rows deleted.
+         */
+        delete: operations["clearSyncErrors"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/blockchains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every configured blockchain (admin)
+         * @description Every chain this environment knows about, out-of-service ones included. This is NOT the public GET /blockchains with more columns: that endpoint answers "what can I pay with" and lists only active chains carrying an active token, so it filters away exactly the rows an operator opens this page to see. Unpaginated — bounded configuration, not a ledger. Scoped to the environment's network class, so a testnet environment never lists mainnet chains. Admin only. Full entity.
+         */
+        get: operations["listAdminBlockchains"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every configured token (admin)
+         * @description Every token this environment knows about, including those on chains that are not in service. The public GET /tokens is already the historical catalogue (a retired token stays resolvable) but stops at ACTIVE chains. Unpaginated. Admin only. Full entity.
+         */
+        get: operations["listAdminTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/contracts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every non-archived RAIL0 deployment (admin)
+         * @description Every non-archived RAIL0 deployment known to this environment. Read with /admin/blockchains it answers what a configured chain still needs before it can serve: a chain with no deployment here cannot take a payment. Archived deployments are excluded — nothing may reference one again. Unpaginated. Admin only. Full entity.
+         */
+        get: operations["listAdminContracts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1280,33 +1408,136 @@ export interface components {
             active_chains: number;
             active_contracts: number;
         };
-        /** @description Operator diagnostics for GET /admin/health: the Sidekiq worker fleet detail and the balance-divergence signal, always 200 (a down fleet is the content, not an error — this is not a liveness probe). */
+        /** @description Operator diagnostics for GET /admin/health: one verdict plus a named check per standing failure condition, always 200 (a degraded system is the content, not an error — this is not a liveness probe). Every figure is computed on request from state the gateway already keeps; nothing here is a counter anyone increments. */
         AdminHealth: {
-            /** @description Worker fleet health (does not gate liveness anywhere). */
-            sidekiq: {
-                /**
-                 * @description ok = Redis up and >=1 live worker; degraded = Redis up but no live worker; down = Redis unreachable.
-                 * @enum {string}
-                 */
-                status?: "ok" | "degraded" | "down";
-                /** @enum {string} */
-                redis?: "ok" | "error";
-                /** @description Live Sidekiq process count (present only when Redis is up). */
-                processes?: number;
-                /** @description Total enqueued jobs across queues (present only when Redis is up). */
-                enqueued?: number;
-            };
-            /** @description Balance-divergence signal over `sync_errors` rows with `reason: balance_divergence` — confirms the gateway applied even though the reported capturable/refundable disagreed with its own mirror. Filtered on that one reason: the all-reasons ledger is GET /admin/sync_errors. */
-            divergences: {
-                /** @description All-time count. The table is never pruned, so this is the full history — context, not the alert. */
-                total: number;
-                /** @description Rows created in the trailing 24 hours. */
-                last_24h: number;
-                /**
-                 * Format: date-time
-                 * @description When the most recent divergence landed, or null when there are none. The figure to act on: a monotonic total says nothing about now.
-                 */
-                latest_at: string | null;
+            /**
+             * @description The worst of the checks. Exists so "is anything wrong" can be read without knowing which checks there are, nor which will be added later.
+             * @enum {string}
+             */
+            status: "ok" | "degraded" | "error";
+            checks: {
+                /** @description Whether the Sidekiq fleet is reachable and processing. Jobs queue silently when it is not, so nothing fails — it just stops happening. */
+                workers: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    /** @description The fleet detail this endpoint has always returned. */
+                    fleet?: {
+                        /**
+                         * @description ok = Redis up and >=1 live worker; degraded = Redis up but no live worker; down = Redis unreachable.
+                         * @enum {string}
+                         */
+                        status?: "ok" | "degraded" | "down";
+                        /** @enum {string} */
+                        redis?: "ok" | "error";
+                        /** @description Live Sidekiq process count (present only when Redis is up). */
+                        processes?: number;
+                        /** @description Total enqueued jobs across queues (present only when Redis is up). */
+                        enqueued?: number;
+                    };
+                };
+                /** @description Transactions broadcast longer ago than SUBMITTED_TX_TTL that the chain HAS and no confirmation has arrived for. Above zero means the indexer has stopped reporting — not that the payments failed. The Recovery leaves these rows alone rather than expiring them, so this is the gateway's only standing signal that indexing has gone blind. */
+                indexer_intake: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    unconfirmed?: number;
+                    /**
+                     * Format: date-time
+                     * @description When the oldest such transaction was broadcast, or null when there are none.
+                     */
+                    oldest_broadcast?: string | null;
+                };
+                /** @description Indexer callbacks the gateway accepted but could not apply (not_found, chain_mismatch, unapplicable). Each is an on-chain event the mirror never recorded. Excludes balance_divergence, which is its own check — one counter mixing "the numbers disagreed" with "we could not apply it at all" is unreadable. */
+                sync_callbacks: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    unapplied?: number;
+                    /**
+                     * Format: date-time
+                     * @description When the most recent one landed, or null.
+                     */
+                    latest_at?: string | null;
+                };
+                /** @description Confirms whose reported balances disagreed with the gateway's own recomputation. The indexer's numbers are applied anyway — this is the second witness over them. */
+                balances: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    /** @description All-time count; the table is never pruned, so this is history — context, not the alert. */
+                    total?: number;
+                    last_24h?: number;
+                    /**
+                     * Format: date-time
+                     * @description When the most recent divergence landed, or null. The figure to act on: a monotonic total says nothing about now.
+                     */
+                    latest_at?: string | null;
+                };
+                /** @description Signed transactions the gateway holds but has not managed to broadcast, past two redrive cycles. Above zero means the Recovery's redrive itself is not landing. */
+                broadcasts: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    awaiting?: number;
+                    /**
+                     * Format: date-time
+                     * @description When the oldest stuck row was last touched, or null.
+                     */
+                    oldest_since?: string | null;
+                };
+                /** @description Subscriptions whose circuit breaker tripped after repeated delivery failures. Those merchants receive no events at all until it is reset. */
+                webhooks: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    circuits_open?: number;
+                    /**
+                     * Format: date-time
+                     * @description When the most recent circuit opened, or null.
+                     */
+                    latest_at?: string | null;
+                };
+                /** @description Active chains whose deployed contract is not the version this gateway signs for. Payer signatures do not verify there, because the EIP-712 domain is built from Rail0::VERSION globally. Until now this existed only as a boot-time log line, gone the moment it scrolled. */
+                contracts: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    /** @description Rail0::VERSION — the version every active contract must be on. */
+                    expected?: string;
+                    /** @description chain_id → the version actually deployed there. Empty when every active chain agrees. */
+                    diverging?: {
+                        [key: string]: string;
+                    };
+                };
             };
             /** Format: date-time */
             timestamp: string;
@@ -1337,6 +1568,14 @@ export interface components {
             /** Format: date-time */
             expires_at?: string;
         };
+        /** @description The RAIL0 deployment a NEW payment on this chain is opened against — what escrows the payer's funds, and which version of it. Nothing here is a disclosure: the address is on-chain, every payment response already carries it as `rail0_contract`, and the explorer shows its verified source. It is published so a client does not carry its own address-per-chain table and go quietly stale on the next rollout. Null only for a chain with no deployment, which cannot appear in this listing anyway. The operator's bookkeeping (start_block, active/archived) stays on /admin/contracts: it describes how this gateway and its indexer are run, not what a payer is signing into. */
+        ChainContract: {
+            address?: string;
+            /** @description Semver of the deployed contract. Every active deployment agrees on the one the gateway targets. */
+            version?: string;
+            /** Format: date-time */
+            deployed_at?: string;
+        } | null;
         /** @description Public blockchain view. */
         Blockchain: {
             chain_id?: number;
@@ -1536,6 +1775,55 @@ export interface components {
             signed_transaction?: string | null;
             error_reason?: string | null;
         };
+        AdminBlockchain: components["schemas"]["Blockchain"] & {
+            /** Format: uuid */
+            id?: string;
+            /** @description Public providers, tried in serial. The first one wins, so its health decides the chain's. */
+            rpc_urls?: string[];
+            /** @description False for a chain that is configured but not in service. Such a chain never appears in the public GET /blockchains. */
+            active?: boolean;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        AdminToken: components["schemas"]["Token"] & {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            blockchain_id?: string;
+            /** @description The token's own name() — NOT interchangeable between chains. USDC answers "USDC" on some and "USD Coin" on others, and the wrong one yields a payload whose signature the token rejects only at broadcast. */
+            eip712_name?: string;
+            eip712_version?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        /** @description Full RAIL0 deployment row (admin surfaces only). Read alongside AdminBlockchain: a chain with no row here cannot take a payment, which is what keeps it out of service. */
+        AdminContract: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            blockchain_id?: string;
+            address?: string;
+            /** @description Semver, and every ACTIVE deployment must agree on the one the code targets. */
+            version?: string;
+            /** Format: date-time */
+            deployed_at?: string;
+            /** @description Where the indexer starts. Null means the deployment block. */
+            start_block?: number | null;
+            /** @description The single deployment new payments are opened against, at most one per chain. */
+            active?: boolean;
+            /** @description Always false here: the listing excludes archived deployments. */
+            archived?: boolean;
+            /** Format: date-time */
+            archived_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
         /** @enum {string} */
         WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
         /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
@@ -1670,6 +1958,10 @@ export interface components {
     headers: {
         /** @description Total items before pagination. */
         XTotalCount: number;
+        /** @description Number of pages at this per_page. Zero for an empty collection - "no pages" is what there are, so a pager rendered off this renders none. */
+        XTotalPages: number;
+        /** @description RFC 8288 pagination links: first and last always, prev and next only where they exist. The URIs are RELATIVE (path and query, resolved against the URI you requested) and carry every other filter and sort you sent, so following one does not silently change the query. Absent when the collection is empty. */
+        Link: string;
         /** @description Current page. */
         XPage: number;
         /** @description Items per page. */
@@ -2039,6 +2331,8 @@ export interface operations {
             200: {
                 headers: {
                     "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
                     "x-page": components["headers"]["XPage"];
                     "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
@@ -2298,6 +2592,13 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description The holding is the wallet's ACTIVE default payment method. `code` is `default_payment_method` — switch the default over first (POST .../tokens with default:true on the successor, which demotes this one in the same request). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     enableExistingWalletToken: {
@@ -2356,6 +2657,13 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description The holding is the wallet's ACTIVE default payment method. `code` is `default_payment_method` — switch the default over first (POST .../tokens with default:true on the successor, which demotes this one in the same request). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listPaymentMethods: {
@@ -2405,6 +2713,8 @@ export interface operations {
             200: {
                 headers: {
                     "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
                     "x-page": components["headers"]["XPage"];
                     "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
@@ -2458,6 +2768,8 @@ export interface operations {
             200: {
                 headers: {
                     "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
                     "x-page": components["headers"]["XPage"];
                     "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
@@ -2620,12 +2932,40 @@ export interface operations {
             200: {
                 headers: {
                     "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
                     "x-page": components["headers"]["XPage"];
                     "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Transaction"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getPaymentTransaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The transaction row to read, resolved through the payment's own transactions - an id belonging to another payment answers 404. */
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The transaction. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transaction"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -2669,7 +3009,10 @@ export interface operations {
     preparePaymentOperation: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Client-supplied key; a replay returns the transaction the first call created, with 200 instead of 201. Bound to the request as well as the key: the same key with different terms (a corrected amount, another dispute reason) is refused 422 `idempotency_key_reused` rather than answered with the first transaction. Scoped to this payment. Without it a retry that arrives after the first transaction was signed and broadcast opens a SECOND transaction, which is the correct behaviour for a genuine sequential partial capture and the wrong one for a retry - only the caller can tell those apart. */
+                "Idempotency-Key"?: string;
+            };
             path: {
                 id: string;
                 /** @description Payment operation namespace. These six are the operations reachable through the generic namespace; `dispute`/`close_dispute` are payer-only and have their own dedicated routes. The set of operations a stored transaction can CARRY is wider — see `Transaction.operation`. */
@@ -2916,7 +3259,10 @@ export interface operations {
     prepareDispute: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Client-supplied key; a replay returns the transaction the first call created, with 200 instead of 201. Bound to the request as well as the key: the same key with different terms (a corrected amount, another dispute reason) is refused 422 `idempotency_key_reused` rather than answered with the first transaction. Scoped to this payment. Without it a retry that arrives after the first transaction was signed and broadcast opens a SECOND transaction, which is the correct behaviour for a genuine sequential partial capture and the wrong one for a retry - only the caller can tell those apart. */
+                "Idempotency-Key"?: string;
+            };
             path: {
                 id: string;
             };
@@ -2993,7 +3339,10 @@ export interface operations {
     prepareCloseDispute: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Client-supplied key; a replay returns the transaction the first call created, with 200 instead of 201. Bound to the request as well as the key: the same key with different terms (a corrected amount, another dispute reason) is refused 422 `idempotency_key_reused` rather than answered with the first transaction. Scoped to this payment. Without it a retry that arrives after the first transaction was signed and broadcast opens a SECOND transaction, which is the correct behaviour for a genuine sequential partial capture and the wrong one for a retry - only the caller can tell those apart. */
+                "Idempotency-Key"?: string;
+            };
             path: {
                 id: string;
             };
@@ -3224,6 +3573,8 @@ export interface operations {
             200: {
                 headers: {
                     "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
                     "x-page": components["headers"]["XPage"];
                     "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
@@ -3488,6 +3839,8 @@ export interface operations {
             200: {
                 headers: {
                     "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
                     "x-page": components["headers"]["XPage"];
                     "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
@@ -3749,7 +4102,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The fleet diagnostics and the divergence signal. */
+            /** @description The verdict and every check behind it. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3760,6 +4113,81 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    reloadCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the rebuilt snapshot holds. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reloaded?: boolean;
+                        blockchains?: number;
+                        tokens?: number;
+                        contracts?: number;
+                        payment_blockchains?: number;
+                        /** Format: date-time */
+                        reloaded_at?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    adminTransactionThroughput: {
+        parameters: {
+            query?: {
+                /** @description Bucket size: minute, hour, day, week or month. */
+                interval?: "minute" | "hour" | "day" | "week" | "month";
+                /** @description Window start (ISO-8601). Defaults to a span sized for the interval. */
+                from?: string;
+                /** @description Window end (ISO-8601). Defaults to now. */
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The series and the window it covers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        interval?: "minute" | "hour" | "day" | "week" | "month";
+                        /** Format: date-time */
+                        from?: string;
+                        /** Format: date-time */
+                        to?: string;
+                        /** @description False only on a gateway that has never handled a transaction at all. It exists so an empty `buckets` can be read correctly: a quiet window on a working gateway, or nothing ever — which usually means the client is pointed at an environment that has never taken a payment. An existence check, not a count. */
+                        any_transactions?: boolean;
+                        buckets?: {
+                            /** Format: date-time */
+                            bucket?: string;
+                            transactions?: number;
+                            failed?: number;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
         };
     };
     listSyncErrors: {
@@ -3791,6 +4219,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": Record<string, never>;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    clearSyncErrors: {
+        parameters: {
+            query?: {
+                /** @description Only rows with this rejection reason. */
+                reason?: string;
+                /** @description Only rows for this callback type. */
+                outcome?: "confirmed" | "failed";
+                /** @description Only rows for this transaction hash. */
+                tx_hash?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description How many rows were deleted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example 12 */
+                        deleted: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminBlockchains: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole catalogue, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminBlockchain"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole catalogue, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminToken"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminContracts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole catalogue, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminContract"][];
                 };
             };
             401: components["responses"]["Unauthorized"];

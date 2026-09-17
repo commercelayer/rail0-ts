@@ -94,7 +94,7 @@ describe('resource alignment', () => {
         default: true,
         active: true,
       })
-      expect(res.meta).toEqual({ page: 1, per_page: 25, total: 1 })
+      expect(res.meta).toEqual({ page: 1, per_page: 25, total: 1, total_pages: 1, links: {} })
       const url = String(spy.mock.calls[0]?.[0])
       expect(url).toContain(`/accounts/${ACCOUNT_ID}/wallets`)
       expect(url).toContain('default=true')

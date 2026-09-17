@@ -634,6 +634,14 @@ export interface PageMeta {
   page: number
   per_page: number
   total: number
+  /** Pages at this \`per_page\`. Zero for an empty collection: "no pages" is what there are. */
+  total_pages: number
+  /**
+   * RFC 8288 links off the \`Link\` header — \`first\`/\`last\` always, \`prev\`/\`next\` only
+   * where they exist, and none at all on an empty collection. The URIs are RELATIVE and
+   * resolve against the URL you requested.
+   */
+  links: { first?: string; prev?: string; next?: string; last?: string }
 }
 export interface PaginatedResponse<T> {
   data: T[]
@@ -741,6 +749,16 @@ export interface ListDisputesParams {
   per_page?: number
 }
 
+/** Opt-in idempotency for the prepare endpoints. */
+export interface IdempotentRequest {
+  /** Client-chosen key; replaying it returns the transaction the first call created. */
+  idempotencyKey?: string
+}
+
+function idempotencyHeader(opts?: IdempotentRequest): Record<string, string> | undefined {
+  return opts?.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined
+}
+
 export class PaymentsResource {
   constructor(private readonly http: HttpClient) {}
 
@@ -769,6 +787,36 @@ export class PaymentsResource {
     return this.http.getPaginated(\`/payments/\${id}/transactions\${buildQuery(params)}\`)
   }
 
+  /**
+   * Fetch ONE of a payment's transactions by id — the read the list could only answer by
+   * returning every row (commercelayer/rail0-gateway#330).
+   *
+   * This is the lookup for an \`action_id\`: anything that was handed a transaction id when
+   * an operation was accepted resolves it directly, instead of fetching the payment and
+   * scanning its transactions for an id it already holds. Participant-readable; an unknown,
+   * malformed or foreign transaction id all answer 404 alike.
+   */
+  getTransaction(id: Bytes32, transactionId: string): Promise<Transaction> {
+    return this.http.get(\`/payments/\${id}/transactions/\${transactionId}\`)
+  }
+
+  /**
+   * POST /payments/:id/transactions/:transaction_id/redrive — re-enqueue a stuck broadcast.
+   *
+   * For the one shape a retry can fix: a transaction that is \`pending\` and whose SIGNED
+   * bytes the gateway holds — prepared and signed, never landed on the chain (a worker
+   * that died between the two, a Sidekiq queue drained by hand). Nothing about the
+   * payment changes; the same signed bytes are handed to the broadcaster again.
+   *
+   * \`Transaction.redrivable\` is the same predicate the gateway guards this with, so a
+   * caller can offer the action exactly when it will succeed rather than discovering a
+   * 422. A \`pending\` row with no signed transaction is NOT redrivable — there the next
+   * step is submitting the signature, not retrying a send that never happened.
+   */
+  redrive(id: Bytes32, transactionId: string): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/transactions/\${transactionId}/redrive\`, {})
+  }
+
   /** Store the payer's EIP-3009 signature (moves the payment to \`signed\`). */
   sign(id: Bytes32, params: PayerSignatureRequest): Promise<PaymentDetail> {
     return this.http.put(\`/payments/\${id}/sign\`, params)
@@ -785,8 +833,20 @@ export class PaymentsResource {
   // dispute/close/prepare) — use disputePrepare/dispute and closeDisputePrepare/
   // closeDispute, not this generic form.
   /** Build the unsigned transaction for an operation. */
-  prepare(id: Bytes32, operation: TransactionOperation, body?: PrepareRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/\${operation}/prepare\`, body)
+  /**
+   * \`opts.idempotencyKey\` makes a repeat safe. Without it, a retry that arrives after the
+   * first transaction was signed and broadcast opens a SECOND one — correct for a genuine
+   * sequential partial capture, wrong for a retry, and only the caller can tell those
+   * apart (commercelayer/rail0-gateway#331). Same key with different terms is refused 422
+   * \`idempotency_key_reused\`; the key is scoped to this payment.
+   */
+  prepare(
+    id: Bytes32,
+    operation: TransactionOperation,
+    body?: PrepareRequest,
+    opts?: IdempotentRequest,
+  ): Promise<Transaction> {
+    return this.http.post(\`/payments/\${id}/\${operation}/prepare\`, body, idempotencyHeader(opts))
   }
 
   /** Broadcast a signed transaction for an operation (HTTP 202, async). */
@@ -853,16 +913,24 @@ export class PaymentsResource {
   }
 
   /** Open a dispute (payer, signal-only). Optional bytes32 reason code. */
-  disputePrepare(id: Bytes32, reason?: string): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/dispute/prepare\`, reason ? { reason } : undefined)
+  disputePrepare(id: Bytes32, reason?: string, opts?: IdempotentRequest): Promise<Transaction> {
+    return this.http.post(
+      \`/payments/\${id}/dispute/prepare\`,
+      reason ? { reason } : undefined,
+      idempotencyHeader(opts),
+    )
   }
   dispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(\`/payments/\${id}/dispute\`, params)
   }
 
   /** Close a dispute (payer). Optional bytes32 reason code. */
-  closeDisputePrepare(id: Bytes32, reason?: string): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/dispute/close/prepare\`, reason ? { reason } : undefined)
+  closeDisputePrepare(id: Bytes32, reason?: string, opts?: IdempotentRequest): Promise<Transaction> {
+    return this.http.post(
+      \`/payments/\${id}/dispute/close/prepare\`,
+      reason ? { reason } : undefined,
+      idempotencyHeader(opts),
+    )
   }
   closeDispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
     return this.http.post(\`/payments/\${id}/dispute/close\`, params)
