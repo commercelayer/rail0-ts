@@ -385,7 +385,7 @@ function signFromPayload(
       break
     default:
       throw new Error(
-        `unsupported EIP-712 primaryType: ${payload.primaryType} (expected TransferWithAuthorization or ReceiveWithAuthorization) — upgrade @rail0/sdk`,
+        `unsupported EIP-712 primaryType: ${payload.primaryType} (expected TransferWithAuthorization or ReceiveWithAuthorization) — upgrade @commercelayer/rail0-sdk`,
       )
   }
   const { message, domain } = payload
