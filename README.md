@@ -1,4 +1,4 @@
-# @rail0/sdk
+# @commercelayer/rail0-sdk
 
 TypeScript SDK for the [RAIL0](https://github.com/commercelayer/rail0) stablecoin payment gateway.
 
@@ -12,15 +12,15 @@ RAIL0 brings the authorize → capture → refund lifecycle of card networks to 
 ## Installation
 
 ```bash
-npm install @rail0/sdk
+npm install @commercelayer/rail0-sdk
 # or
-pnpm add @rail0/sdk
+pnpm add @commercelayer/rail0-sdk
 ```
 
 ## Quick start
 
 ```typescript
-import { packSignature, Rail0Client, signPayment, signTransaction } from '@rail0/sdk'
+import { packSignature, Rail0Client, signPayment, signTransaction } from '@commercelayer/rail0-sdk'
 
 const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz' })
 
@@ -118,7 +118,7 @@ Convert between a human decimal and the token's base-unit integer string, with
 string/BigInt math (no float rounding):
 
 ```typescript
-import { toBaseUnits, formatAmount } from '@rail0/sdk'
+import { toBaseUnits, formatAmount } from '@commercelayer/rail0-sdk'
 
 toBaseUnits('1.50', 6) // → '1500000'   (USDC has 6 decimals)
 formatAmount('1500000', 6) // → '1.5'   (trailing zeros trimmed)
@@ -260,7 +260,7 @@ the signed string precisely so that a captured delivery cannot be replayed forev
 checking the digest alone is not verification.
 
 ```ts
-import { verifyWebhookSignature, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER } from '@rail0/sdk'
+import { verifyWebhookSignature, WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER } from '@commercelayer/rail0-sdk'
 
 export async function POST(request: Request) {
   // The RAW body. Verify before JSON.parse — re-serialising a parsed object changes
@@ -360,7 +360,7 @@ buyer-facing discovery on `client.paymentMethods`.
 Pass any `(entry: LogEntry) => void` as `logger`, or the built-in `debugLogger`:
 
 ```typescript
-import { debugLogger } from '@rail0/sdk'
+import { debugLogger } from '@commercelayer/rail0-sdk'
 const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz', logger: debugLogger })
 // [rail0] POST 202 https://.../payments/0x.../authorize 87ms
 ```
@@ -371,7 +371,7 @@ Every 4xx / 5xx throws a `Rail0ApiError` carrying the gateway's code/title/detai
 triple, plus `.status` (HTTP code) and — on `429` — `.retryAfter`:
 
 ```typescript
-import { Rail0ApiError } from '@rail0/sdk'
+import { Rail0ApiError } from '@commercelayer/rail0-sdk'
 
 try {
   await client.payments.capture(id, { signed_transaction })
@@ -425,6 +425,22 @@ pnpm typecheck
 #   override with RAIL0_SCHEMA_PATH=/abs/path/openapi.json  (or RAIL0_SCHEMA_URL)
 pnpm generate
 ```
+
+### Publishing
+
+```bash
+pnpm publish:npm
+```
+
+`prepublishOnly` runs the same four steps CI runs — lint, typecheck, test, build — so the
+tarball can only be cut from a tree that passes them; `pnpm publish` then refuses a dirty
+working tree or a branch other than `main`. Publish from `main` after the release commit is
+merged, never from a feature branch.
+
+The package is public under the `@commercelayer` scope (`publishConfig.access`), so the
+account running it needs publish rights on that scope. Nothing in this repo holds a
+registry token: authenticate with `npm login` (or a `NODE_AUTH_TOKEN` in the environment)
+and never commit one.
 
 ## Project structure
 

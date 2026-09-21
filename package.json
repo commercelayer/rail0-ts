@@ -1,5 +1,5 @@
 {
-  "name": "@rail0/sdk",
+  "name": "@commercelayer/rail0-sdk",
   "version": "1.0.0",
   "description": "TypeScript SDK for the RAIL0 stablecoin payment API",
   "keywords": [
@@ -15,13 +15,13 @@
     "base",
     "sdk"
   ],
-  "homepage": "https://github.com/rail0/sdk#readme",
+  "homepage": "https://github.com/commercelayer/rail0-ts#readme",
   "bugs": {
-    "url": "https://github.com/rail0/sdk/issues"
+    "url": "https://github.com/commercelayer/rail0-ts/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rail0/sdk.git"
+    "url": "git+https://github.com/commercelayer/rail0-ts.git"
   },
   "license": "MIT",
   "type": "module",
@@ -49,7 +49,9 @@
     "lint": "biome check src gen examples test",
     "lint:fix": "biome check --write src gen examples test",
     "format": "biome format --write src gen examples test",
-    "release": "pnpm update && pnpm format && pnpm lint:fix && pnpm typecheck && pnpm test && pnpm build"
+    "release": "pnpm update && pnpm format && pnpm lint:fix && pnpm typecheck && pnpm test && pnpm build",
+    "prepublishOnly": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "publish:npm": "pnpm publish"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.2",
