@@ -217,6 +217,72 @@ export const stablecoins = {
       },
     },
   },
+  // ── Testnets ─────────────────────────────────────────────────────────────
+  // Every address below was read off its own chain, and each token list is the
+  // immutable acceptedTokens() allowlist of the RAIL0 deployment there — which is
+  // what a payment on that chain can actually use.
+  'arc-testnet': {
+    chainId: 5042002,
+    tokens: {
+      USDC: {
+        address: '0x3600000000000000000000000000000000000000',
+        decimals: 6,
+        eip3009: true,
+        eip2612: true,
+      },
+      EURC: {
+        address: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a',
+        decimals: 6,
+        eip3009: true,
+        eip2612: true,
+      },
+    },
+  },
+  // Celo Sepolia is 11142220. rail0-go filed this chain under 44787 — that is
+  // ALFAJORES, a different and now-retired network — with a USDC address that has no
+  // code on this chain. Corrected there in the same round; do not "restore" it.
+  'celo-sepolia': {
+    chainId: 11142220,
+    tokens: {
+      USDC: {
+        address: '0x01C5C0122039549AD1493B8220cABEdD739BC44E',
+        decimals: 6,
+        eip3009: true,
+        eip2612: true,
+      },
+      'USD₮': {
+        address: '0xd077A400968890Eacc75cdc901F0356c943e4fDb',
+        decimals: 6,
+        eip3009: true,
+        eip2612: true,
+      },
+    },
+  },
+  // PYUSD is the first non-Circle token served, and the reason this chain is served
+  // at all — it is issued nowhere else.
+  //
+  // Signing against PYUSD directly: its EIP-712 domain name is 'PayPal USD', not the
+  // symbol, and its version is '1', which version() does not expose (it reverts).
+  // Through a RAIL0 payment this never bites, because the domain arrives in the
+  // gateway's signing_payload; building it by hand from the symbol produces a
+  // signature the token rejects.
+  'ethereum-sepolia': {
+    chainId: 11155111,
+    tokens: {
+      USDC: {
+        address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+        decimals: 6,
+        eip3009: true,
+        eip2612: true,
+      },
+      PYUSD: {
+        address: '0xCaC524BcA292aaade2DF8A05cC58F0a65B1B3bB9',
+        decimals: 6,
+        eip3009: true,
+        eip2612: true,
+      },
+    },
+  },
 } as const satisfies Record<string, { chainId: number; tokens: Record<string, StablecoinInfo> }>
 
 export type StablecoinChain = keyof typeof stablecoins
