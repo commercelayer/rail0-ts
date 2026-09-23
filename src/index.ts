@@ -22,6 +22,7 @@ export {
   checksumAddress,
   LOGIN_STATEMENT,
   personalSign,
+  REVOKE_ALL_STATEMENT,
   WALLET_LINK_STATEMENT,
 } from './resources/auth.js'
 export { ChainsResource } from './resources/chains.js'

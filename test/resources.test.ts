@@ -457,17 +457,27 @@ describe('resource alignment', () => {
   describe('auth.revokeAll', () => {
     // The distinction that makes this endpoint worth having: logout ends ONE token,
     // this ends every session of the address — including the ones the caller has
-    // never seen, which is the whole case for a leaked key.
-    it('POSTs to /auth/revoke_all and returns the cutoff', async () => {
+    // never seen, which is the whole case for a leaked key. It is authorized by a
+    // FRESH proof of the address carrying its own statement: an empty body is a 400,
+    // and a login proof a 422.
+    it('signs a revoke-all proof and returns the cutoff', async () => {
       const spy = vi
         .spyOn(globalThis, 'fetch')
-        .mockResolvedValueOnce(ok({ revoked: true, cutoff: '2026-08-27T21:00:00Z' }))
+        .mockResolvedValueOnce(ok({ nonce: 'abc123nonce9', expires_at: '2030-01-01T00:00:00Z' }))
+        .mockResolvedValueOnce(ok({ revoked_all: true, cutoff_at: '2026-08-27T21:00:00Z' }))
 
-      const res = await client.auth.revokeAll()
+      const res = await client.auth.revokeAll(
+        '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+        'api.rail0.xyz',
+      )
 
-      expect(res).toEqual({ revoked: true, cutoff: '2026-08-27T21:00:00Z' })
-      expect(String(spy.mock.calls[0]?.[0])).toContain('/auth/revoke_all')
-      expect((spy.mock.calls[0]?.[1] as RequestInit).method).toBe('POST')
+      expect(res).toEqual({ revokedAll: true, cutoffAt: '2026-08-27T21:00:00Z' })
+      const url = String(spy.mock.calls[1]?.[0])
+      expect(url).toContain('/auth/revoke_all')
+      const body = JSON.parse(String((spy.mock.calls[1]?.[1] as RequestInit).body))
+      expect(body.message).toContain('Sign out of RAIL0 everywhere')
+      expect(body.message).toContain('abc123nonce9')
+      expect(body.signature).toMatch(/^0x[0-9a-f]{130}$/)
     })
   })
 

@@ -83,6 +83,15 @@ export const LOGIN_STATEMENT = 'Sign in to RAIL0'
  */
 export const WALLET_LINK_STATEMENT = 'Add this wallet to your RAIL0 account'
 
+/**
+ * The SIWE statement for revoking every session of an address — `POST /auth/revoke_all`.
+ *
+ * A third purpose, bound to its endpoint like the two above
+ * (Policy::SIWE_REVOKE_ALL_STATEMENT), so a login or wallet-link proof cannot be replayed
+ * to sign someone out everywhere, nor a revoke-all proof to sign in.
+ */
+export const REVOKE_ALL_STATEMENT = 'Sign out of RAIL0 everywhere'
+
 export function buildSiweMessage(params: SiweMessageParams): string {
   const statement =
     params.statement === undefined || params.statement === '' ? '\n' : `\n${params.statement}\n`
@@ -199,19 +208,38 @@ export class AuthResource {
   }
 
   /**
-   * POST /auth/revoke_all — end EVERY session of the calling address, not just this one.
+   * POST /auth/revoke_all — end EVERY session of an address, not just this one.
    *
    * The answer to a key you no longer trust. `logout` is per TOKEN, so a leaked key with
    * five live sessions needs five tokens you do not have; this is per ADDRESS and reaches
    * the ones you never saw. The gateway records a cutoff instant rather than enumerating
    * tokens, so a session minted a moment earlier is refused by its own `iat` — including
-   * any the attacker is holding.
+   * any the attacker is holding, and including this client's own.
    *
-   * `cutoff` is that instant. It is the value worth logging: it says exactly which
-   * sessions died, which a boolean cannot.
+   * Authorized by a FRESH SIWE PROOF of the address, not by the session: whoever reacts to
+   * a leaked key holds the wallet, not the stolen token. So it takes the key and the
+   * gateway host, like {@link login}, and signs a message carrying
+   * {@link REVOKE_ALL_STATEMENT}. It used to post an empty body — refused 400 on every
+   * call — and to read `revoked`/`cutoff`, which the gateway never sent.
+   *
+   * `cutoffAt` is that instant, and the value worth logging: it says exactly which
+   * sessions died, which a boolean cannot. Sign in again afterwards.
+   *
+   * @param privateKeyHex - 0x-prefixed or raw hex private key of the address
+   * @param domain - host of the API server, e.g. "api.rail0.xyz"
+   * @param chainId - same meaning and default as {@link login}
    */
-  revokeAll(): Promise<{ revoked: boolean; cutoff: string }> {
-    return this.http.post<{ revoked: boolean; cutoff: string }>('/auth/revoke_all', {})
+  async revokeAll(
+    privateKeyHex: string,
+    domain: string,
+    chainId = 1,
+  ): Promise<{ revokedAll: boolean; cutoffAt: string }> {
+    const proof = await this.signProof(privateKeyHex, domain, chainId, REVOKE_ALL_STATEMENT)
+    const r = await this.http.post<{ revoked_all: boolean; cutoff_at: string }>(
+      '/auth/revoke_all',
+      proof,
+    )
+    return { revokedAll: r.revoked_all, cutoffAt: r.cutoff_at }
   }
 
   /** POST /auth — submit a signed SIWE message and receive a JWT. */
@@ -289,7 +317,7 @@ export class AuthResource {
   }
 
   /**
-   * The shared core of both handshakes. Everything but the STATEMENT is
+   * The shared core of the three handshakes. Everything but the STATEMENT is
    * identical, which is exactly why the statement is a parameter and never a
    * default: see the note on the two constants above.
    */
