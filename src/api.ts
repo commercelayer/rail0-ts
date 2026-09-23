@@ -565,7 +565,7 @@ export interface paths {
         };
         /**
          * Get a payment with embedded transactions and optional signing payload
-         * @description Participant-only: readable only by the payment's payer or payee (bearerAuth), not by anyone who learns the id. The payer authenticates with an account-less SIWE token. 401 without a token, 403 for a non-participant. An active admin reads ANY payment, whole record (Full entity): signatures, broadcast bookkeeping, error diagnostics — the operator's debugging view.
+         * @description Participant-only: readable only by the payment's payer or payee (bearerAuth), not by anyone who learns the id. The payer authenticates with an account-less SIWE token. 401 without a token, 403 for a non-participant. An active admin reads ANY payment through the Full entity: everything a participant reads (chain_id, rail0_contract, the escrow fields, the embedded transactions, and signing_payload while unsigned) plus every column — signatures, broadcast bookkeeping, error diagnostics. The operator's debugging view, a superset of the participant's, so an admin who is party to the payment can act on it.
          */
         get: operations["getPayment"];
         put?: never;
