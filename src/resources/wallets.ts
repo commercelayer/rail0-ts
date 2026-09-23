@@ -1,5 +1,6 @@
 // GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.
 import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
 import type {
   AddWalletTokenRequest,
   CreateWalletRequest,
@@ -41,12 +42,12 @@ export class WalletsResource {
     account_id: string,
     params?: ListWalletsParams,
   ): Promise<PaginatedResponse<WalletWithTokens>> {
-    return this.http.getPaginated(`/accounts/${account_id}/wallets${buildQuery(params)}`)
+    return this.http.getPaginated(path`/accounts/${account_id}/wallets` + buildQuery(params))
   }
 
   /** Fetch a single wallet by UUID or 0x address. */
   get(account_id: string, id_or_address: string): Promise<Wallet> {
-    return this.http.get(`/accounts/${account_id}/wallets/${id_or_address}`)
+    return this.http.get(path`/accounts/${account_id}/wallets/${id_or_address}`)
   }
 
   /**
@@ -57,22 +58,22 @@ export class WalletsResource {
    * not recover to `address` (422) and an address already registered anywhere (409).
    */
   create(account_id: string, params: CreateWalletRequest): Promise<Wallet> {
-    return this.http.post(`/accounts/${account_id}/wallets`, params)
+    return this.http.post(path`/accounts/${account_id}/wallets`, params)
   }
 
   /** Update a wallet's label or active flag. */
   update(account_id: string, id: string, params: UpdateWalletRequest): Promise<Wallet> {
-    return this.http.patch(`/accounts/${account_id}/wallets/${id}`, params)
+    return this.http.patch(path`/accounts/${account_id}/wallets/${id}`, params)
   }
 
   /** Soft-delete (deactivate) a wallet. */
   delete(account_id: string, id: string): Promise<void> {
-    return this.http.delete(`/accounts/${account_id}/wallets/${id}`)
+    return this.http.delete(path`/accounts/${account_id}/wallets/${id}`)
   }
 
   /** Read a wallet's live on-chain balances (native + tokens). */
   balances(account_id: string, id: string, params?: WalletBalancesParams): Promise<WalletBalances> {
-    return this.http.get(`/accounts/${account_id}/wallets/${id}/balances${buildQuery(params)}`)
+    return this.http.get(path`/accounts/${account_id}/wallets/${id}/balances` + buildQuery(params))
   }
 
   // ── Accepted tokens ────────────────────────────────────────────────
@@ -97,7 +98,7 @@ export class WalletsResource {
     id: string,
     params: AddWalletTokenRequest,
   ): Promise<WalletTokenHolding> {
-    return this.http.post(`/accounts/${account_id}/wallets/${id}/tokens`, params)
+    return this.http.post(path`/accounts/${account_id}/wallets/${id}/tokens`, params)
   }
 
   /**
@@ -106,17 +107,17 @@ export class WalletsResource {
    * can bring it back.
    */
   removeToken(account_id: string, id: string, token_id: string): Promise<void> {
-    return this.http.delete(`/accounts/${account_id}/wallets/${id}/tokens/${token_id}`)
+    return this.http.delete(path`/accounts/${account_id}/wallets/${id}/tokens/${token_id}`)
   }
 
   /** Re-enable an EXISTING holding. 404 when the wallet has none for the token — use addToken to create one. */
   enableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
-    return this.http.patch(`/accounts/${account_id}/wallets/${id}/tokens/${token_id}/enable`)
+    return this.http.patch(path`/accounts/${account_id}/wallets/${id}/tokens/${token_id}/enable`)
   }
 
   /** Disable an EXISTING holding (same effect as removeToken, but returns the holding). 404 when absent. */
   disableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
-    return this.http.patch(`/accounts/${account_id}/wallets/${id}/tokens/${token_id}/disable`)
+    return this.http.patch(path`/accounts/${account_id}/wallets/${id}/tokens/${token_id}/disable`)
   }
 }
 

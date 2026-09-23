@@ -699,6 +699,7 @@ function buildQuery(params?: object): string {
 
 const PAYMENTS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
 import type {
   Bytes32,
   CreatePaymentRequest,
@@ -799,12 +800,12 @@ export class PaymentsResource {
 
   /** Fetch a payment's current state (DB status + live on-chain balances + transactions). */
   get(id: Bytes32): Promise<PaymentDetail> {
-    return this.http.get(\`/payments/\${id}\`)
+    return this.http.get(path\`/payments/\${id}\`)
   }
 
   /** List a payment's on-chain transactions. */
   transactions(id: Bytes32, params?: ListTransactionsParams): Promise<PaginatedResponse<Transaction>> {
-    return this.http.getPaginated(\`/payments/\${id}/transactions\${buildQuery(params)}\`)
+    return this.http.getPaginated(path\`/payments/\${id}/transactions\` + buildQuery(params))
   }
 
   /**
@@ -817,7 +818,7 @@ export class PaymentsResource {
    * malformed or foreign transaction id all answer 404 alike.
    */
   getTransaction(id: Bytes32, transactionId: string): Promise<Transaction> {
-    return this.http.get(\`/payments/\${id}/transactions/\${transactionId}\`)
+    return this.http.get(path\`/payments/\${id}/transactions/\${transactionId}\`)
   }
 
   /**
@@ -834,17 +835,17 @@ export class PaymentsResource {
    * step is submitting the signature, not retrying a send that never happened.
    */
   redrive(id: Bytes32, transactionId: string): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/transactions/\${transactionId}/redrive\`, {})
+    return this.http.post(path\`/payments/\${id}/transactions/\${transactionId}/redrive\`, {})
   }
 
   /** Store the payer's EIP-3009 signature (moves the payment to \`signed\`). */
   sign(id: Bytes32, params: PayerSignatureRequest): Promise<PaymentDetail> {
-    return this.http.put(\`/payments/\${id}/sign\`, params)
+    return this.http.put(path\`/payments/\${id}/sign\`, params)
   }
 
   /** List the payment's dispute open/close history (paginated). */
   disputes(id: Bytes32, params?: ListDisputesParams): Promise<PaginatedResponse<Dispute>> {
-    return this.http.getPaginated(\`/payments/\${id}/disputes\${buildQuery(params)}\`)
+    return this.http.getPaginated(path\`/payments/\${id}/disputes\` + buildQuery(params))
   }
 
   // ── Generic prepare/submit ─────────────────────────────────────────
@@ -866,12 +867,12 @@ export class PaymentsResource {
     body?: PrepareRequest,
     opts?: IdempotentRequest,
   ): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/\${operation}/prepare\`, body, idempotencyHeader(opts))
+    return this.http.post(path\`/payments/\${id}/\${operation}/prepare\`, body, idempotencyHeader(opts))
   }
 
   /** Broadcast a signed transaction for an operation (HTTP 202, async). */
   submit(id: Bytes32, operation: TransactionOperation, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/\${operation}\`, params)
+    return this.http.post(path\`/payments/\${id}/\${operation}\`, params)
   }
 
   /** Record an already-broadcast transaction by hash (MetaMask signs+broadcasts in one step).
@@ -879,45 +880,45 @@ export class PaymentsResource {
    *  (payer or payee). The payer operations dispute/close-dispute have their own payer-only
    *  report-by-hash methods below (disputeSubmitByHash / closeDisputeSubmitByHash). */
   submitByHash(id: Bytes32, operation: TransactionOperation, params: SubmitByHashRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/\${operation}/submitted\`, params)
+    return this.http.post(path\`/payments/\${id}/\${operation}/submitted\`, params)
   }
 
   // ── Operation-specific pairs (payee unless noted) ──────────────────
   authorizePrepare(id: Bytes32): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/authorize/prepare\`)
+    return this.http.post(path\`/payments/\${id}/authorize/prepare\`)
   }
   authorize(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/authorize\`, params)
+    return this.http.post(path\`/payments/\${id}/authorize\`, params)
   }
 
   chargePrepare(id: Bytes32): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/charge/prepare\`)
+    return this.http.post(path\`/payments/\${id}/charge/prepare\`)
   }
   charge(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/charge\`, params)
+    return this.http.post(path\`/payments/\${id}/charge\`, params)
   }
 
   /** \`amount\` is a human decimal (e.g. "10.50") — the gateway converts to token base units. */
   capturePrepare(id: Bytes32, amount: string): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/capture/prepare\`, { amount })
+    return this.http.post(path\`/payments/\${id}/capture/prepare\`, { amount })
   }
   capture(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/capture\`, params)
+    return this.http.post(path\`/payments/\${id}/capture\`, params)
   }
 
   voidPrepare(id: Bytes32): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/void/prepare\`)
+    return this.http.post(path\`/payments/\${id}/void/prepare\`)
   }
   void(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/void\`, params)
+    return this.http.post(path\`/payments/\${id}/void\`, params)
   }
 
   /** Release an expired escrow (permissionless). \`from\` defaults to the payer. */
   releasePrepare(id: Bytes32, from?: string): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/release/prepare\`, from ? { from } : undefined)
+    return this.http.post(path\`/payments/\${id}/release/prepare\`, from ? { from } : undefined)
   }
   release(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/release\`, params)
+    return this.http.post(path\`/payments/\${id}/release\`, params)
   }
 
   /**
@@ -926,52 +927,53 @@ export class PaymentsResource {
    * Phase 2: \`{ amount, signature }\` → the unsigned on-chain refund transaction.
    */
   refundPrepare(id: Bytes32, body: PrepareRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/refund/prepare\`, body)
+    return this.http.post(path\`/payments/\${id}/refund/prepare\`, body)
   }
   refund(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/refund\`, params)
+    return this.http.post(path\`/payments/\${id}/refund\`, params)
   }
 
   /** Open a dispute (payer, signal-only). Optional bytes32 reason code. */
   disputePrepare(id: Bytes32, reason?: string, opts?: IdempotentRequest): Promise<Transaction> {
     return this.http.post(
-      \`/payments/\${id}/dispute/prepare\`,
+      path\`/payments/\${id}/dispute/prepare\`,
       reason ? { reason } : undefined,
       idempotencyHeader(opts),
     )
   }
   dispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/dispute\`, params)
+    return this.http.post(path\`/payments/\${id}/dispute\`, params)
   }
 
   /** Close a dispute (payer). Optional bytes32 reason code. */
   closeDisputePrepare(id: Bytes32, reason?: string, opts?: IdempotentRequest): Promise<Transaction> {
     return this.http.post(
-      \`/payments/\${id}/dispute/close/prepare\`,
+      path\`/payments/\${id}/dispute/close/prepare\`,
       reason ? { reason } : undefined,
       idempotencyHeader(opts),
     )
   }
   closeDispute(id: Bytes32, params: SubmitTransactionRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/dispute/close\`, params)
+    return this.http.post(path\`/payments/\${id}/dispute/close\`, params)
   }
 
   /** Report an already-broadcast dispute tx by hash (MetaMask buyer flow). Payer-only:
    *  the payer authenticates account-less via SIWE, since the bare hash carries no
    *  signature. The payer's counterpart to submitByHash. */
   disputeSubmitByHash(id: Bytes32, params: SubmitByHashRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/dispute/submitted\`, params)
+    return this.http.post(path\`/payments/\${id}/dispute/submitted\`, params)
   }
 
   /** Report an already-broadcast close-dispute tx by hash (MetaMask buyer flow). Payer-only. */
   closeDisputeSubmitByHash(id: Bytes32, params: SubmitByHashRequest): Promise<Transaction> {
-    return this.http.post(\`/payments/\${id}/dispute/close/submitted\`, params)
+    return this.http.post(path\`/payments/\${id}/dispute/close/submitted\`, params)
   }
 }
 ${BUILD_QUERY}`
 
 const ACCOUNTS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
 import type { Account } from './types.js'
 
 /**
@@ -991,13 +993,14 @@ export class AccountsResource {
 
   /** The account's own profile: id, name, email, timestamps. */
   get(account_id: string): Promise<Account> {
-    return this.http.get(\`/accounts/\${account_id}\`)
+    return this.http.get(path\`/accounts/\${account_id}\`)
   }
 }
 `
 
 const WALLETS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
 import type {
   AddWalletTokenRequest,
   CreateWalletRequest,
@@ -1036,12 +1039,12 @@ export class WalletsResource {
 
   /** List an account's wallets, each with its token holdings nested. */
   list(account_id: string, params?: ListWalletsParams): Promise<PaginatedResponse<WalletWithTokens>> {
-    return this.http.getPaginated(\`/accounts/\${account_id}/wallets\${buildQuery(params)}\`)
+    return this.http.getPaginated(path\`/accounts/\${account_id}/wallets\` + buildQuery(params))
   }
 
   /** Fetch a single wallet by UUID or 0x address. */
   get(account_id: string, id_or_address: string): Promise<Wallet> {
-    return this.http.get(\`/accounts/\${account_id}/wallets/\${id_or_address}\`)
+    return this.http.get(path\`/accounts/\${account_id}/wallets/\${id_or_address}\`)
   }
 
   /**
@@ -1052,22 +1055,22 @@ export class WalletsResource {
    * not recover to \`address\` (422) and an address already registered anywhere (409).
    */
   create(account_id: string, params: CreateWalletRequest): Promise<Wallet> {
-    return this.http.post(\`/accounts/\${account_id}/wallets\`, params)
+    return this.http.post(path\`/accounts/\${account_id}/wallets\`, params)
   }
 
   /** Update a wallet's label or active flag. */
   update(account_id: string, id: string, params: UpdateWalletRequest): Promise<Wallet> {
-    return this.http.patch(\`/accounts/\${account_id}/wallets/\${id}\`, params)
+    return this.http.patch(path\`/accounts/\${account_id}/wallets/\${id}\`, params)
   }
 
   /** Soft-delete (deactivate) a wallet. */
   delete(account_id: string, id: string): Promise<void> {
-    return this.http.delete(\`/accounts/\${account_id}/wallets/\${id}\`)
+    return this.http.delete(path\`/accounts/\${account_id}/wallets/\${id}\`)
   }
 
   /** Read a wallet's live on-chain balances (native + tokens). */
   balances(account_id: string, id: string, params?: WalletBalancesParams): Promise<WalletBalances> {
-    return this.http.get(\`/accounts/\${account_id}/wallets/\${id}/balances\${buildQuery(params)}\`)
+    return this.http.get(path\`/accounts/\${account_id}/wallets/\${id}/balances\` + buildQuery(params))
   }
 
   // ── Accepted tokens ────────────────────────────────────────────────
@@ -1088,7 +1091,7 @@ export class WalletsResource {
    * or updates one; both return the holding, so the SDK does not distinguish them.
    */
   addToken(account_id: string, id: string, params: AddWalletTokenRequest): Promise<WalletTokenHolding> {
-    return this.http.post(\`/accounts/\${account_id}/wallets/\${id}/tokens\`, params)
+    return this.http.post(path\`/accounts/\${account_id}/wallets/\${id}/tokens\`, params)
   }
 
   /**
@@ -1097,17 +1100,17 @@ export class WalletsResource {
    * can bring it back.
    */
   removeToken(account_id: string, id: string, token_id: string): Promise<void> {
-    return this.http.delete(\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}\`)
+    return this.http.delete(path\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}\`)
   }
 
   /** Re-enable an EXISTING holding. 404 when the wallet has none for the token — use addToken to create one. */
   enableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
-    return this.http.patch(\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}/enable\`)
+    return this.http.patch(path\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}/enable\`)
   }
 
   /** Disable an EXISTING holding (same effect as removeToken, but returns the holding). 404 when absent. */
   disableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
-    return this.http.patch(\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}/disable\`)
+    return this.http.patch(path\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}/disable\`)
   }
 }
 ${BUILD_QUERY}`
@@ -1149,6 +1152,7 @@ ${BUILD_QUERY}`
 
 const WEBHOOKS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
 import type {
   CreateWebhookRequest,
   EventCallback,
@@ -1203,38 +1207,38 @@ export class WebhooksResource {
   }
 
   get(id: string): Promise<Webhook> {
-    return this.http.get(\`/webhooks/\${id}\`)
+    return this.http.get(path\`/webhooks/\${id}\`)
   }
 
   update(id: string, params: UpdateWebhookRequest): Promise<Webhook> {
-    return this.http.patch(\`/webhooks/\${id}\`, params)
+    return this.http.patch(path\`/webhooks/\${id}\`, params)
   }
 
   enable(id: string): Promise<Webhook> {
-    return this.http.put(\`/webhooks/\${id}/enable\`)
+    return this.http.put(path\`/webhooks/\${id}/enable\`)
   }
 
   disable(id: string): Promise<Webhook> {
-    return this.http.put(\`/webhooks/\${id}/disable\`)
+    return this.http.put(path\`/webhooks/\${id}/disable\`)
   }
 
   /** Rotate the shared secret — returned once in the response. */
   rotateSecret(id: string): Promise<WebhookWithSecret> {
-    return this.http.put(\`/webhooks/\${id}/rotate_secret\`)
+    return this.http.put(path\`/webhooks/\${id}/rotate_secret\`)
   }
 
   /** Reset the delivery circuit breaker and re-enable the webhook. */
   resetCircuit(id: string): Promise<Webhook> {
-    return this.http.put(\`/webhooks/\${id}/reset_circuit\`)
+    return this.http.put(path\`/webhooks/\${id}/reset_circuit\`)
   }
 
   /** List delivery attempts for a webhook. */
   eventCallbacks(id: string, params?: ListEventCallbacksParams): Promise<PaginatedResponse<EventCallback>> {
-    return this.http.getPaginated(\`/webhooks/\${id}/event_callbacks\${buildQuery(params)}\`)
+    return this.http.getPaginated(path\`/webhooks/\${id}/event_callbacks\` + buildQuery(params))
   }
 
   delete(id: string): Promise<void> {
-    return this.http.delete(\`/webhooks/\${id}\`)
+    return this.http.delete(path\`/webhooks/\${id}\`)
   }
 }
 ${BUILD_QUERY}`
