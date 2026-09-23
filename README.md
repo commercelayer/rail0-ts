@@ -347,7 +347,7 @@ buyer-facing discovery on `client.paymentMethods`.
 
 ### `client.chains` / `client.tokens` / `client.health`
 
-`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`) · `tokens.list(chainId?, symbol?)` → `Token[]` · `health.get()` → `Health`.
+`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against: `address`, `version`, `deployed_at`) · `tokens.list(chainId?, symbol?)` → `Token[]` · `health.get()` → `Health`.
 
 ### `client.auth`
 

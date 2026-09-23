@@ -1587,6 +1587,7 @@ export interface components {
             required_confirmations?: number;
             /** @description The block tag the chain calls settled (`safe`, `finalized`), when it serves one — and what the gateway actually gates on. Null where the chain serves none, in which case required_confirmations is counted. */
             finality_tag?: string | null;
+            contract?: components["schemas"]["ChainContract"];
         };
         /** @description Public accepted-token view. The listing is not implicitly active-only (a payment references its token address forever, so a retired token must stay resolvable), so `active` tells a usable token from a retired one. */
         Token: {
@@ -3818,7 +3819,7 @@ export interface operations {
                 status?: "delivered" | "failed";
                 /** @description Filter by event topic. */
                 topic?: components["schemas"]["WebhookTopic"];
-                /** @description Filter by the payment the delivery is for. */
+                /** @description Filter by the payment the delivery is for: its id (UUID) or its rail0_id (0x…). */
                 payment_id?: string;
                 /** @description Filter by the subscriber's exact HTTP response code (e.g. 500). */
                 response_code?: string;
