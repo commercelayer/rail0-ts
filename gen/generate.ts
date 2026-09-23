@@ -323,8 +323,28 @@ export interface Transaction {
   sender?: Address | null
   amount?: Uint256String | null
   block_number?: number | null
-  /** Decoded on-chain failure (null unless status is "failed"): error_code is the RAIL0 custom error in snake_case (e.g. "not_payee"), or "revert" when the selector is unknown; error_message is its human-readable form (e.g. "NotPayee"). */
+  /**
+   * Whether this transaction's broadcast can be re-enqueued with payments.redrive(): it is
+   * "pending" AND the gateway holds its signed bytes — a send that was prepared and signed
+   * but never reached the chain. False on a "pending" row with no signature, where the next
+   * step is submitting one. The same predicate the redrive route guards on.
+   */
+  redrivable?: boolean
+  /**
+   * The decoded failure, null unless status is "failed" — the same code/title/detail triple
+   * as an API error body. "error_code" is the machine code (a RAIL0 custom error in
+   * snake_case such as "not_payee", a token-level one such as "insufficient_token_balance",
+   * or "revert" when the selector is unknown); "error_title" its short label;
+   * "error_detail" the sentence to show.
+   */
   error_code?: string | null
+  error_title?: string | null
+  error_detail?: string | null
+  /**
+   * @deprecated The gateway no longer sends it: read "error_detail" (and "error_title").
+   * Kept, always absent, so code still reading it compiles — and gets "undefined", which is
+   * what it has been getting since the gateway trimmed the error shape.
+   */
   error_message?: string | null
   /** On-chain gas/receipt data, mirrored from the indexer on confirm; null until confirmed. */
   gas_used?: Uint256String | null
