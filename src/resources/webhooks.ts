@@ -1,5 +1,6 @@
 // GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.
 import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
 import type {
   CreateWebhookRequest,
   EventCallback,
@@ -54,29 +55,29 @@ export class WebhooksResource {
   }
 
   get(id: string): Promise<Webhook> {
-    return this.http.get(`/webhooks/${id}`)
+    return this.http.get(path`/webhooks/${id}`)
   }
 
   update(id: string, params: UpdateWebhookRequest): Promise<Webhook> {
-    return this.http.patch(`/webhooks/${id}`, params)
+    return this.http.patch(path`/webhooks/${id}`, params)
   }
 
   enable(id: string): Promise<Webhook> {
-    return this.http.put(`/webhooks/${id}/enable`)
+    return this.http.put(path`/webhooks/${id}/enable`)
   }
 
   disable(id: string): Promise<Webhook> {
-    return this.http.put(`/webhooks/${id}/disable`)
+    return this.http.put(path`/webhooks/${id}/disable`)
   }
 
   /** Rotate the shared secret — returned once in the response. */
   rotateSecret(id: string): Promise<WebhookWithSecret> {
-    return this.http.put(`/webhooks/${id}/rotate_secret`)
+    return this.http.put(path`/webhooks/${id}/rotate_secret`)
   }
 
   /** Reset the delivery circuit breaker and re-enable the webhook. */
   resetCircuit(id: string): Promise<Webhook> {
-    return this.http.put(`/webhooks/${id}/reset_circuit`)
+    return this.http.put(path`/webhooks/${id}/reset_circuit`)
   }
 
   /** List delivery attempts for a webhook. */
@@ -84,11 +85,11 @@ export class WebhooksResource {
     id: string,
     params?: ListEventCallbacksParams,
   ): Promise<PaginatedResponse<EventCallback>> {
-    return this.http.getPaginated(`/webhooks/${id}/event_callbacks${buildQuery(params)}`)
+    return this.http.getPaginated(path`/webhooks/${id}/event_callbacks` + buildQuery(params))
   }
 
   delete(id: string): Promise<void> {
-    return this.http.delete(`/webhooks/${id}`)
+    return this.http.delete(path`/webhooks/${id}`)
   }
 }
 

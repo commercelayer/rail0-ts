@@ -351,9 +351,11 @@ buyer-facing discovery on `client.paymentMethods`.
 
 ### `client.auth`
 
-`getNonce()` · `verify(message, signature)` → `AuthResponse` · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs) · `logout()` → `{ revoked }` (this TOKEN) · `revokeAll()` → `{ revoked, cutoff }`.
+`getNonce()` · `verify(message, signature)` → `AuthResponse` · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs) · `logout()` → `{ revoked }` (this TOKEN) · `revokeAll(privateKeyHex, domain, chainId?)` → `{ revokedAll, cutoffAt }`.
 
-**`logout` and `revokeAll` answer different questions.** `logout` ends the session whose token this client carries, so signing out one device leaves the others signed in. `revokeAll` ends **every** session of the calling address — including the ones you have never seen, which is the whole case for a key you no longer trust: five live sessions would otherwise need five tokens you do not hold. The gateway records a **cutoff instant** rather than enumerating tokens, so a session minted a moment earlier is refused by its own `iat`. That instant is what `cutoff` carries, and it is the value worth logging: it says exactly which sessions died, which a boolean cannot.
+**`logout` and `revokeAll` answer different questions.** `logout` ends the session whose token this client carries, so signing out one device leaves the others signed in. `revokeAll` ends **every** session of the calling address — including the ones you have never seen, which is the whole case for a key you no longer trust: five live sessions would otherwise need five tokens you do not hold. The gateway records a **cutoff instant** rather than enumerating tokens, so a session minted a moment earlier is refused by its own `iat`. That instant is what `cutoffAt` carries, and it is the value worth logging: it says exactly which sessions died, which a boolean cannot.
+
+`revokeAll` is authorized by a **fresh SIWE proof** of the address rather than by the session — whoever reacts to a leaked key holds the wallet, not the stolen token — so it takes the private key and the gateway host, like `login`, and signs a message carrying its own statement (`REVOKE_ALL_STATEMENT`, "Sign out of RAIL0 everywhere"), which a login proof cannot replay. The cutoff includes this client's own session: sign in again afterwards.
 
 ### Logging
 

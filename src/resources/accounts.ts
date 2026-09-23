@@ -1,5 +1,6 @@
 // GENERATED — DO NOT EDIT. Run `pnpm generate` to regenerate.
 import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
 import type { Account } from './types.js'
 
 /**
@@ -19,6 +20,6 @@ export class AccountsResource {
 
   /** The account's own profile: id, name, email, timestamps. */
   get(account_id: string): Promise<Account> {
-    return this.http.get(`/accounts/${account_id}`)
+    return this.http.get(path`/accounts/${account_id}`)
   }
 }
