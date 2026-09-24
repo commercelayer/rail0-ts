@@ -19,6 +19,13 @@ export interface AuthResponse {
   /** The account's human-readable name, or null for an account-less session. */
   name: string | null
   expiresAt: string
+  /**
+   * Whether the signed-in account holds the operator (administrators) grant. The
+   * gateway sends the field only on an admin's session (Session::Admin), so a
+   * standard login reads as false. Visibility only — enough to offer an admin area
+   * at login; every gated route re-checks the grant on each request.
+   */
+  admin: boolean
 }
 
 /** Fields of the EIP-4361 message built by `buildSiweMessage`. */
@@ -251,6 +258,7 @@ export class AuthResource {
         account_id: string | null
         name: string | null
         expires_at: string
+        admin?: boolean
       }>('/auth', {
         message,
         signature,
@@ -261,6 +269,7 @@ export class AuthResource {
         accountId: r.account_id,
         name: r.name,
         expiresAt: r.expires_at,
+        admin: r.admin === true,
       }))
   }
 

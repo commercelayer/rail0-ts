@@ -433,6 +433,28 @@ describe('Rail0Client', () => {
         const body = JSON.parse(init.body as string) as Record<string, string>
         expect(body.message).toBe('eip4361message')
         expect(body.signature).toBe('0xsignature')
+        // A standard login's response carries no admin field at all.
+        expect(result.admin).toBe(false)
+      })
+
+      it('surfaces the operator grant the gateway puts on an admin session', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              token: 'jwt-token',
+              address: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+              account_id: 'some-uuid',
+              name: 'Ops',
+              expires_at: '2099-01-01T00:00:00Z',
+              admin: true,
+            }),
+            { status: 201 },
+          ),
+        )
+
+        const result = await client.auth.verify('eip4361message', '0xsignature')
+
+        expect(result.admin).toBe(true)
       })
     })
 
