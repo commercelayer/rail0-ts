@@ -1,6 +1,6 @@
 # Code Generation
 
-This folder contains the generation pipeline for the RAIL0 SDK. The source of truth for the API surface is [`rail0-gateway/docs/openapi.json`](../../rail0-gateway/docs/openapi.json) (a sibling repo). Running the pipeline regenerates the TypeScript types in `src/api.ts`, which propagates changes through the entire SDK.
+This folder contains the generation pipeline for the RAIL0 SDK. The source of truth for the API surface is [`rail0-gateway/docs/openapi.json`](../../rail0-gateway/docs/openapi.json) (a sibling repo). Running the pipeline regenerates the raw TypeScript types in `src/api.ts` and rewrites the public types (`src/resources/types.ts`) and the generated resource classes (`src/resources/*.ts` except `auth.ts`) from templates held in `generate.ts`.
 
 ## Run
 
@@ -17,10 +17,10 @@ pnpm generate
 ## Workflow when the API changes
 
 1. Regenerate `rail0-gateway/docs/openapi.json` (or point `RAIL0_SCHEMA_PATH` to a local file).
-2. Run `pnpm generate` — rewrites `src/api.ts`.
+2. Run `pnpm generate` — rewrites `src/api.ts`, `src/resources/types.ts` and the generated resources.
 3. Run `pnpm typecheck` — TypeScript reports every broken reference across the SDK.
-4. Fix the type aliases in `src/resources/types.ts` if any schema names changed.
-5. Fix method signatures in `src/resources/*.ts` if request or response shapes changed.
+4. Fix the public types if any schema names or shapes changed — in the `TYPES` template in `generate.ts`, not in `src/resources/types.ts`, which carries `GENERATED — DO NOT EDIT` and is overwritten on the next run.
+5. Fix method signatures the same way, in the resource templates in `generate.ts` (`src/resources/auth.ts` is the one hand-written resource).
 
 Steps 4 and 5 are guided by the compiler: no manual diffing of the spec is needed.
 
@@ -61,7 +61,8 @@ The file is written as-is; it is never hand-edited.
 `src/resources/types.ts` imports `components` and `operations` from `src/api.ts` and re-exports named aliases (`Payment`, `AuthorizeParams`, `TransactionResponse`, …) that the rest of the SDK uses. This indirection means that:
 
 - `src/api.ts` can be fully regenerated without touching any other file.
-- If a schema is renamed in the spec, only `src/resources/types.ts` needs updating — resource classes and the public index are unaffected.
+- If a schema is renamed in the spec, only the `TYPES` template (which emits `src/resources/types.ts`) needs updating — resource classes and the public index are unaffected.
+- A field added to a spec schema reaches `src/api.ts` on its own, but reaches a public type only if that type is an alias of the component. A type written out field by field in the template (e.g. `Blockchain`) has to be extended by hand.
 
 ### Adding a generation step
 
@@ -72,7 +73,8 @@ async function generateDocs(): Promise<void> {
   // read src/api.ts, emit docs, etc.
 }
 
-await generateTypes()
+await generateApiTypes()
+// … the types.ts and resource writes …
 await generateDocs() // ← add here
 console.log('Done.')
 ```

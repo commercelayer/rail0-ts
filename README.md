@@ -68,7 +68,7 @@ When a wallet like **MetaMask** signs and broadcasts in one step (so you never h
 
 The `:id` accepts **either** the payment's UUID **or** its `rail0_id` (the contract's bytes32 id) — the gateway resolves both.
 
-Payment status values: `unsigned`, `signed`, `authorized`, `charged`, `captured`, `partially_captured`, `voided`, `released`, `refunded`, `partially_refunded`. Status changes are happy-path — a payment only leaves its state to *close*: `partially_refunded` is legacy and no longer produced (a partial refund leaves the status unchanged).
+Payment status values: `unsigned`, `signed`, `authorized`, `charged`, `captured`, `partially_captured`, `voided`, `released`, `refunded`, `partially_refunded`, `expired`. `expired` is a never-captured authorization whose window lapsed (announced by `payments.expired`) and is **not** terminal: the escrow is still on-chain, and `release` closes it as `released`. Status changes are happy-path — a payment only leaves its state to *close*: `partially_refunded` is legacy and no longer produced (a partial refund leaves the status unchanged).
 
 | Operation | Caller | What it does |
 |-----------|--------|--------------|
@@ -126,6 +126,11 @@ formatAmount('1500000', 6) // → '1.5'   (trailing zeros trimmed)
 
 Fractional digits beyond `decimals` are truncated; a malformed amount throws.
 
+A static **stablecoin registry** ships with the SDK — `stablecoins` (per chain: `chainId`
+and each token's `address`, `decimals`, `eip3009`/`eip2612` support), `chainInfo(chain)`,
+and `eip3009Tokens(chain)` / `eip2612Tokens(chain)`. It is a static table shipped with
+the SDK, not the gateway's catalogue — that is `tokens.list()`.
+
 ## API reference
 
 ### `new Rail0Client(options)`
@@ -182,7 +187,7 @@ capture, where the broadcast may already be in flight — those are never retrie
 `signal` cancels the request **and any retry that is waiting**, which matters precisely
 because `retryOn429` can hold a promise for up to a minute.
 
-Resources: `client.payments`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.disputes`, `client.analytics`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
+Resources: `client.payments`, `client.accounts`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.disputes`, `client.analytics`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
 
 `setAuthToken(jwt)` sets (or, with `null`/`undefined`, clears) the `Authorization: Bearer …` header on every subsequent request — call it after `auth.login()` to authenticate a long-lived client without reconstructing it:
 
@@ -200,10 +205,10 @@ Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transacti
 
 `getTransaction(id, transactionId)` reads ONE of a payment's transactions. This is the lookup for an `action_id`: anything handed a transaction id when an operation was accepted resolves it directly, instead of fetching the payment and scanning its transactions for an id it already holds. `redrive(id, transactionId)` re-enqueues a stuck broadcast.
 
-**Idempotency.** Every `prepare` takes an optional `{ idempotencyKey }`. Without it, a retry arriving after the first transaction was signed and broadcast opens a **second** one — correct for a genuine sequential partial capture, wrong for a retry, and only the caller can tell those apart. Same key with different terms is refused `422 idempotency_key_reused`; the key is scoped to the payment.
+**Idempotency.** The generic `prepare(id, op, body?, { idempotencyKey })`, `disputePrepare(id, reason?, { idempotencyKey })` and `closeDisputePrepare(id, reason?, { idempotencyKey })` take an optional key (sent as `Idempotency-Key`); the operation-specific shorthands (`capturePrepare`, `refundPrepare`, …) do not, so use the generic form when you need one. Without it, a retry arriving after the first transaction was signed and broadcast opens a **second** one — correct for a genuine sequential partial capture, wrong for a retry, and only the caller can tell those apart. Same key with different terms is refused `422 idempotency_key_reused`; the key is scoped to the payment.
 
 ```ts
-await client.payments.capturePrepare(id, '50.00', { idempotencyKey: orderId })
+await client.payments.prepare(id, 'capture', { amount: '50.00' }, { idempotencyKey: orderId })
 ```
 
 **Refund** is two-phase: `refundPrepare(id, { amount })` returns a `Transaction` carrying a `signing_payload`; sign it with `signRefund`, then `refundPrepare(id, { amount, signature })` returns the unsigned on-chain tx to sign + `refund()`.
@@ -311,7 +316,7 @@ Account-level dispute list — every dispute (open **and** closed) across the ca
 
 Merchant sales analytics over the account's **own** payments as payee. Account-only: every method needs a JWT with a non-null account — `401` without a token, `403` for an account-less (buyer) session. All three take the same optional `AnalyticsFilters`: `{ mode?, status?, token?, chain_id?, from?, to? }` (`from`/`to` are ISO-8601; `token` + `chain_id` together scope monetary volume to a single token, so sums never mix decimals).
 
-- `summary(filters?)` → `AnalyticsSummary` — `{ orders, disputed, refund_rate, dispute_rate, failed_rate, by_status, volume, gas, gas_by_status, gas_by_operation }`, where `volume` is one `AnalyticsVolume` per `(token, chain)` with base-unit `gross` (authorized), `settled` (net of refunds), `escrowed` (still held), and gross `captured`/`refunded` strings from the confirmed transactions.
+- `summary(filters?)` → `AnalyticsSummary` — `{ orders, disputed, refund_rate, dispute_rate, failed_rate, by_status, failures, volume, gas, gas_by_status, gas_by_operation }`, where `volume` is one `AnalyticsVolume` per `(token, chain)` with base-unit `gross` (authorized), `settled` (net of refunds), `escrowed` (still held), and gross `captured`/`refunded` strings from the confirmed transactions.
   `failures` is one row per decoded failure code with how many transactions hit it, commonest first: `failed_rate` says how much fails, this says what to act on — a revert is a state problem, a rejection that never reached the chain is a wallet problem.
   `gas` is one `AnalyticsGas` per **chain** — `spent` on confirmed transactions, `wasted` by on-chain reverts, in that chain's **native** token (wei-scale strings, `decimals` 18), so it is never summed across chains — plus `confirmed`/`failed` counts and the `failed_rate` derived from them (per resolved **transaction**, not per order). It covers only the operations the merchant broadcasts: `dispute`/`close_dispute` are the buyer's cost and `release` has no stored sender.
   `gas_by_status` and `gas_by_operation` are those same rows regrouped as `AnalyticsGasSlice[]`, each carrying a `key`; every cut sums back to its chain's `gas` row. Chain and status rows also carry `orders`, so `(spent + wasted) / orders` is the average cost of an order in that state — counting the orders that produced no transaction and so cost nothing. It is `null` on the operation cut, where one order spans several operations and `spent / confirmed` (the cost of one occurrence) is the meaningful average. The status cut is a **snapshot** — a payment's status moves and its gas moves with it, so the same period changes over time — while the operation cut is stable.
@@ -347,11 +352,11 @@ buyer-facing discovery on `client.paymentMethods`.
 
 ### `client.chains` / `client.tokens` / `client.health`
 
-`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against: `address`, `version`, `deployed_at`) · `tokens.list(chainId?, symbol?)` → `Token[]` · `health.get()` → `Health`.
+`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against: `address`, `version`, `deployed_at`. The gateway sends it and `components['schemas']['Blockchain']` types it, but the exported `Blockchain` type does not declare it yet) · `tokens.list(chainId?, symbol?, active?)` → `Token[]` (every token by default, retired ones included — each carries `active`; pass `active: true` where only what a new payment can use should be offered) · `health.get()` → `Health`.
 
 ### `client.auth`
 
-`getNonce()` · `verify(message, signature)` → `AuthResponse` (`token`, `address`, `accountId`, `name`, `expiresAt`, and `admin` — true only for an account holding the operator grant; visibility only, every gated route re-checks it) · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs) · `logout()` → `{ revoked }` (this TOKEN) · `revokeAll(privateKeyHex, domain, chainId?)` → `{ revokedAll, cutoffAt }`.
+`getNonce()` → `{ nonce, expiresAt }` · `verify(message, signature)` → `AuthResponse` (`token`, `address`, `accountId`, `name`, `expiresAt`, and `admin` — true only for an account holding the operator grant; visibility only, every gated route re-checks it) · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs) · `logout()` → `{ revoked }` (this TOKEN) · `revokeAll(privateKeyHex, domain, chainId?)` → `{ revokedAll, cutoffAt }` · `proveAddress(privateKeyHex, domain, chainId?)` → `{ message, signature }` (the wallet-link proof — see `client.wallets`).
 
 **`logout` and `revokeAll` answer different questions.** `logout` ends the session whose token this client carries, so signing out one device leaves the others signed in. `revokeAll` ends **every** session of the calling address — including the ones you have never seen, which is the whole case for a key you no longer trust: five live sessions would otherwise need five tokens you do not hold. The gateway records a **cutoff instant** rather than enumerating tokens, so a session minted a moment earlier is refused by its own `iat`. That instant is what `cutoffAt` carries, and it is the value worth logging: it says exactly which sessions died, which a boolean cannot.
 
@@ -409,8 +414,9 @@ A **failed transaction** carries the same triple as `error_code`, `error_title` 
 `error_detail`, whether it reverted on-chain or was refused before broadcast.
 
 `.retryAfter` is the number of seconds parsed from the `Retry-After` response header
-on a `429` (the gateway's rate limiter advertises its window), or `undefined`. There is
-no automatic retry of `429`s — back off using this value.
+on a `429` (the gateway's rate limiter advertises its window), or `undefined`. A `429` is
+retried automatically only with `retryOn429: true` (see [Rate limits](#rate-limits));
+otherwise back off using this value.
 
 `err.hint` (or `describeError(code)`) is this SDK's own local advice, a *supplement* to
 `.detail` rather than a replacement — present only for codes worth adding a next step
@@ -419,8 +425,9 @@ to, `undefined` otherwise.
 ## Development
 
 ```bash
-pnpm test
-pnpm typecheck
+pnpm test        # or bin/test (installs dependencies if missing; args pass to vitest)
+pnpm typecheck   # src, examples and test
+pnpm lint        # biome over src, gen, examples, test
 
 # Regenerate types + resources from the gateway's OpenAPI schema:
 #   default source is ../rail0-gateway/docs/openapi.json
@@ -460,10 +467,13 @@ src/
   core/
     error.ts      Rail0ApiError
     http.ts       HttpClient (fetch, timeout, retry, logging, getPaginated)
+    backoff.ts    rate-limit wait (throttleDelayMs)
+    path.ts       path-segment encoding for ids
   resources/
     types.ts      gateway-vocabulary types (Payment, Dispute, Webhook, …)
     payments.ts   PaymentsResource (lifecycle + disputes)
     disputes.ts   DisputesResource (account-level list)
+    accounts.ts   AccountsResource (the caller's own profile)
     wallets.ts    WalletsResource  (CRUD, balances)
     payment_methods.ts  PaymentMethodsResource (public discovery)
     webhooks.ts   WebhooksResource
@@ -472,6 +482,9 @@ src/
     tokens.ts     TokensResource
     health.ts     HealthResource
     auth.ts       AuthResource (SIWE)
+  api.ts          raw types generated from the gateway OpenAPI
+  amounts.ts      toBaseUnits / formatAmount
+  stablecoins.ts  static stablecoin registry
   signing.ts      EIP-3009 / EIP-1559 signing helpers
   webhook-signature.ts  webhook delivery verification (HMAC + freshness)
   client.ts       Rail0Client — assembles the resources
