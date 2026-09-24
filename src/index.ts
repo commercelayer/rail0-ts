@@ -58,6 +58,7 @@ export type {
   Blockchain,
   Bytes32,
   ChainBalance,
+  ChainContract,
   CircuitState,
   // Request bodies
   CreatePaymentRequest,

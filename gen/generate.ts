@@ -421,26 +421,23 @@ export interface Token {
    */
   active: boolean
 }
-export interface Blockchain {
-  chain_id?: number
-  name?: string
-  native_symbol?: string
-  network_type?: string
-  explorer_url?: string
-  /**
-   * Confirmations the gateway waits for before treating a transaction as settled — and
-   * the FALLBACK rule, not usually the one in force. Where \`finality_tag\` is set the
-   * gateway gates on that tag instead, so showing this number on such a chain describes
-   * a wait nobody applies. Read the pair, not the number.
-   */
-  required_confirmations?: number
-  /**
-   * The block tag the chain calls settled (\`safe\`, \`finalized\`) and what the gateway
-   * actually waits for. Null only where the chain serves neither, in which case
-   * \`required_confirmations\` is counted instead.
-   */
-  finality_tag?: string | null
-}
+/**
+ * The RAIL0 deployment a NEW payment on a chain is opened against: \`address\`,
+ * \`version\` (semver) and \`deployed_at\`. The non-null half of the schema's
+ * \`ChainContract\` — \`Blockchain.contract\` itself stays nullable/optional.
+ */
+export type ChainContract = NonNullable<components['schemas']['ChainContract']>
+/**
+ * A chain as \`GET /blockchains\` returns it — an ALIAS of the schema component, not a
+ * copy. It used to be spelled out field by field here, and so silently lacked
+ * \`contract\` (the RAIL0 deployment per chain) that the gateway sends and the schema
+ * types: a hand-written copy only learns about a new field when someone remembers to
+ * add it. The alias picks up every future field on regenerate.
+ *
+ * Read \`required_confirmations\` together with \`finality_tag\`: where the tag is set
+ * the gateway gates on it instead, so the number alone describes a wait nobody applies.
+ */
+export type Blockchain = components['schemas']['Blockchain']
 export interface AssetBalance {
   symbol?: string
   address?: string | null
@@ -464,20 +461,13 @@ export interface WalletBalances {
   address?: string
   balances?: ChainBalance[]
 }
-export interface Nonce {
-  id?: string
-  value?: string
-  expires_at?: string
-  used?: boolean
-  created_at?: string
-  updated_at?: string
-}
-export interface Session {
-  token?: string
-  address?: string
-  account_id?: string
-  expires_at?: string
-}
+/** A single-use SIWE nonce (\`POST /auth/nonces\`). An alias of the schema component —
+ *  the hand-written copy it replaces declared fields the gateway never sends
+ *  (\`id\`, \`value\`, \`used\`, timestamps) and lacked the \`nonce\` it does. */
+export type Nonce = components['schemas']['Nonce']
+/** The raw \`POST /auth\` body. An alias of the schema component (the copy lacked \`name\`);
+ *  \`auth.verify\`/\`auth.login\` return the camel-cased \`AuthResponse\` instead. */
+export type Session = components['schemas']['Session']
 export interface Webhook {
   id?: string
   name?: string
