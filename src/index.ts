@@ -18,6 +18,7 @@ export { AnalyticsResource } from './resources/analytics.js'
 export type { AuthResponse, SiweMessageParams } from './resources/auth.js'
 export {
   AuthResource,
+  addressFromPrivateKey,
   buildSiweMessage,
   checksumAddress,
   LOGIN_STATEMENT,

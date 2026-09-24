@@ -33,7 +33,7 @@ export interface SiweMessageParams {
   /** RFC 4501 authority requesting the sign-in — HOST ONLY, no port, no scheme. */
   domain: string
   /**
-   * The signing address, EIP-55 checksummed (see `checksumAddress`). EIP-4361
+   * The signing address, EIP-55 checksummed (see `addressFromPrivateKey`). EIP-4361
    * mandates the checksummed form and the strict verifiers (viem, siwe-js)
    * reject a lowercase address, so never pass one.
    */
@@ -130,9 +130,14 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 /**
- * Derive EIP-55 checksummed Ethereum address from a secp256k1 private key.
+ * Derive the EIP-55 checksummed Ethereum address of a secp256k1 private key
+ * (0x-prefixed or raw hex, 32 bytes): keccak-256 of the uncompressed public key,
+ * last 20 bytes, then the EIP-55 mixed-case checksum.
+ *
+ * It does NOT format an existing address — it takes a KEY. Passing an address in
+ * yields some other address (or throws), never the input re-cased.
  */
-export function checksumAddress(privateKeyHex: string): string {
+export function addressFromPrivateKey(privateKeyHex: string): string {
   const privBytes = hexToBytes(privateKeyHex)
   const pubUncompressed = secp256k1.getPublicKey(privBytes, false) // 65 bytes: 0x04 || X || Y
   const pubHash = keccak_256(pubUncompressed.slice(1)) // hash of X || Y
@@ -153,6 +158,13 @@ export function checksumAddress(privateKeyHex: string): string {
   }
   return `0x${checksummed}`
 }
+
+/**
+ * @deprecated Renamed to {@link addressFromPrivateKey}: despite the name it derives an
+ * address from a PRIVATE KEY rather than checksumming an address. Kept as an alias
+ * with identical behaviour.
+ */
+export const checksumAddress: (privateKeyHex: string) => string = addressFromPrivateKey
 
 /**
  * EIP-191 personal_sign: hash `\x19Ethereum Signed Message:\n<byteLen><message>`,
@@ -249,7 +261,19 @@ export class AuthResource {
     return { revokedAll: r.revoked_all, cutoffAt: r.cutoff_at }
   }
 
-  /** POST /auth — submit a signed SIWE message and receive a JWT. */
+  /**
+   * POST /auth — submit a signed SIWE message and receive a JWT.
+   *
+   * On success the token is ALSO installed on this client (as `setAuthToken` would),
+   * so every later call through it is authenticated — the same as rail0-go's
+   * `Auth.Verify`. The response still carries the token for callers that persist it
+   * or hand it to another client. A failed verify leaves the client's current token
+   * untouched.
+   *
+   * Consequence worth knowing: a client that verifies SOMEONE ELSE's signature (a
+   * server relaying a user's sign-in) now carries that user's session afterwards.
+   * Use a dedicated client per sign-in there, or clear it with `setAuthToken(null)`.
+   */
   verify(message: string, signature: string): Promise<AuthResponse> {
     return this.http
       .post<{
@@ -263,14 +287,17 @@ export class AuthResource {
         message,
         signature,
       })
-      .then((r) => ({
-        token: r.token,
-        address: r.address,
-        accountId: r.account_id,
-        name: r.name,
-        expiresAt: r.expires_at,
-        admin: r.admin === true,
-      }))
+      .then((r) => {
+        this.http.setAuthToken(r.token)
+        return {
+          token: r.token,
+          address: r.address,
+          accountId: r.account_id,
+          name: r.name,
+          expiresAt: r.expires_at,
+          admin: r.admin === true,
+        }
+      })
   }
 
   /**
@@ -279,6 +306,9 @@ export class AuthResource {
    *  2. Build the EIP-4361 message (buildSiweMessage)
    *  3. Sign with EIP-191 personal_sign using noble/curves
    *  4. POST /auth and return the JWT response
+   *
+   * Like {@link verify} (which it ends with), it installs the token on this client, so
+   * `client.setAuthToken(token)` afterwards is no longer needed — harmless if kept.
    *
    * @param privateKeyHex - 0x-prefixed or raw hex private key (32 bytes)
    * @param domain - host of the API server, e.g. "api.rail0.xyz"
@@ -337,7 +367,7 @@ export class AuthResource {
     statement: string,
   ): Promise<{ message: string; signature: string }> {
     const { nonce } = await this.getNonce()
-    const address = checksumAddress(privateKeyHex)
+    const address = addressFromPrivateKey(privateKeyHex)
 
     // Strip port from domain — the API's siwe_domain is host-only (e.g. "localhost")
     const siweHost = domain.split(':')[0] as string
