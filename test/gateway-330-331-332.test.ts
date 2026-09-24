@@ -47,6 +47,71 @@ describe('#331 — Idempotency-Key on prepare', () => {
     expect(sentWithout['Idempotency-Key']).toBeUndefined()
     vi.restoreAllMocks()
   })
+  // Every typed prepare takes the same `opts` and forwards it the same way, so a caller
+  // never has to fall back to the generic form just to get replay safety.
+  const typed: Array<{
+    name: string
+    call: (c: Rail0Client, opts?: { idempotencyKey?: string }) => Promise<unknown>
+    path: string
+    body: unknown
+  }> = [
+    {
+      name: 'authorizePrepare',
+      call: (c, o) => c.payments.authorizePrepare(RAIL0_ID, o),
+      path: 'authorize',
+      body: undefined,
+    },
+    {
+      name: 'chargePrepare',
+      call: (c, o) => c.payments.chargePrepare(RAIL0_ID, o),
+      path: 'charge',
+      body: undefined,
+    },
+    {
+      name: 'capturePrepare',
+      call: (c, o) => c.payments.capturePrepare(RAIL0_ID, '1.00', o),
+      path: 'capture',
+      body: { amount: '1.00' },
+    },
+    {
+      name: 'voidPrepare',
+      call: (c, o) => c.payments.voidPrepare(RAIL0_ID, o),
+      path: 'void',
+      body: undefined,
+    },
+    {
+      name: 'releasePrepare',
+      call: (c, o) => c.payments.releasePrepare(RAIL0_ID, undefined, o),
+      path: 'release',
+      body: undefined,
+    },
+    {
+      name: 'refundPrepare',
+      call: (c, o) => c.payments.refundPrepare(RAIL0_ID, { amount: '1.00' }, o),
+      path: 'refund',
+      body: { amount: '1.00' },
+    },
+  ]
+
+  for (const t of typed) {
+    it(`${t.name} forwards opts.idempotencyKey, and omits the header without it`, async () => {
+      const client = new Rail0Client({ baseUrl: BASE_URL })
+
+      const withKey = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok({ id: 'tx-1' }))
+      await t.call(client, { idempotencyKey: 'k-typed' })
+      const [url, init] = withKey.mock.calls[0] as [string, RequestInit]
+      expect(String(url)).toBe(`${BASE_URL}/payments/${RAIL0_ID}/${t.path}/prepare`)
+      expect((init.headers as Record<string, string>)['Idempotency-Key']).toBe('k-typed')
+      expect(init.body === undefined ? undefined : JSON.parse(init.body as string)).toEqual(t.body)
+      vi.restoreAllMocks()
+
+      const noKey = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok({ id: 'tx-2' }))
+      await t.call(client)
+      const headers = (noKey.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
+      expect(headers['Idempotency-Key']).toBeUndefined()
+      vi.restoreAllMocks()
+    })
+  }
 })
 
 describe('#332 — total_pages and Link', () => {

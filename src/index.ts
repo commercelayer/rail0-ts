@@ -31,6 +31,7 @@ export { HealthResource } from './resources/health.js'
 export type { PaymentMethodsQuery } from './resources/payment_methods.js'
 export { PaymentMethodsResource } from './resources/payment_methods.js'
 export type {
+  IdempotentRequest,
   ListDisputesParams,
   ListPaymentsParams,
   ListTransactionsParams,
