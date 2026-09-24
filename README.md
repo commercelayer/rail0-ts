@@ -87,18 +87,21 @@ All client-side, over `@noble` (no ethers/viem).
 
 | Helper | Use |
 |--------|-----|
-| `signPayment(key, paymentDetail)` | Payer signs the EIP-3009 payload from `create()` (authorize or charge) |
-| `signRefund(key, transaction)` | Payee signs the refund payload from `refundPrepare` phase-1 |
+| `signSigningPayload(key, payload)` | Sign any gateway `signing_payload` (mirrors rail0-go's `SignSigningPayload`) — the one generic signer |
+| `signPayment(key, paymentDetail)` | Payer signs the EIP-3009 payload from `create()` (authorize or charge) — `signSigningPayload` on `.signing_payload` |
+| `signRefund(key, transaction)` | Payee signs the refund payload from `refundPrepare` phase-1 — `signSigningPayload` on `.signing_payload` |
 | `packSignature(sig)` | Turn a `{ v, r, s }` into the `0x` r‖s‖v hex every `signature` field expects |
 | `signTransaction(unsignedJson, key)` | Sign an unsigned EIP-1559 tx from any prepare step → raw hex for submit |
 | `signAuthorize` / `signCharge` | Lower-level EIP-3009 signers from explicit params |
 | `signTransferWithAuthorization` / `signReceiveWithAuthorization` | Raw EIP-3009 transfer / receive signers |
 | `buildSiweMessage(params)` | Build the EIP-4361 text for a login or a wallet proof-of-ownership |
+| `addressFromPrivateKey(key)` | The EIP-55 checksummed address of a private key (`checksumAddress` is the deprecated old name — it never formatted an address) |
 
-`signPayment` / `signRefund` need only the `signing_payload` field, so they accept
-any `{ signing_payload }` — a whole `PaymentDetail`/`Transaction`, or just the
-payload holder. An unrecognised `primaryType` **throws** rather than defaulting to
-the transfer typehash: the gateway's payload is signed verbatim, never rebuilt
+`signSigningPayload` takes the payload itself (`null`/`undefined` throws). The two
+named wrappers need only the `signing_payload` field, so they accept any
+`{ signing_payload }` — a whole `PaymentDetail`/`Transaction`, or just the payload
+holder. An unrecognised `primaryType` **throws** rather than defaulting to the
+transfer typehash: the gateway's payload is signed verbatim, never rebuilt
 client-side.
 
 ## Amounts
@@ -189,11 +192,12 @@ because `retryOn429` can hold a promise for up to a minute.
 
 Resources: `client.payments`, `client.accounts`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.disputes`, `client.analytics`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
 
-`setAuthToken(jwt)` sets (or, with `null`/`undefined`, clears) the `Authorization: Bearer …` header on every subsequent request — call it after `auth.login()` to authenticate a long-lived client without reconstructing it:
+`setAuthToken(jwt)` sets (or, with `null`/`undefined`, clears) the `Authorization: Bearer …` header on every subsequent request. A successful `auth.login()` or `auth.verify()` already calls it for you (as rail0-go's `Auth.Login`/`Verify` do), so a long-lived client is authenticated right after signing in; use `setAuthToken` to install a token you persisted, or to share one session across several clients:
 
 ```typescript
 const { token } = await client.auth.login(privateKeyHex, 'api.rail0.xyz')
-client.setAuthToken(token) // now client.analytics/webhooks/… are authenticated
+// client.analytics/webhooks/… are now authenticated — no setAuthToken needed.
+other.setAuthToken(token) // a second client on the same session
 ```
 
 ### `client.payments`
@@ -205,10 +209,10 @@ Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transacti
 
 `getTransaction(id, transactionId)` reads ONE of a payment's transactions. This is the lookup for an `action_id`: anything handed a transaction id when an operation was accepted resolves it directly, instead of fetching the payment and scanning its transactions for an id it already holds. `redrive(id, transactionId)` re-enqueues a stuck broadcast.
 
-**Idempotency.** The generic `prepare(id, op, body?, { idempotencyKey })`, `disputePrepare(id, reason?, { idempotencyKey })` and `closeDisputePrepare(id, reason?, { idempotencyKey })` take an optional key (sent as `Idempotency-Key`); the operation-specific shorthands (`capturePrepare`, `refundPrepare`, …) do not, so use the generic form when you need one. Without it, a retry arriving after the first transaction was signed and broadcast opens a **second** one — correct for a genuine sequential partial capture, wrong for a retry, and only the caller can tell those apart. Same key with different terms is refused `422 idempotency_key_reused`; the key is scoped to the payment.
+**Idempotency.** Every prepare takes an optional trailing `opts: IdempotentRequest` — `{ idempotencyKey }`, sent as `Idempotency-Key`: the generic `prepare(id, op, body?, opts?)`, the typed `authorizePrepare(id, opts?)`, `chargePrepare(id, opts?)`, `capturePrepare(id, amount, opts?)`, `voidPrepare(id, opts?)`, `releasePrepare(id, from?, opts?)`, `refundPrepare(id, body, opts?)`, and `disputePrepare(id, reason?, opts?)` / `closeDisputePrepare(id, reason?, opts?)`. Without it, a retry arriving after the first transaction was signed and broadcast opens a **second** one — correct for a genuine sequential partial capture, wrong for a retry, and only the caller can tell those apart. Same key with different terms is refused `422 idempotency_key_reused`; the key is scoped to the payment.
 
 ```ts
-await client.payments.prepare(id, 'capture', { amount: '50.00' }, { idempotencyKey: orderId })
+await client.payments.capturePrepare(id, '50.00', { idempotencyKey: orderId })
 ```
 
 **Refund** is two-phase: `refundPrepare(id, { amount })` returns a `Transaction` carrying a `signing_payload`; sign it with `signRefund`, then `refundPrepare(id, { amount, signature })` returns the unsigned on-chain tx to sign + `refund()`.
@@ -226,7 +230,7 @@ A wallet with no accepted token is invisible to buyers and unusable as a payee: 
 Adding a wallet requires a **SIWE proof-of-ownership** of the address being added — not just the session JWT. `auth.proveAddress(privateKeyHex, domain, chainId?)` runs that handshake and returns the `message` + `signature` to hand to `create`. Sign with **the added wallet's own key**, not the session key: the gateway rejects a signature that does not recover to `address` (422), and an address already registered anywhere (409 — addresses are globally unique). This lets a merchant prove control of several payee wallets under one account.
 
 ```ts
-const added = checksumAddress(addedWalletKey)
+const added = addressFromPrivateKey(addedWalletKey)
 const { message, signature } = await client.auth.proveAddress(addedWalletKey, 'api.rail0.xyz')
 await client.wallets.create(accountId, { address: added, message, signature, label: 'Payouts' })
 ```
@@ -324,8 +328,7 @@ Merchant sales analytics over the account's **own** payments as payee. Account-o
 - `breakdown(filters, { by })` → `AnalyticsRow[]` — aggregate by `by`: `'token'` | `'chain'` | `'mode'` | `'status'` | `'operation'`. `token`/`chain` rows carry `volume`; `mode`/`status` rows are counts only; `operation` groups the merchant's own CONFIRMED transactions and carries `transactions` (how often it ran — a partial capture runs several times on one order) beside `orders` (how many it touched).
 
 ```ts
-const { token } = await client.auth.login(privateKeyHex, 'api.rail0.xyz')
-client.setAuthToken(token)
+await client.auth.login(privateKeyHex, 'api.rail0.xyz') // authenticates `client`
 const kpis  = await client.analytics.summary({ mode: 'charge' })
 // Gas is per chain: format each row with its own symbol, never add them up.
 for (const g of kpis.gas) console.log(g.chain_name, formatAmount(g.spent, g.decimals ?? 18), g.symbol)
@@ -352,11 +355,13 @@ buyer-facing discovery on `client.paymentMethods`.
 
 ### `client.chains` / `client.tokens` / `client.health`
 
-`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against: `address`, `version`, `deployed_at`. The gateway sends it and `components['schemas']['Blockchain']` types it, but the exported `Blockchain` type does not declare it yet) · `tokens.list(chainId?, symbol?, active?)` → `Token[]` (every token by default, retired ones included — each carries `active`; pass `active: true` where only what a new payment can use should be offered) · `health.get()` → `Health`.
+`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against, typed `ChainContract`: `address`, `version`, `deployed_at`, nullable for a chain with no deployment. Since 1.2.0 `Blockchain` is an alias of the schema component, so it types `contract` and picks up future fields on regenerate) · `tokens.list(chainId?, symbol?, active?)` → `Token[]` (every token by default, retired ones included — each carries `active`; pass `active: true` where only what a new payment can use should be offered) · `health.get()` → `Health`.
 
 ### `client.auth`
 
 `getNonce()` → `{ nonce, expiresAt }` · `verify(message, signature)` → `AuthResponse` (`token`, `address`, `accountId`, `name`, `expiresAt`, and `admin` — true only for an account holding the operator grant; visibility only, every gated route re-checks it) · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs) · `logout()` → `{ revoked }` (this TOKEN) · `revokeAll(privateKeyHex, domain, chainId?)` → `{ revokedAll, cutoffAt }` · `proveAddress(privateKeyHex, domain, chainId?)` → `{ message, signature }` (the wallet-link proof — see `client.wallets`).
+
+**`login` and `verify` authenticate the client they run on.** On success the token is installed on that client, and still returned in `AuthResponse` for callers that persist it; a failed call leaves the current token untouched. A server that verifies *someone else's* signature (relaying a user's sign-in) therefore holds that user's session on the client afterwards — use one client per sign-in there (as a per-request client already does), or clear it with `setAuthToken(null)`.
 
 **`logout` and `revokeAll` answer different questions.** `logout` ends the session whose token this client carries, so signing out one device leaves the others signed in. `revokeAll` ends **every** session of the calling address — including the ones you have never seen, which is the whole case for a key you no longer trust: five live sessions would otherwise need five tokens you do not hold. The gateway records a **cutoff instant** rather than enumerating tokens, so a session minted a moment earlier is refused by its own `iat`. That instant is what `cutoffAt` carries, and it is the value worth logging: it says exactly which sessions died, which a boolean cannot.
 
