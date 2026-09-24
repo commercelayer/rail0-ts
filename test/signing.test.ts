@@ -8,6 +8,7 @@ import {
   signCharge,
   signPayment,
   signRefund,
+  signSigningPayload,
   signTransferWithAuthorization,
   type TokenDomain,
 } from '../src/signing.js'
@@ -372,7 +373,7 @@ describe('packSignature', () => {
 //  signPayment / signRefund — payload-only inputs, primaryType guard
 // ================================================================
 
-describe('signFromPayload (via signPayment / signRefund)', () => {
+describe('signSigningPayload (and its signPayment / signRefund wrappers)', () => {
   // The gateway's payload verbatim: only `signing_payload` is read, so the tests
   // pass the bare holder — the shape real browser callers had to cast to before.
   const payload = (primaryType: string): SigningPayload => ({
@@ -423,6 +424,22 @@ describe('signFromPayload (via signPayment / signRefund)', () => {
     expect(() => signRefund(PRIVATE_KEY, { signing_payload: payload('') })).toThrow(
       /unsupported EIP-712 primaryType/,
     )
+  })
+
+  it('signSigningPayload takes the payload itself and matches both wrappers', () => {
+    const transfer = payload('TransferWithAuthorization')
+    const receive = payload('ReceiveWithAuthorization')
+    expect(signSigningPayload(PRIVATE_KEY, transfer)).toEqual(
+      signPayment(PRIVATE_KEY, { signing_payload: transfer }),
+    )
+    expect(signSigningPayload(PRIVATE_KEY, receive)).toEqual(
+      signRefund(PRIVATE_KEY, { signing_payload: receive }),
+    )
+    expect(() => signSigningPayload(PRIVATE_KEY, payload('Nope'))).toThrow(
+      /unsupported EIP-712 primaryType: Nope/,
+    )
+    expect(() => signSigningPayload(PRIVATE_KEY, null)).toThrow(/signing payload is missing/)
+    expect(() => signSigningPayload(PRIVATE_KEY, undefined)).toThrow(/signing payload is missing/)
   })
 
   it('throws a distinct error when the payload is absent', () => {

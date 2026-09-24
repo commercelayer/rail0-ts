@@ -333,6 +333,8 @@ export function signCharge(params: SignPaymentParams): Eip3009Signature {
  *
  * Reads all required parameters directly from the API response — no manual
  * field extraction needed. This is the recommended signing path for payers.
+ * Equivalent to `signSigningPayload(privateKey, payment.signing_payload)`, with an
+ * error message that names the payer case.
  *
  * ```ts
  * const resp = await client.payments.create({
@@ -356,25 +358,43 @@ export function signPayment(
   if (!payload) {
     throw new Error('payment has no signing_payload (already signed, or a transient RPC failure)')
   }
-  return signFromPayload(privateKey, payload)
+  return signSigningPayload(privateKey, payload)
 }
 
 /**
- * Sign an EIP-712 payload, selecting TransferWithAuthorization vs
- * ReceiveWithAuthorization by its `primaryType`. Shared by signPayment (payer,
- * authorize/charge) and signRefund (payee, refund).
+ * Sign the gateway's EIP-712 `signing_payload` — whatever operation it belongs to.
+ * The one generic signer, mirroring rail0-go's `SignSigningPayload`: `signPayment`
+ * (payer, the payload from `create()`) and `signRefund` (payee, the payload from
+ * `refundPrepare` phase-1) are both this call on `.signing_payload`, kept for the
+ * clearer name at each call site.
  *
- * An unrecognised `primaryType` throws rather than falling back to the transfer
- * typehash. A fallback would still yield a well-formed signature — over the WRONG
- * digest — which only surfaces on-chain as `invalid_token_signature` after gas is
- * spent. `primaryType` is precisely the field that moves when the contract's
- * EIP-3009 primitive changes (commercelayer/rail0#58), so a client must never
- * guess it: the gateway's payload is signed verbatim or not at all.
+ * Selects TransferWithAuthorization vs ReceiveWithAuthorization by the payload's
+ * `primaryType`. An unrecognised `primaryType` throws rather than falling back to the
+ * transfer typehash. A fallback would still yield a well-formed signature — over the
+ * WRONG digest — which only surfaces on-chain as `invalid_token_signature` after gas
+ * is spent. `primaryType` is precisely the field that moves when the contract's
+ * EIP-3009 primitive changes (commercelayer/rail0#58), so a client must never guess
+ * it: the gateway's payload is signed verbatim or not at all.
+ *
+ * A missing payload (`null`/`undefined`) throws too — `create()` answers 502
+ * `signing_payload_unavailable` when it cannot build one, and an already-signed
+ * payment no longer carries it.
+ *
+ * ```ts
+ * const created = await client.payments.create(req)
+ * const sig = signSigningPayload(payerKey, created.signing_payload)
+ * await client.payments.sign(created.rail0_id, { signature: packSignature(sig) })
+ * ```
  */
-function signFromPayload(
+export function signSigningPayload(
   privateKey: `0x${string}` | Uint8Array,
-  payload: SigningPayload,
+  payload: SigningPayload | null | undefined,
 ): Eip3009Signature {
+  if (!payload) {
+    throw new Error(
+      'signing payload is missing (already signed, or the gateway could not build one)',
+    )
+  }
   let typeHash: Uint8Array
   switch (payload.primaryType) {
     case 'TransferWithAuthorization':
@@ -432,6 +452,8 @@ export function signReceiveWithAuthorization(
  * Sign the refund payload returned by `refundPrepare` phase-1. Reads the
  * ReceiveWithAuthorization payload off the returned transaction and signs it
  * with the payee key; pass the packed result to `refundPrepare` phase-2.
+ * Equivalent to `signSigningPayload(privateKey, transaction.signing_payload)`, with
+ * an error message that names the refund case.
  *
  * ```ts
  * const phase1 = await client.payments.refundPrepare(id, { amount: '10.00' })
@@ -450,7 +472,7 @@ export function signRefund(
   if (!payload) {
     throw new Error('transaction has no signing_payload (call refundPrepare phase-1 first)')
   }
-  return signFromPayload(privateKey, payload)
+  return signSigningPayload(privateKey, payload)
 }
 
 // ================================================================

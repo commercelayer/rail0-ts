@@ -129,6 +129,7 @@ export {
   signPayment,
   signReceiveWithAuthorization,
   signRefund,
+  signSigningPayload,
   signTransaction,
   signTransferWithAuthorization,
 } from './signing.js'
