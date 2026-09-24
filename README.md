@@ -430,19 +430,25 @@ pnpm generate
 
 ### Publishing
 
-```bash
-pnpm publish:npm
-```
+Releases publish from GitHub Actions (`.github/workflows/release.yml`) through npm
+**Trusted Publishing**: npm trusts that workflow in this repo, so there is no registry
+token to store or rotate and no 2FA prompt, and each tarball carries npm provenance.
 
-`prepublishOnly` runs the same four steps CI runs — lint, typecheck, test, build — so the
-tarball can only be cut from a tree that passes them; `pnpm publish` then refuses a dirty
-working tree or a branch other than `main`. Publish from `main` after the release commit is
-merged, never from a feature branch.
+1. Merge a PR that bumps `version` in `package.json`.
+2. Publish a GitHub release on `main` tagged `v<version>` (e.g. `v1.2.0`).
 
-The package is public under the `@commercelayer` scope (`publishConfig.access`), so the
-account running it needs publish rights on that scope. Nothing in this repo holds a
-registry token: authenticate with `npm login` (or a `NODE_AUTH_TOKEN` in the environment)
-and never commit one.
+The workflow checks the tag against `package.json`, runs lint, typecheck, test and build,
+and publishes. A version already on npm is skipped, so a re-run (Actions → release → Run
+workflow, choosing the tag) is always safe.
+
+One-time setup, by a maintainer of the package on npmjs.com: package → Settings → Trusted
+Publisher → GitHub Actions, organization `commercelayer`, repository `rail0-ts`, workflow
+`release.yml`.
+
+Publishing by hand still works as a fallback (`pnpm publish:npm` from a clean `main`,
+after `npm login`): `prepublishOnly` runs the same gate, and npm asks for a second factor
+on every publish when the account has 2FA. Nothing in this repo holds a registry token —
+never commit one.
 
 ## Project structure
 

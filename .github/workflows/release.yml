@@ -1,0 +1,85 @@
+# Publish @commercelayer/rail0-sdk to npm when a GitHub release is published.
+#
+# Trusted Publishing (OIDC): npm trusts THIS workflow file in THIS repo, so no registry
+# token exists anywhere — not in the repo's secrets, not on a laptop — and no 2FA prompt
+# interrupts a release. npm attaches provenance to the tarball (which commit, which
+# workflow built it) on its own. It works only after a maintainer registers the trusted
+# publisher on npmjs.com: package → Settings → Trusted Publisher → GitHub Actions, with
+# organization `commercelayer`, repository `rail0-ts`, workflow `release.yml`.
+#
+# Releasing:
+#   1. merge a PR that bumps `version` in package.json (e.g. 1.2.0);
+#   2. publish a GitHub release whose tag is that version with a `v` (v1.2.0), on main.
+# The tag must match package.json, or the run fails before anything is published.
+#
+# `release` runs the workflow as it exists IN THE TAGGED COMMIT — a tag on a commit that
+# predates this file publishes nothing. workflow_dispatch re-runs it for a tag (choose
+# the tag as the ref), e.g. after fixing the npm-side configuration.
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token npm exchanges for a one-off publish credential
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing needs a recent npm CLI (11.5.1+); Node 22 ships an older one.
+      - run: npm install -g npm@latest
+
+      - run: pnpm install --frozen-lockfile
+
+      # The tag names the version being released; package.json is what actually gets
+      # published. A mismatch means the release points at the wrong commit.
+      - name: Check the tag matches package.json
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME}"
+          if [ "$tag" != "v$version" ]; then
+            echo "::error::ref '$tag' does not match package.json version $version (expected v$version)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Idempotent: a version already on the registry (published by hand, or by an
+      # earlier run) is reported and skipped, so a re-run never fails on "cannot
+      # publish over an existing version".
+      - name: Skip a version already published
+        id: published
+        run: |
+          if npm view "@commercelayer/rail0-sdk@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
+            echo "::notice::@commercelayer/rail0-sdk@${{ steps.version.outputs.version }} is already on npm — nothing to publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The same gate as prepublishOnly and CI: lint, typecheck, test, build.
+      - name: Lint, type-check, test, build
+        if: steps.published.outputs.skip != 'true'
+        run: pnpm lint && pnpm typecheck && pnpm test && pnpm build
+
+      # npm, not pnpm: npm's CLI is what performs the OIDC exchange. --ignore-scripts
+      # because the gate above already ran what prepublishOnly would run again.
+      - name: Publish
+        if: steps.published.outputs.skip != 'true'
+        run: npm publish --ignore-scripts
