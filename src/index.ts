@@ -18,6 +18,7 @@ export { AnalyticsResource } from './resources/analytics.js'
 export type { AuthResponse, SiweMessageParams } from './resources/auth.js'
 export {
   AuthResource,
+  addressFromPrivateKey,
   buildSiweMessage,
   checksumAddress,
   LOGIN_STATEMENT,
@@ -31,6 +32,7 @@ export { HealthResource } from './resources/health.js'
 export type { PaymentMethodsQuery } from './resources/payment_methods.js'
 export { PaymentMethodsResource } from './resources/payment_methods.js'
 export type {
+  IdempotentRequest,
   ListDisputesParams,
   ListPaymentsParams,
   ListTransactionsParams,
@@ -58,6 +60,7 @@ export type {
   Blockchain,
   Bytes32,
   ChainBalance,
+  ChainContract,
   CircuitState,
   // Request bodies
   CreatePaymentRequest,
@@ -126,6 +129,7 @@ export {
   signPayment,
   signReceiveWithAuthorization,
   signRefund,
+  signSigningPayload,
   signTransaction,
   signTransferWithAuthorization,
 } from './signing.js'

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Rail0Client } from '../src/client.js'
 import {
+  addressFromPrivateKey,
   buildSiweMessage,
   checksumAddress,
   LOGIN_STATEMENT,
@@ -116,7 +117,9 @@ describe('buildSiweMessage', () => {
   // the checksummed form and the strict verifiers (viem, siwe-js) reject anything
   // else — so login must always send what checksumAddress derives.
   it('carries the EIP-55 checksummed address derived from the key', () => {
-    expect(checksumAddress(KEY)).toBe(ADDRESS)
+    expect(addressFromPrivateKey(KEY)).toBe(ADDRESS)
+    // The deprecated name is the same function, not a reimplementation.
+    expect(checksumAddress).toBe(addressFromPrivateKey)
   })
 })
 
@@ -223,6 +226,77 @@ describe('SIWE statements are purpose-bound', () => {
     // different address entirely.
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy.mock.calls[0]?.[0]).toContain('/auth/nonces')
+    vi.restoreAllMocks()
+  })
+})
+
+describe('auth.login / auth.verify install the token on the client', () => {
+  // As rail0-go's Auth.Verify does: a successful sign-in authenticates the client it ran
+  // on, so `client.setAuthToken(token)` afterwards is no longer required (still harmless).
+  const session = (token: string) =>
+    new Response(
+      JSON.stringify({
+        token,
+        address: ADDRESS,
+        account_id: null,
+        name: null,
+        expires_at: '2099-01-01T00:00:00Z',
+      }),
+    )
+  const authHeader = (spy: ReturnType<typeof vi.spyOn>, call: number) =>
+    ((spy.mock.calls[call]?.[1] as RequestInit).headers as Record<string, string>).Authorization
+
+  it('login: returns the AuthResponse AND sends the token on the next request', async () => {
+    const client = new Rail0Client({ baseUrl: 'http://localhost:3000' })
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ nonce: NONCE, expires_at: '2099-01-01T00:00:00Z' })),
+      )
+      .mockResolvedValueOnce(session('jwt-login'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ok' })))
+
+    const auth = await client.auth.login(KEY, 'localhost:3000')
+    expect(auth.token).toBe('jwt-login')
+
+    await client.health.get()
+    expect(authHeader(spy, 2)).toBe('Bearer jwt-login')
+    vi.restoreAllMocks()
+  })
+
+  it('verify: replaces a token the client was constructed with', async () => {
+    const client = new Rail0Client({
+      baseUrl: 'http://localhost:3000',
+      headers: { Authorization: 'Bearer old' },
+    })
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(session('jwt-verify'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ok' })))
+
+    const auth = await client.auth.verify('msg', '0xsig')
+    expect(auth.token).toBe('jwt-verify')
+
+    await client.health.get()
+    expect(authHeader(spy, 1)).toBe('Bearer jwt-verify')
+    vi.restoreAllMocks()
+  })
+
+  it('a failed verify leaves the current token untouched', async () => {
+    const client = new Rail0Client({ baseUrl: 'http://localhost:3000' })
+    client.setAuthToken('kept')
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 'invalid_siwe', title: 'Bad', detail: 'Bad' }), {
+          status: 422,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ok' })))
+
+    await expect(client.auth.verify('msg', '0xsig')).rejects.toThrow()
+    await client.health.get()
+    expect(authHeader(spy, 1)).toBe('Bearer kept')
     vi.restoreAllMocks()
   })
 })

@@ -62,7 +62,7 @@ The file is written as-is; it is never hand-edited.
 
 - `src/api.ts` can be fully regenerated without touching any other file.
 - If a schema is renamed in the spec, only the `TYPES` template (which emits `src/resources/types.ts`) needs updating — resource classes and the public index are unaffected.
-- A field added to a spec schema reaches `src/api.ts` on its own, but reaches a public type only if that type is an alias of the component. A type written out field by field in the template (e.g. `Blockchain`) has to be extended by hand.
+- A field added to a spec schema reaches `src/api.ts` on its own, but reaches a public type only if that type is an alias of the component (`Blockchain`, `ChainContract`, `Nonce`, `Session` are). A type written out field by field in the template has to be extended by hand — prefer an alias whenever the SDK needs no narrower shape than the schema's, which is how `Blockchain` came to lack `contract` before 1.2.0.
 
 ### Adding a generation step
 
