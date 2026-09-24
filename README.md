@@ -351,7 +351,7 @@ buyer-facing discovery on `client.paymentMethods`.
 
 ### `client.auth`
 
-`getNonce()` · `verify(message, signature)` → `AuthResponse` · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs) · `logout()` → `{ revoked }` (this TOKEN) · `revokeAll(privateKeyHex, domain, chainId?)` → `{ revokedAll, cutoffAt }`.
+`getNonce()` · `verify(message, signature)` → `AuthResponse` (`token`, `address`, `accountId`, `name`, `expiresAt`, and `admin` — true only for an account holding the operator grant; visibility only, every gated route re-checks it) · `login(privateKeyHex, domain, chainId?)` → `AuthResponse` (full SIWE flow; `chainId` defaults to 1 — override to match a gateway whose `SIWE_CHAIN_ID` differs) · `logout()` → `{ revoked }` (this TOKEN) · `revokeAll(privateKeyHex, domain, chainId?)` → `{ revokedAll, cutoffAt }`.
 
 **`logout` and `revokeAll` answer different questions.** `logout` ends the session whose token this client carries, so signing out one device leaves the others signed in. `revokeAll` ends **every** session of the calling address — including the ones you have never seen, which is the whole case for a key you no longer trust: five live sessions would otherwise need five tokens you do not hold. The gateway records a **cutoff instant** rather than enumerating tokens, so a session minted a moment earlier is refused by its own `iat`. That instant is what `cutoffAt` carries, and it is the value worth logging: it says exactly which sessions died, which a boolean cannot.
 
