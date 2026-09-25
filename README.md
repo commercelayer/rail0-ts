@@ -318,7 +318,7 @@ Account-level dispute list — every dispute (open **and** closed) across the ca
 
 ### `client.analytics` (merchant, JWT + account)
 
-Merchant sales analytics over the account's **own** payments as payee. Account-only: every method needs a JWT with a non-null account — `401` without a token, `403` for an account-less (buyer) session. All three take the same optional `AnalyticsFilters`: `{ mode?, status?, token?, chain_id?, from?, to? }` (`from`/`to` are ISO-8601; `token` + `chain_id` together scope monetary volume to a single token, so sums never mix decimals).
+Merchant sales analytics over the account's **own** payments as payee. Account-only: every method needs a JWT with a non-null account — `401` without a token, `403` for an account-less (buyer) session. All three take the same optional `AnalyticsFilters`: `{ mode?, status?, token?, chain_id?, from?, to?, payee? }` (`from`/`to` are ISO-8601; `token` + `chain_id` together scope monetary volume to a single token, so sums never mix decimals). By default the rollups cover **all** the account's wallets; `payee` (a 0x address) scopes them to one of them — it must be one of the session account's wallets (`403` otherwise, `400` if malformed).
 
 - `summary(filters?)` → `AnalyticsSummary` — `{ orders, disputed, refund_rate, dispute_rate, failed_rate, by_status, failures, volume, gas, gas_by_status, gas_by_operation }`, where `volume` is one `AnalyticsVolume` per `(token, chain)` with base-unit `gross` (authorized), `settled` (net of refunds), `escrowed` (still held), and gross `captured`/`refunded` strings from the confirmed transactions.
   `failures` is one row per decoded failure code with how many transactions hit it, commonest first: `failed_rate` says how much fails, this says what to act on — a revert is a state problem, a rejection that never reached the chain is a wallet problem.
@@ -334,6 +334,8 @@ const kpis  = await client.analytics.summary({ mode: 'charge' })
 for (const g of kpis.gas) console.log(g.chain_name, formatAmount(g.spent, g.decimals ?? 18), g.symbol)
 const daily = await client.analytics.timeseries({}, { interval: 'day' })
 const byTok = await client.analytics.breakdown(undefined, { by: 'token' })
+// One wallet only (must belong to the session account):
+const mine  = await client.analytics.summary({ payee: '0xYourWalletAddress' })
 ```
 
 ### `client.accounts` (merchant, JWT)

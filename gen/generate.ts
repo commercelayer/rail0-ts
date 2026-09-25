@@ -1339,6 +1339,12 @@ export interface AnalyticsFilters {
   from?: string
   /** Only payments created at/before this ISO-8601 timestamp. */
   to?: string
+  /**
+   * Payee wallet address (0x…) — scopes analytics to that one wallet instead of
+   * all the account's wallets. Must be one of the session account's wallets:
+   * the gateway answers 403 otherwise, 400 if malformed.
+   */
+  payee?: Address
 }
 
 /** Time-bucket granularity for the timeseries endpoint (gateway default: "day"). */
