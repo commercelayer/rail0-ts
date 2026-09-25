@@ -903,7 +903,7 @@ export interface paths {
         };
         /**
          * Merchant sales KPIs (counts, per-token/chain volume, per-chain gas)
-         * @description Account-only (require_account!): headline sales analytics over the merchant account's own payments as payee. 403 for an account-less (buyer) session. Counts are token-agnostic; monetary volume is grouped per (token, chain) and only summed within one token; gas is grouped per chain and denominated in that chain's native token, so it is never summed across chains either, and is additionally sliced by payment status and by operation.
+         * @description Account-only (require_account!): headline sales analytics over the merchant account's own payments as payee. 403 for an account-less (buyer) session. Scope: every wallet of the account by default; `payee` narrows it to ONE of the account's wallets (case-insensitive; a deactivated wallet is still readable), which also narrows the gas and failure rows to that wallet's broadcasts. A `payee` that is not a wallet of the session's account is 403 `forbidden`; a malformed one is 400. Counts are token-agnostic; monetary volume is grouped per (token, chain) and only summed within one token; gas is grouped per chain and denominated in that chain's native token, so it is never summed across chains either, and is additionally sliced by payment status and by operation.
          */
         get: operations["analyticsSummary"];
         put?: never;
@@ -923,7 +923,7 @@ export interface paths {
         };
         /**
          * Order count per time bucket
-         * @description Account-only. Order count per time interval (day/week/month), oldest first. Per-bucket volume is included only when both a token and a chain are filtered (so the sum is over one token); otherwise null.
+         * @description Account-only. Order count per time interval (day/week/month), oldest first. Accepts the same `payee` scope as /analytics/summary (403 `forbidden` for a payee that is not a wallet of the session's account). Per-bucket volume is included only when both a token and a chain are filtered (so the sum is over one token); otherwise null.
          */
         get: operations["analyticsTimeseries"];
         put?: never;
@@ -943,7 +943,7 @@ export interface paths {
         };
         /**
          * Orders aggregated by a dimension
-         * @description Account-only. Aggregate orders by `token`, `chain`, `mode`, or `status`. token/chain rows carry per-token volume; mode/status are counts only.
+         * @description Account-only. Aggregate orders by `token`, `chain`, `mode`, or `status`. Accepts the same `payee` scope as /analytics/summary (403 `forbidden` for a payee that is not a wallet of the session's account). token/chain rows carry per-token volume; mode/status are counts only.
          */
         get: operations["analyticsBreakdown"];
         put?: never;
@@ -3453,6 +3453,8 @@ export interface operations {
     analyticsSummary: {
         parameters: {
             query?: {
+                /** @description One of the account's wallet addresses (0x, 40 hex, any case) — scopes the analytics to that wallet only. Omitted: every wallet of the account. 403 when it is not a wallet of the session's account. */
+                payee?: string;
                 mode?: "authorize" | "charge";
                 status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
                 /** @description Token address (0x…) — scopes volume to one token. */
@@ -3485,6 +3487,8 @@ export interface operations {
     analyticsTimeseries: {
         parameters: {
             query?: {
+                /** @description One of the account's wallet addresses (0x, 40 hex, any case) — scopes the analytics to that wallet only. Omitted: every wallet of the account. 403 when it is not a wallet of the session's account. */
+                payee?: string;
                 mode?: "authorize" | "charge";
                 status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
                 /** @description Token address (0x…) — scopes volume to one token. */
@@ -3518,6 +3522,8 @@ export interface operations {
     analyticsBreakdown: {
         parameters: {
             query: {
+                /** @description One of the account's wallet addresses (0x, 40 hex, any case) — scopes the analytics to that wallet only. Omitted: every wallet of the account. 403 when it is not a wallet of the session's account. */
+                payee?: string;
                 mode?: "authorize" | "charge";
                 status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
                 /** @description Token address (0x…) — scopes volume to one token. */
