@@ -376,6 +376,7 @@ describe('resource alignment', () => {
         chain_id: 84532,
         from: '2026-01-01T00:00:00Z',
         to: '2026-02-01T00:00:00Z',
+        payee: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
       })
       expect(res.orders).toBe(3)
       expect(res.by_status.charged).toBe(2)
@@ -406,13 +407,18 @@ describe('resource alignment', () => {
       expect(url).toContain('chain_id=84532')
       expect(url).toContain('from=')
       expect(url).toContain('to=')
+      // Scopes the rollup to one of the account's wallets instead of all of them.
+      expect(url).toContain('payee=0x70997970C51812dc3A010C7d01b50e0d17dc79C8')
     })
 
     it('timeseries returns buckets and forwards the interval option', async () => {
       const spy = vi
         .spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(ok([{ bucket: '2026-01-01T00:00:00Z', orders: 5, volume: null }]))
-      const res = await client.analytics.timeseries({ mode: 'authorize' }, { interval: 'week' })
+      const res = await client.analytics.timeseries(
+        { mode: 'authorize', payee: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' },
+        { interval: 'week' },
+      )
       expect(res[0]?.orders).toBe(5)
       expect(res[0]?.volume).toBeNull()
 
@@ -420,6 +426,7 @@ describe('resource alignment', () => {
       expect(url).toContain('/analytics/timeseries?')
       expect(url).toContain('mode=authorize')
       expect(url).toContain('interval=week')
+      expect(url).toContain('payee=0x70997970C51812dc3A010C7d01b50e0d17dc79C8')
     })
 
     it('timeseries omits interval when not supplied (gateway defaults to day)', async () => {
@@ -434,7 +441,10 @@ describe('resource alignment', () => {
       const spy = vi
         .spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(ok([{ key: 'USDC', volume: '3000000' }]))
-      const res = await client.analytics.breakdown({ status: 'charged' }, { by: 'token' })
+      const res = await client.analytics.breakdown(
+        { status: 'charged', payee: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' },
+        { by: 'token' },
+      )
       expect(res[0]?.key).toBe('USDC')
       expect(res[0]?.volume).toBe('3000000')
 
@@ -442,6 +452,7 @@ describe('resource alignment', () => {
       expect(url).toContain('/analytics/breakdown?')
       expect(url).toContain('by=token')
       expect(url).toContain('status=charged')
+      expect(url).toContain('payee=0x70997970C51812dc3A010C7d01b50e0d17dc79C8')
     })
 
     it('breakdown works with no filters (undefined)', async () => {
