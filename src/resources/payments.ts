@@ -240,7 +240,11 @@ export class PaymentsResource {
     return this.http.post(path`/payments/${id}/void`, params)
   }
 
-  /** Release an expired escrow (permissionless). `from` defaults to the payer. */
+  /**
+   * Release an expired escrow. `from` is the submitter the transaction is built for
+   * (its nonce): the payment's payer or payee — the gateway answers 422
+   * `release_submitter_not_a_party` otherwise. Omitted, it is the signed-in caller.
+   */
   releasePrepare(id: Bytes32, from?: string, opts?: IdempotentRequest): Promise<Transaction> {
     return this.http.post(
       path`/payments/${id}/release/prepare`,
