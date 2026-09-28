@@ -312,6 +312,8 @@ while (page.meta.links.next) {
 
 ### `client.disputes` (JWT)
 
+> **Operations go through the gateway.** The gateway mirrors only the operations it prepared. A dispute, close-dispute, capture, void, refund or release sent to the RAIL0 contract directly — outside this SDK's prepare/submit calls — happens on-chain, but the payment's status and balances on the gateway do not change and no webhook is sent; a merchant is not told about a dispute its buyer opened that way. The gateway records it for its operators as a sync error (`external_operation`).
+
 Account-level dispute list — every dispute (open **and** closed) across the caller's payments, each with its parent `payment` embedded. Complements `payments.disputes(id)` (one payment's history); unlike the `disputed` filter on `payments.list` (current-state), it still surfaces closed disputes.
 
 `list(params?)` → `PaginatedResponse<Dispute>` — `params`: `{ status?: 'open' | 'closed', sort?, page?, per_page? }`.
