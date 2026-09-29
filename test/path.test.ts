@@ -10,6 +10,13 @@ describe('path', () => {
     expect(path`/a/${'b?c#d'}`).toBe('/a/b%3Fc%23d')
   })
 
+  it('refuses empty, "." and ".." values instead of encoding them', () => {
+    for (const bad of ['', '.', '..']) {
+      expect(() => path`/payments/${bad}`).toThrow(TypeError)
+    }
+    expect(path`/a/${'...'}/${'.b'}`).toBe('/a/.../.b')
+  })
+
   it('leaves the ids the SDK is normally handed untouched', () => {
     const id = `0x${'ab'.repeat(32)}`
     expect(path`/payments/${id}/transactions/${'019e748b-da9a-7c3f-ba32-50572ffd5388'}`).toBe(
@@ -35,5 +42,14 @@ describe('resource paths', () => {
     const urls = spy.mock.calls.map((c) => String(c[0]))
     expect(urls[0]).toBe('https://api.test/payments/..%2Fwebhooks%2Fx')
     expect(urls[1]).toBe('https://api.test/webhooks/..%2F..%2Fadmin%2Fhealth')
+  })
+
+  it('refuses a dot or empty id before any request is made', () => {
+    const spy = vi.spyOn(globalThis, 'fetch')
+    const client = new Rail0Client({ baseUrl: 'https://api.test' })
+
+    expect(() => client.payments.get('..')).toThrow(TypeError)
+    expect(() => client.webhooks.get('')).toThrow(TypeError)
+    expect(spy).not.toHaveBeenCalled()
   })
 })

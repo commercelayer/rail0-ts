@@ -11,12 +11,24 @@
  * value with encodeURIComponent keeps it inside its segment; for the values that are
  * legitimately used (0x hex, UUIDs, operation names) it changes nothing.
  *
+ * A value that is empty, `.` or `..` is REFUSED with a TypeError instead of encoded:
+ * encodeURIComponent leaves dots alone, so `..` would still be a dot segment that a proxy
+ * or router may resolve away, and an empty id silently turns `payments.get('')` into the
+ * list route. rail0-go and rail0-ruby refuse the same three values, so the SDKs agree.
+ * The throw is synchronous, before any request is made.
+ *
  * Query strings are NOT built here: they come from buildQuery, which encodes its own
  * values, and are appended to the result.
  */
 export function path(strings: TemplateStringsArray, ...values: (string | number)[]): string {
-  return strings.reduce(
-    (out, s, i) => out + s + (i < values.length ? encodeURIComponent(String(values[i])) : ''),
-    '',
-  )
+  return strings.reduce((out, s, i) => {
+    if (i >= values.length) return out + s
+    const value = String(values[i])
+    if (value === '' || value === '.' || value === '..') {
+      throw new TypeError(
+        `invalid path segment ${JSON.stringify(value)}: an id cannot be empty, "." or ".."`,
+      )
+    }
+    return out + s + encodeURIComponent(value)
+  }, '')
 }
