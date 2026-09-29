@@ -1,6 +1,6 @@
 {
   "name": "@commercelayer/rail0-sdk",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "TypeScript SDK for the RAIL0 stablecoin payment API",
   "keywords": [
     "rail0",
