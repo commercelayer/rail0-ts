@@ -58,6 +58,7 @@ export type {
   AssetBalance,
   BalanceError,
   Blockchain,
+  BlockchainSettlement,
   Bytes32,
   ChainBalance,
   ChainContract,

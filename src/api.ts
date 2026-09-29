@@ -1606,6 +1606,18 @@ export interface components {
             /** @description The block tag the chain calls settled (`safe`, `finalized`), when it serves one — and what the gateway actually gates on. Null where the chain serves none, in which case required_confirmations is counted. */
             finality_tag?: string | null;
             contract?: components["schemas"]["ChainContract"];
+            settlement?: components["schemas"]["BlockchainSettlement"];
+        };
+        /** @description How long an operation on this chain has taken to settle ON THIS GATEWAY: percentiles of broadcast (`submitted_at`) to confirmation (`confirmed_at`) over the confirmed transactions of the trailing `window_days`. End-to-end — the chain's finality lag plus the gateway/indexer pipeline — so it is what a client actually waits for, not the chain's finality. A measurement, not a guarantee: use it as a wait-deadline hint (e.g. a small multiple of `p90_seconds`) and keep a fixed fallback for when it is null. Deliberately a long-window capacity figure, not a live alarm (#289). Always present; the percentiles are null when `sample_size` is below the gateway's minimum (20). */
+        BlockchainSettlement: {
+            /** @description Median settlement time, whole seconds rounded up. Null below the minimum sample. */
+            p50_seconds?: number | null;
+            /** @description 90th-percentile settlement time, whole seconds rounded up — the figure to size a deadline from. Null below the minimum sample. */
+            p90_seconds?: number | null;
+            /** @description Confirmed transactions measured in the window (0 when none). */
+            sample_size?: number;
+            /** @description The trailing window the figures cover, in days. */
+            window_days?: number;
         };
         /** @description Public accepted-token view. The listing is not implicitly active-only (a payment references its token address forever, so a retired token must stay resolvable), so `active` tells a usable token from a retired one. */
         Token: {
@@ -1652,7 +1664,7 @@ export interface components {
             active?: boolean;
             tokens?: components["schemas"]["WalletTokenHolding"][];
         };
-        /** @description Base persisted payment fields, plus the `chain_id` of the payment's deployment. */
+        /** @description Base persisted payment fields, plus the `chain_id` of the payment's deployment, its token's `decimals`, and whether a transaction is `in_flight`. */
         Payment: {
             /** Format: uuid */
             id?: string;
@@ -1678,6 +1690,8 @@ export interface components {
             payer?: string;
             payee?: string;
             token?: string;
+            /** @description Decimals of the payment's token: divide `amount`, `capturable_amount` and `refundable_amount` (base units) by 10^decimals to render them, with no GET /tokens join on `token` + `chain_id`. Resolved from the gateway's in-memory chain catalogue, retired tokens and archived contract versions included. Null only when the gateway cannot resolve the token (a contract it has not loaded, a token deleted outright) — fall back to GET /tokens then. */
+            decimals?: number | null;
             authorization_expiry?: number;
             refund_expiry?: number;
             /** @description True exactly inside the stranded-escrow window (#233): a partial capture has permanently ruled void out, and release only opens at authorization_expiry — so no verb can return the buyer's uncaptured escrow until then. Mirrors RAIL0.sol; the gateway names the window, it cannot shorten it. */
@@ -1689,6 +1703,8 @@ export interface components {
             escrow_returnable_at?: string | null;
             /** @description True while an open dispute exists. */
             disputed?: boolean;
+            /** @description True while one of the payment's transactions is on its way to the chain and not yet settled: status `submitting`, `submitted`, or `pending` holding its signed transaction (the `redrivable` rows — signed and handed over, broadcast not yet sent). A `pending` row still awaiting its signature (an unfinished prepare) does not count, nor do `confirmed`/`failed`. While true the mirrored balances are about to move, so a client should disable further actions on the payment. Carried by list rows too, which embed no transactions; computed for a whole page in one query. */
+            in_flight?: boolean;
             /** @description Decoded reason of the last failed on-chain attempt; null once the payment makes forward progress. Non-null means the latest attempt failed. */
             last_error_code?: string | null;
             /** @description Human-readable form of last_error_code. */
@@ -1843,8 +1859,11 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
-        /** @enum {string} */
-        WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
+        /**
+         * @description Payment event a subscription can receive. Every delivery POSTs the same JSON body — `{id, emitted_at, topic, payment: {id, rail0_id, status, mode, amount, payer, payee, token, chain_id, capturable_amount, authorization_expiry, last_error_code, last_error_message, metadata}, transaction}` — with `transaction` null for events that involve none (`payments.created`, `payments.signed`, `payments.authorization_expiring`, `payments.expired`). The payment fields are read at delivery time. `payments.authorization_expiring` is the advance notice of `payments.expired`: sent once per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds (default 86400) before `authorization_expiry`, for a payment that is still capturable (`authorized`, `partially_captured` or `partially_refunded`) with `capturable_amount` above zero. A payment whose authorization window is shorter than the notice is warned once, as soon as it qualifies. The time left is `authorization_expiry` minus `emitted_at`; capture before then or the escrow returns to the payer via release. `payments.expired` follows if the authorization lapses uncaptured.
+         * @enum {string}
+         */
+        WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.authorization_expiring" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
         /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
         Account: {
             /** Format: uuid */
@@ -2171,7 +2190,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Active blockchains that carry at least one active token (a payment method is a chain+token pair). */
+            /** @description Active blockchains that carry at least one active token (a payment method is a chain+token pair). Each carries `settlement`, the measured broadcast-to-confirmation time on this gateway over a trailing window — served from an in-process cache refreshed at most every 10 minutes, so the listing never runs the aggregate per request. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2756,8 +2775,8 @@ export interface operations {
                 per_page?: components["parameters"]["PerPage"];
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
-                /** @description Lifecycle state. Deliberately a HAPPY-PATH label, not a ledger: a partial operation does NOT move it, so a payment captured 100 and refunded 40 still reads `captured`, and a full refund that leaves uncaptured escrow does too. `capturable_amount` / `refundable_amount` are the authoritative residuals — reconcile on those, not on this. `partially_refunded` is retained for historical rows only and is no longer produced. */
-                status?: "unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded";
+                /** @description Lifecycle state(s): one value, a comma-separated list (`status=authorized,expired`) or the repeated `status[]=` form; matches any of them. An unknown value is 400 `validation_failed` naming it. Deliberately a HAPPY-PATH label, not a ledger: a partial operation does NOT move it, so a payment captured 100 and refunded 40 still reads `captured`, and a full refund that leaves uncaptured escrow does too. `capturable_amount` / `refundable_amount` are the authoritative residuals — reconcile on those, not on this. `partially_refunded` is retained for historical rows only and is no longer produced. */
+                status?: ("unsigned" | "signed" | "authorized" | "charged" | "captured" | "partially_captured" | "expired" | "voided" | "released" | "refunded" | "partially_refunded")[];
                 mode?: "authorize" | "charge";
                 payer?: string;
                 payee?: string;
@@ -2939,7 +2958,8 @@ export interface operations {
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund" | "dispute" | "close_dispute";
-                status?: "pending" | "submitting" | "submitted" | "confirmed" | "failed";
+                /** @description Transaction status(es): one value, a comma-separated list or the repeated `status[]=` form; matches any of them. */
+                status?: ("pending" | "submitting" | "submitted" | "confirmed" | "failed")[];
             };
             header?: never;
             path: {
