@@ -2562,7 +2562,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WalletToken"];
+                    "application/json": components["schemas"]["WalletTokenHolding"];
                 };
             };
             /** @description Holding created. */
@@ -2571,7 +2571,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WalletToken"];
+                    "application/json": components["schemas"]["WalletTokenHolding"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -2643,7 +2643,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WalletToken"];
+                    "application/json": components["schemas"]["WalletTokenHolding"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -2672,7 +2672,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WalletToken"];
+                    "application/json": components["schemas"]["WalletTokenHolding"];
                 };
             };
             401: components["responses"]["Unauthorized"];

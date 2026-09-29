@@ -1004,9 +1004,9 @@ import type { Account, UpdateAccountRequest } from './types.js'
  *
  * Behind SIWE and behind an ownership guard: the gateway requires a JWT whose account
  * matches the path — OR an active admin session, which may read and repair any account
- * (the operator surface). For a merchant that means its OWN account only. An id that is
- * not an account answers 404, the same shape the ownership guard gives a non-admin for
- * another account's id, so the pair cannot be used to tell whether an account exists.
+ * (the operator surface). For a merchant that means its OWN account only: any other id,
+ * existing or not, answers the same 403 \`not_your_account\`, so the pair cannot be used to
+ * tell whether an account exists. Only an admin can get a 404, for an id with no account.
  *
  * The account's wallets live on WalletsResource (they are a collection under the same
  * path), and buyer-facing discovery on PaymentMethodsResource.
