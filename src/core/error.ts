@@ -130,6 +130,16 @@ const errorHints: Record<string, string> = {
   not_the_payee: "only the payment's payee can do this — sign in with the merchant's wallet",
   not_the_payer: "only the payment's payer can do this — sign in with the buyer's wallet",
   not_a_participant: 'only the payer and the payee can see or act on a payment',
+  not_your_account: 'the session belongs to a different account than the one in the path',
+  payer_must_be_caller:
+    "a payment's payer must be the signed-in wallet — create it from the buyer's session",
+  release_submitter_not_a_party:
+    "a release can be sent only by the payment's payer or payee — omit `from` to build it for yourself",
+  // standing: the session's wallet or account was switched off by its holder or an operator
+  wallet_deactivated:
+    "this wallet is deactivated and read-only — reactivate it, or sign in with another of the account's wallets",
+  account_deactivated:
+    'this merchant account is deactivated — it can still read, void, release and refund, but not create, authorize, charge or capture; ask an operator to reactivate it',
   // contract reverts (surfaced as contract_revert, or on a failed transaction)
   not_payee: 'only the merchant (payee) may do this',
   not_payer: 'only the buyer (payer) may do this',
@@ -151,6 +161,17 @@ const errorHints: Record<string, string> = {
   unknown_token: "the token isn't configured on this chain",
   no_active_contract: 'no active RAIL0 contract on that chain',
   missing_param: 'a required parameter is missing from the request',
+  validation_failed: 'a parameter is invalid — the detail names the offending field',
+  invalid_sort: 'that field cannot be sorted on — the detail names the allowed set',
+  rate_limited:
+    'too many requests — wait the Retry-After seconds (the time left in the current window) and retry',
+  // transaction lifecycle
+  not_redrivable:
+    'only a pending transaction that already holds its signed bytes can be re-enqueued — submit a signature instead',
+  event_not_found:
+    'the reported transaction was mined but did not perform this operation on this payment — check the hash and prepare again',
+  submission_timeout:
+    "the broadcast was not mined within the gateway's window — if it mines later, re-report its hash via the /submitted endpoint",
   // A BARE forbidden is not a party mismatch: the gateway split those into codes of
   // their own (not_the_payee, not_the_payer, wallet_deactivated, account_deactivated,
   // not_your_account) because they need different fixes, and its own catalogue reads
