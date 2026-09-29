@@ -242,15 +242,20 @@ describe('Rail0Client', () => {
     })
 
     it('does not retry HTTP errors', async () => {
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify({ error: 'PaymentNotFound', message: 'Not found.' }), {
-          status: 404,
-        }),
-      )
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({ code: 'not_found', title: 'Not found', detail: 'No payment found.' }),
+            { status: 404 },
+          ),
+        )
 
       client = new Rail0Client({ baseUrl: BASE_URL, maxRetries: 2, retryDelay: 0 })
 
-      await expect(client.payments.get(mockPaymentId)).rejects.toBeInstanceOf(Rail0ApiError)
+      const err = await client.payments.get(mockPaymentId).catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(Rail0ApiError)
+      expect((err as Rail0ApiError).code).toBe('not_found')
       expect(fetchSpy).toHaveBeenCalledTimes(1)
     })
 
@@ -321,6 +326,32 @@ describe('Rail0Client', () => {
       }
     })
 
+    it('carries a hint for each standing, request-shape and lifecycle code', () => {
+      // Codes the gateway's error catalogue defines that had no SDK hint, so a caller
+      // rendering `hint` got nothing for them. Meanings follow error_catalog.rb.
+      for (const code of [
+        'account_deactivated',
+        'wallet_deactivated',
+        'not_your_account',
+        'payer_must_be_caller',
+        'release_submitter_not_a_party',
+        'invalid_sort',
+        'validation_failed',
+        'rate_limited',
+        'not_redrivable',
+        'event_not_found',
+        'submission_timeout',
+      ]) {
+        const err = new Rail0ApiError(403, { code })
+        expect(err.hint, code).toBeTruthy()
+      }
+      // A deactivated account can still return the buyer's funds — the hint must say so,
+      // or a merchant is told to wait for an operator before refunding.
+      expect(new Rail0ApiError(403, { code: 'account_deactivated' }).hint).toMatch(
+        /void, release and refund/,
+      )
+    })
+
     it('exposes retryAfter when provided', () => {
       const err = new Rail0ApiError(429, { code: 'rate_limited', detail: 'Too many requests.' }, 30)
       expect(err.retryAfter).toBe(30)
@@ -367,6 +398,26 @@ describe('Rail0Client', () => {
       const err = (await client.payments.get(mockPaymentId).catch((e) => e)) as Rail0ApiError
       expect(err).toBeInstanceOf(Rail0ApiError)
       expect(err.retryAfter).toBeUndefined()
+    })
+
+    it('maps a non-JSON error body to code unknown_error with the HTTP status as detail', async () => {
+      // A proxy's HTML 502 never reaches the gateway, so there is no code/title/detail to
+      // parse. The fallback used to be {status, message} — neither an ApiErrorBody field —
+      // which left err.code undefined and every `switch (err.code)` falling through.
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('<html><body>Bad Gateway</body></html>', {
+          status: 502,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      )
+
+      const err = (await client.payments.get(mockPaymentId).catch((e) => e)) as Rail0ApiError
+      expect(err).toBeInstanceOf(Rail0ApiError)
+      expect(err.status).toBe(502)
+      expect(err.code).toBe('unknown_error')
+      expect(err.detail).toBe('HTTP 502')
+      expect(err.message).toBe('HTTP 502')
+      expect(err.title).toBeUndefined()
     })
   })
 
@@ -545,12 +596,15 @@ describe('Rail0Client', () => {
     it('includes Rail0ApiError and response body on HTTP error', async () => {
       const logger = vi.fn<(entry: LogEntry) => void>()
       client = new Rail0Client({ baseUrl: BASE_URL, logger })
-      const errorBody = { error: 'PaymentNotFound', message: 'No payment found.' }
+      const errorBody = { code: 'not_found', title: 'Not found', detail: 'No payment found.' }
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(JSON.stringify(errorBody), { status: 404 }),
       )
 
-      await expect(client.payments.get(mockPaymentId)).rejects.toBeInstanceOf(Rail0ApiError)
+      await expect(client.payments.get(mockPaymentId)).rejects.toMatchObject({
+        code: 'not_found',
+        detail: 'No payment found.',
+      })
 
       expect(logger).toHaveBeenCalledOnce()
       const [[entry]] = logger.mock.calls as [[LogEntry]]

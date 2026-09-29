@@ -43,7 +43,14 @@ export interface ListPaymentsParams {
   /** Only payments created at/before this ISO-8601 timestamp. */
   created_to?: string
   rail0_id?: string
+  /**
+   * Only payments carrying at least one transaction with this operation. The RECORD
+   * vocabulary, as on `transactions()`: a payment whose only transaction is a dispute
+   * must be findable by it, so `dispute`/`close_dispute` are accepted too.
+   */
+  operation?: StoredTransactionOperation
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -59,6 +66,7 @@ export interface ListTransactionsParams {
   operation?: StoredTransactionOperation
   status?: TransactionStatus
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -67,6 +75,7 @@ export interface ListDisputesParams {
   /** Filter by dispute status ("open" or "closed"). */
   status?: DisputeStatus
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }

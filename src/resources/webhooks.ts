@@ -13,10 +13,11 @@ import type {
 
 export interface ListWebhooksParams {
   /** Narrow to the subscriptions that INCLUDE this event. */
-  topic?: string
+  topic?: WebhookTopic
   active?: boolean
   circuit_state?: 'closed' | 'open'
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -37,6 +38,7 @@ export interface ListEventCallbacksParams {
   /** ISO-8601. Deliveries at or before this instant. */
   until?: string
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -86,6 +88,29 @@ export class WebhooksResource {
     params?: ListEventCallbacksParams,
   ): Promise<PaginatedResponse<EventCallback>> {
     return this.http.getPaginated(path`/webhooks/${id}/event_callbacks` + buildQuery(params))
+  }
+
+  /**
+   * POST /webhooks/:id/event_callbacks/:callback_id/redeliver — replay one recorded
+   * delivery (202, `{ status: 'queued' }`).
+   *
+   * The recovery lever for events lost while the circuit breaker was open: the gateway
+   * re-sends THAT delivery's stored payload verbatim — same embedded event `id`, so a
+   * receiver that already processed it deduplicates — under a fresh timestamped
+   * signature. `callbackId` is an `EventCallback.id` from eventCallbacks().
+   *
+   * Preconditions, because the replay is ASYNC and goes through the ordinary delivery job:
+   * - The webhook must be active with a closed circuit. A disabled or circuit-open
+   *   webhook drops the replay silently, like any delivery — the 202 only means queued.
+   *   Call resetCircuit() first: it closes the circuit AND clears a manual disable,
+   *   whereas enable() only clears the disable and leaves an open circuit open.
+   * - The callback must belong to this webhook and carry a stored payload: an unknown or
+   *   foreign callback id, or a row recorded before payloads were stored, answers 404.
+   *   Delivery rows are purged after the gateway's retention window, so very old
+   *   deliveries cannot be replayed either.
+   */
+  redeliver(id: string, callbackId: string): Promise<{ status: 'queued' }> {
+    return this.http.post(path`/webhooks/${id}/event_callbacks/${callbackId}/redeliver`, {})
   }
 
   delete(id: string): Promise<void> {

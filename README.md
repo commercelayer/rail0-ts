@@ -19,39 +19,55 @@ pnpm add @commercelayer/rail0-sdk
 
 ## Quick start
 
+Every `/payments` route requires a SIWE session, and each role acts from its own: the
+**buyer** creates and signs the payment (the gateway answers `403 payer_must_be_caller`
+unless `payer` is the signed-in address), the **merchant** (payee) authorizes and
+captures. So a flow is two clients, each logged in with its own key — `auth.login`
+installs the session on the client it runs on.
+
 ```typescript
-import { packSignature, Rail0Client, signPayment, signTransaction } from '@commercelayer/rail0-sdk'
+import {
+  addressFromPrivateKey,
+  packSignature,
+  Rail0Client,
+  signPayment,
+  signTransaction,
+} from '@commercelayer/rail0-sdk'
 
-const client = new Rail0Client({ baseUrl: 'https://api.rail0.xyz' })
+const baseUrl = 'https://api.rail0.xyz'
+const buyer = new Rail0Client({ baseUrl })
+const merchant = new Rail0Client({ baseUrl })
+await buyer.auth.login(BUYER_KEY, 'api.rail0.xyz') // an account-less (buyer) session
+await merchant.auth.login(MERCHANT_KEY, 'api.rail0.xyz') // the payee's account session
 
-// 1. Buyer creates the payment (mode: authorize → escrow).
-const payment = await client.payments.create({
+// 1. Buyer creates the payment (mode: authorize → escrow). payer MUST be the session address.
+const payment = await buyer.payments.create({
   chain_id: 8453,
   mode: 'authorize',
   amount: '50.00', // human decimal — the gateway converts to base units
   token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  payer: '0xBuyer...',
-  payee: '0xMerchant...',
+  payer: addressFromPrivateKey(BUYER_KEY),
+  payee: addressFromPrivateKey(MERCHANT_KEY),
 })
 
 // 2. Buyer signs the EIP-3009 payload the gateway returned, then stores it.
 const sig = signPayment(BUYER_KEY, payment) // { v, r, s }
-await client.payments.sign(payment.rail0_id, { signature: packSignature(sig) })
+await buyer.payments.sign(payment.rail0_id, { signature: packSignature(sig) })
 
-// 3. Payee authorizes: prepare → sign the EIP-1559 tx → submit (funds → escrow).
-const authPrep = await client.payments.authorizePrepare(payment.rail0_id)
-await client.payments.authorize(payment.rail0_id, {
-  signed_transaction: signTransaction(authPrep.unsigned_transaction!, PAYEE_KEY),
+// 3. Merchant authorizes: prepare → sign the EIP-1559 tx → submit (funds → escrow).
+const authPrep = await merchant.payments.authorizePrepare(payment.rail0_id)
+await merchant.payments.authorize(payment.rail0_id, {
+  signed_transaction: signTransaction(authPrep.unsigned_transaction!, MERCHANT_KEY),
 })
 
-// 4. Payee captures once the order is fulfilled.
-const capPrep = await client.payments.capturePrepare(payment.rail0_id, '50.00')
-await client.payments.capture(payment.rail0_id, {
-  signed_transaction: signTransaction(capPrep.unsigned_transaction!, PAYEE_KEY),
+// 4. Merchant captures once the order is fulfilled.
+const capPrep = await merchant.payments.capturePrepare(payment.rail0_id, '50.00')
+await merchant.payments.capture(payment.rail0_id, {
+  signed_transaction: signTransaction(capPrep.unsigned_transaction!, MERCHANT_KEY),
 })
 
-// Inspect live state at any point.
-const detail = await client.payments.get(payment.rail0_id)
+// Inspect live state at any point (either participant can read it).
+const detail = await merchant.payments.get(payment.rail0_id)
 console.log(detail.status, detail.capturable_amount, detail.refundable_amount)
 ```
 
@@ -76,7 +92,7 @@ Payment status values: `unsigned`, `signed`, `authorized`, `charged`, `captured`
 | `chargePrepare` + `charge` | payee | One-shot authorize + capture, no escrow window |
 | `capturePrepare` + `capture` | payee | Move escrowed funds to the merchant (partial supported) |
 | `voidPrepare` + `void` | payee | Cancel the hold, return funds to the payer — **only before any capture** (else the contract reverts `AlreadyCaptured`) |
-| `releasePrepare` + `release` | anyone | Return the uncaptured escrow after expiry; closes as `released` only on a **total** release (untouched authorization), else status unchanged |
+| `releasePrepare` + `release` | payer or payee | Return the uncaptured escrow after expiry (any other sender is refused `422 release_submitter_not_a_party`). A **total** release from `authorized`/`expired` closes as `released`; a release that leaves both balances at 0 (the captured part already refunded) closes as `refunded`; otherwise the status is unchanged |
 | `refundPrepare` + `refund` | payee | Two-phase EIP-3009 `receiveWithAuthorization` refund; closes as `refunded` only when **fully settled**, else status unchanged |
 | `disputePrepare` + `dispute` | payer | Open a dispute (signal-only) |
 | `closeDisputePrepare` + `closeDispute` | payer | Close an open dispute |
@@ -202,7 +218,7 @@ other.setAuthToken(token) // a second client on the same session
 
 ### `client.payments`
 
-`create(params, idempotencyKey?)` → `PaymentDetail` (pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
+`create(params, idempotencyKey?)` → `PaymentDetail` (from the **buyer's** session: `payer` must be the signed-in address, `403 payer_must_be_caller` otherwise; pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT; `operation` narrows to payments carrying a transaction of that operation, `dispute`/`close_dispute` included) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
 
 Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transaction`):
 `authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason?)`/`dispute`, `closeDisputePrepare(id, reason?)`/`closeDispute`. A generic `prepare(id, op, body?, opts?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only, `release` either participant) and the payer-only `disputeSubmitByHash(id, { transaction_hash })` / `closeDisputeSubmitByHash(id, { transaction_hash })`.
@@ -219,9 +235,9 @@ await client.payments.capturePrepare(id, '50.00', { idempotencyKey: orderId })
 
 ### `client.wallets` (scoped by account, JWT)
 
-All wallet methods are behind SIWE — a merchant manages its **own** wallets. `list(accountId, params?)` → `PaginatedResponse<WalletWithTokens>` · `get(accountId, idOrAddress)` → `Wallet` · `create(accountId, { address, message, signature, label? })` → `Wallet` · `update(accountId, id, { label?, active? })` → `Wallet` · `delete(accountId, id)` → `void` · `balances(accountId, id, params?)` → `WalletBalances`.
+All wallet methods are behind SIWE — a merchant manages its **own** wallets. `list(accountId, params?)` → `PaginatedResponse<WalletWithTokens>` (`chain_id`, `token_symbol`, `default` and `token_active` narrow the nested holdings, never the wallets) · `get(accountId, idOrAddress)` → `Wallet` · `create(accountId, { address, message, signature, label? })` → `Wallet` · `update(accountId, id, { label?, active? })` → `Wallet` · `delete(accountId, id)` → `void` · `balances(accountId, id, params?)` → `WalletBalances`.
 
-Accepted tokens: `addToken(accountId, id, { chain_id, token, default? })` → `WalletTokenHolding` (upsert — reactivates a disabled holding instead of duplicating it) · `removeToken(accountId, id, tokenId)` → `void` (soft, keeps the row) · `enableToken(accountId, id, tokenId)` / `disableToken(accountId, id, tokenId)` → `WalletTokenHolding` (404 when the wallet has no holding for that token). `tokenId` is the **token's** UUID (as in `WalletTokenHolding.token.…`), not an id of the holding row.
+Accepted tokens: `addToken(accountId, id, { chain_id, token, default? })` → `WalletTokenHolding` (upsert — reactivates a disabled holding instead of duplicating it) · `removeToken(accountId, id, tokenId)` → `void` (soft, keeps the row) · `enableToken(accountId, id, tokenId)` / `disableToken(accountId, id, tokenId)` → `WalletTokenHolding` (404 when the wallet has no holding for that token). `removeToken` and `disableToken` refuse the wallet's **default** holding with `422 default_payment_method` — make another holding the default first. `tokenId` is the **token's** UUID (as in `WalletTokenHolding.token.…`), not an id of the holding row.
 
 A wallet with no accepted token is invisible to buyers and unusable as a payee: `GET /payment_methods` skips it and `payments.create` answers 422 `unsupported_payment_method`. Onboarding a merchant is therefore `create` **plus at least one** `addToken`.
 
@@ -257,7 +273,22 @@ for (const w of methods) for (const h of w.tokens ?? []) {
 
 ### `client.webhooks` (JWT)
 
-`list(params?)` · `create({ name, callback_url, topics })` — one subscription covers a set of events, with one secret and one circuit breaker; two subscriptions on the same URL must not overlap (409) → `WebhookWithSecret` (secret shown once) · `get(id)` · `update(id, params)` · `enable(id)` · `disable(id)` · `rotateSecret(id)` → `WebhookWithSecret` · `resetCircuit(id)` · `eventCallbacks(id, params?)` → `PaginatedResponse<EventCallback>` (filter by `status`, `topic`, `payment_id`, `response_code`, `since`, `until`) · `delete(id)`.
+`list(params?)` · `create({ name, callback_url, topics })` — one subscription covers a set of events, with one secret and one circuit breaker; two subscriptions on the same URL must not overlap (409) → `WebhookWithSecret` (secret shown once) · `get(id)` · `update(id, params)` · `enable(id)` · `disable(id)` · `rotateSecret(id)` → `WebhookWithSecret` · `resetCircuit(id)` · `eventCallbacks(id, params?)` → `PaginatedResponse<EventCallback>` (filter by `status`, `topic`, `payment_id`, `response_code`, `since`, `until`) · `redeliver(id, callbackId)` → `{ status: 'queued' }` · `delete(id)`. `list` filters by `topic` (a `WebhookTopic`: the subscriptions that include it), `active` and `circuit_state`.
+
+**Replaying a lost delivery.** `redeliver` re-sends one recorded delivery's stored payload
+verbatim — same embedded event `id`, so a receiver that already processed it deduplicates —
+under a fresh timestamped signature. It is the recovery lever for events that failed while
+the circuit breaker was open. The replay is **asynchronous** and goes through the normal
+delivery job, so the `202` means *queued*, not *delivered*: a disabled or circuit-open
+webhook drops it silently. Call `resetCircuit(id)` first — it closes the circuit and clears
+a manual disable, whereas `enable(id)` leaves an open circuit open. A callback id that is not
+this webhook's, or a row recorded before payloads were stored, answers `404`.
+
+```ts
+await client.webhooks.resetCircuit(hookId)
+const failed = await client.webhooks.eventCallbacks(hookId, { status: 'failed' })
+for (const cb of failed.data) await client.webhooks.redeliver(hookId, cb.id as string)
+```
 
 #### Verifying a delivery
 
@@ -301,6 +332,8 @@ of the SDK does (a test pins byte-equality with node's implementation).
 
 Every `PaginatedResponse<T>` carries `{ data, meta }`. `meta` is `{ page, per_page, total, total_pages, links }`.
 
+`page` is 1-based and bounded to `1..1,000,000` — the gateway answers `400` outside it.
+
 `total_pages` is **zero** for an empty collection — "no pages" is what there are, so a pager rendered off it renders none. `links` comes from the `Link` header: `first` and `last` are always present, `prev` and `next` only where they exist, and the object is empty when the collection is. The URIs are **relative** (path + query) and resolve against the URL you requested — the gateway emits them that way so they cannot advertise the wrong scheme through a TLS-terminating proxy.
 
 ```ts
@@ -342,16 +375,24 @@ const mine  = await client.analytics.summary({ payee: '0xYourWalletAddress' })
 
 ### `client.accounts` (merchant, JWT)
 
-`get(accountId)` → `Account` — the caller's OWN profile (`id`, `name`, `email`, timestamps).
+`get(accountId)` → `Account` — the profile (`id`, `name`, `email`, timestamps) · `update(accountId, { name?, email? })` → `Account`.
 
 Behind SIWE and behind an ownership guard: the gateway requires a JWT whose account matches
-the path, so there is no way to read another merchant's account here. An id that is not an
-account answers `404`, the same shape another account's id gets, so the pair cannot be used
-to tell whether an account exists.
+the path — or an active **admin** session, which may read and repair any account. A
+merchant therefore only ever reaches its own. An id that is not an account answers `404`,
+the same shape a non-admin gets for another account's id, so the pair cannot be used to
+tell whether an account exists.
+
+`update` changes the account's own `name` and/or `email`: at least one is required (`400`
+otherwise), and both are unique across accounts (`409` when taken). It is a write, so the
+session's standing matters — a deactivated session wallet answers `403 wallet_deactivated`
+and a deactivated account `403 account_deactivated`. The account's `active` flag is the
+operator's and is not exposed here.
 
 ```ts
 const me = await client.accounts.get(session.accountId)
 console.log(me.name, me.email)
+await client.accounts.update(session.accountId, { email: 'ops@merchant.example' })
 ```
 
 The account's wallets are on `client.wallets` (a collection under the same path), and
@@ -393,7 +434,7 @@ try {
   await client.payments.capture(id, { signed_transaction })
 } catch (err) {
   if (err instanceof Rail0ApiError) {
-    console.error(err.error)  // branch on this: 'insufficient_token_balance'
+    console.error(err.code)   // branch on this: 'insufficient_token_balance'
     console.error(err.title)  // short label: 'Not enough balance'
     console.error(err.detail) // a sentence you can show a user verbatim
     if (err.status === 429 && err.retryAfter) await sleep(err.retryAfter * 1000)
@@ -401,9 +442,10 @@ try {
 }
 ```
 
-**`.error` is the only field to branch on** — the specific condition, read from the
-gateway's `code` and falling back to the older `error` sub-code, then to the wider
-`status` family, so an older gateway still yields the most specific value it sent.
+**`.code` is the only field to branch on** — the specific condition, straight from the
+gateway's `code`. A body that is not JSON (a proxy's HTML 502) still yields one:
+`code: 'unknown_error'` with `detail: 'HTTP <status>'`. `.error` is a deprecated alias
+that always equals `.code`.
 
 `.title` and `.detail` come from the gateway's error catalogue, so the same condition
 always reads the same way whichever endpoint surfaced it; `.detail` is written to be
@@ -482,7 +524,7 @@ src/
     types.ts      gateway-vocabulary types (Payment, Dispute, Webhook, …)
     payments.ts   PaymentsResource (lifecycle + disputes)
     disputes.ts   DisputesResource (account-level list)
-    accounts.ts   AccountsResource (the caller's own profile)
+    accounts.ts   AccountsResource (the account profile: read, update)
     wallets.ts    WalletsResource  (CRUD, balances)
     payment_methods.ts  PaymentMethodsResource (public discovery)
     webhooks.ts   WebhooksResource

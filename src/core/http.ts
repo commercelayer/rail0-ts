@@ -317,10 +317,14 @@ export class HttpClient {
       this.signal?.removeEventListener('abort', onCallerAbort)
 
       if (!response.ok) {
-        const errorBody = (await response.json().catch(() => ({
-          status: 'unknown_error',
-          message: `HTTP ${response.status}`,
-        }))) as ApiErrorBody
+        // A body that is not JSON (a proxy's HTML 502, an empty 503) still has to become
+        // an ApiErrorBody: the fallback uses the same code/title/detail shape the gateway
+        // sends, so `err.code` is always a string to branch on rather than undefined.
+        const errorBody = (await response
+          .json()
+          .catch(
+            (): ApiErrorBody => ({ code: 'unknown_error', detail: `HTTP ${response.status}` }),
+          )) as ApiErrorBody
         const retryAfter = retryAfterSeconds(response)
         const apiError = new Rail0ApiError(response.status, errorBody, retryAfter)
         // The one retryable status — see retryOn429 for why a POST is as safe as a GET.
