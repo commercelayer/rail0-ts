@@ -20,9 +20,22 @@ export class DisputesResource {
   }
 }
 
+/**
+ * Serialises a params object into a query string. An array value is sent as ONE
+ * comma-separated parameter (`status=authorized,expired`) — the OpenAPI `style: form,
+ * explode: false` the gateway documents for its multi-value filters — with each element
+ * encoded on its own so the separating commas stay literal. An empty array is dropped,
+ * as `status=` would be a 400. Scalars are unchanged.
+ */
 function buildQuery(params?: object): string {
   if (!params) return ''
-  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
+  const entries = Object.entries(params).filter(
+    ([, v]) => v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0),
+  )
   if (entries.length === 0) return ''
-  return `?${entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')}`
+  const encode = (v: unknown): string =>
+    Array.isArray(v)
+      ? v.map((x) => encodeURIComponent(String(x))).join(',')
+      : encodeURIComponent(String(v))
+  return `?${entries.map(([k, v]) => `${k}=${encode(v)}`).join('&')}`
 }

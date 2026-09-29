@@ -128,10 +128,22 @@ token's decimals. Amounts you **read** back (`amount`, `capturable_amount`,
 `refundable_amount`, analytics volumes, the `min_amount`/`max_amount` list
 filters) are base-unit integer strings (`'50000000'`).
 
-Rendering one needs the token's `decimals`, and those resolve from `token`
-**together with** `chain_id` — a token address identifies a token only within one
-chain. Both fields are on every `Payment`, list rows included, so displaying an
-amount from `list()` never needs a per-row `get(id)`.
+Rendering one needs the token's `decimals`, and every `Payment` carries them —
+list rows, `get(id)`, and the payment embedded in `disputes.list()` alike — so
+displaying an amount needs neither a per-row `get(id)` nor a `tokens.list()` join on
+`token` + `chain_id`:
+
+```typescript
+const { data } = await client.payments.list()
+for (const p of data) {
+  if (p.decimals != null) console.log(formatAmount(p.amount, p.decimals))
+}
+```
+
+`decimals` is `null` only when the gateway cannot resolve the token (a contract it has
+not loaded, a token deleted outright); fall back to `tokens.list()` on `token`
+**together with** `chain_id` then — a token address identifies a token only within
+one chain, and both fields are on every `Payment` too.
 
 Convert between a human decimal and the token's base-unit integer string, with
 string/BigInt math (no float rounding):
@@ -143,7 +155,8 @@ toBaseUnits('1.50', 6) // → '1500000'   (USDC has 6 decimals)
 formatAmount('1500000', 6) // → '1.5'   (trailing zeros trimmed)
 ```
 
-Fractional digits beyond `decimals` are truncated; a malformed amount throws.
+`toBaseUnits` throws on fractional digits beyond `decimals` (the gateway would refuse the
+amount anyway) and on a malformed amount.
 
 A static **stablecoin registry** ships with the SDK — `stablecoins` (per chain: `chainId`
 and each token's `address`, `decimals`, `eip3009`/`eip2612` support), `chainInfo(chain)`,
@@ -218,10 +231,36 @@ other.setAuthToken(token) // a second client on the same session
 
 ### `client.payments`
 
-`create(params, idempotencyKey?)` → `PaymentDetail` (from the **buyer's** session: `payer` must be the signed-in address, `403 payer_must_be_caller` otherwise; pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT; `operation` narrows to payments carrying a transaction of that operation, `dispute`/`close_dispute` included) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
+`create(params, idempotencyKey?)` → `PaymentDetail` (from the **buyer's** session: `payer` must be the signed-in address, `403 payer_must_be_caller` otherwise; pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `list(params?)` → `PaginatedResponse<Payment>` (JWT; `operation` narrows to payments carrying a transaction of that operation, `dispute`/`close_dispute` included; `status` takes one `PaymentStatus` or an array matching any of them) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` (`status` likewise takes one `TransactionStatus` or an array) · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
 
 Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transaction`):
 `authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason?)`/`dispute`, `closeDisputePrepare(id, reason?)`/`closeDispute`. A generic `prepare(id, op, body?, opts?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only, `release` either participant) and the payer-only `disputeSubmitByHash(id, { transaction_hash })` / `closeDisputeSubmitByHash(id, { transaction_hash })`.
+
+**Several statuses in one call.** Pass an array to `status` and the SDK sends it
+comma-separated (`status=authorized,expired`), the form the gateway documents; a single
+value goes out unchanged, and an empty array is dropped. An unknown value is a compile
+error here and a `400 validation_failed` naming it at the gateway.
+
+```ts
+// Everything still holding escrow, in one list instead of two fetches merged client-side:
+await client.payments.list({ status: ['authorized', 'expired'] })
+// A payment's transactions on their way to the chain:
+await client.payments.transactions(id, { status: ['submitting', 'submitted'] })
+```
+
+**`in_flight`.** Every `Payment` — list rows included, which embed no transactions —
+carries `in_flight: true` while one of its transactions is `submitting`, `submitted`, or
+`pending` holding its signed transaction (`redrivable`: signed and handed over, not yet
+broadcast). A `pending` row still awaiting its signature does not count, nor do
+`confirmed`/`failed` rows. While it is true the balances are about to move: disable
+further actions on the payment (a second operation would race the first) and keep
+polling until it turns false. A bulk action can skip in-flight rows straight from
+`list()`, without a `get(id)` per row.
+
+```ts
+const { data } = await client.payments.list({ status: 'authorized' })
+const capturable = data.filter((p) => !p.in_flight)
+```
 
 `getTransaction(id, transactionId)` reads ONE of a payment's transactions. This is the lookup for an `action_id`: anything handed a transaction id when an operation was accepted resolves it directly, instead of fetching the payment and scanning its transactions for an id it already holds. `redrive(id, transactionId)` re-enqueues a stuck broadcast.
 
@@ -275,6 +314,29 @@ for (const w of methods) for (const h of w.tokens ?? []) {
 
 `list(params?)` · `create({ name, callback_url, topics })` — one subscription covers a set of events, with one secret and one circuit breaker; two subscriptions on the same URL must not overlap (409) → `WebhookWithSecret` (secret shown once) · `get(id)` · `update(id, params)` · `enable(id)` · `disable(id)` · `rotateSecret(id)` → `WebhookWithSecret` · `resetCircuit(id)` · `eventCallbacks(id, params?)` → `PaginatedResponse<EventCallback>` (filter by `status`, `topic`, `payment_id`, `response_code`, `since`, `until`) · `redeliver(id, callbackId)` → `{ status: 'queued' }` · `delete(id)`. `list` filters by `topic` (a `WebhookTopic`: the subscriptions that include it), `active` and `circuit_state`.
 
+Topics (`WebhookTopic`): `payments.created`, `payments.signed`, `payments.authorized`,
+`payments.charged`, `payments.captured`, `payments.voided`, `payments.released`,
+`payments.refunded`, `payments.authorization_expiring`, `payments.expired`,
+`payments.failed`, `payments.disputed`, `payments.dispute_closed`.
+
+**`payments.authorization_expiring`** is the advance notice of `payments.expired`: it
+fires **once** per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds before
+`authorization_expiry` (gateway default 86400 — 24h; `0` disables it), for a payment that
+is still capturable (`authorized`, `partially_captured` or `partially_refunded`) with a
+`capturable_amount` above zero. A payment whose whole authorization window is shorter
+than the notice is warned once, as soon as it qualifies; a later partial capture does not
+re-arm it. The time left is `payment.authorization_expiry` minus the event's `emitted_at`
+— capture before then, or the escrow can only go back to the payer via release, and
+`payments.expired` follows.
+
+Every delivery POSTs the same body, whatever the topic: `{ id, emitted_at, topic,
+payment: { id, rail0_id, status, mode, amount, payer, payee, token, chain_id,
+capturable_amount, authorization_expiry, last_error_code, last_error_message, metadata },
+transaction }`, with `transaction` null for events that involve none
+(`payments.created`, `payments.signed`, `payments.authorization_expiring`,
+`payments.expired`). `capturable_amount` and `authorization_expiry` are on the payment for
+every topic, read at delivery time.
+
 **Replaying a lost delivery.** `redeliver` re-sends one recorded delivery's stored payload
 verbatim — same embedded event `id`, so a receiver that already processed it deduplicates —
 under a fresh timestamped signature. It is the recovery lever for events that failed while
@@ -315,7 +377,11 @@ export async function POST(request: Request) {
   if (!ok) return new Response('invalid signature', { status: 401 })
 
   const event = JSON.parse(body)
-  // …handle event.topic
+  if (event.topic === 'payments.authorization_expiring') {
+    // Seconds left before the hold lapses: capture now or lose the sale.
+    const secondsLeft = event.payment.authorization_expiry - Date.parse(event.emitted_at) / 1000
+  }
+  // …handle the other topics
   return new Response(null, { status: 204 })
 }
 ```
@@ -400,7 +466,26 @@ buyer-facing discovery on `client.paymentMethods`.
 
 ### `client.chains` / `client.tokens` / `client.health`
 
-`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against, typed `ChainContract`: `address`, `version`, `deployed_at`, nullable for a chain with no deployment. Since 1.2.0 `Blockchain` is an alias of the schema component, so it types `contract` and picks up future fields on regenerate) · `tokens.list(chainId?, symbol?, active?)` → `Token[]` (every token by default, retired ones included — each carries `active`; pass `active: true` where only what a new payment can use should be offered) · `health.get()` → `Health`.
+`chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against, typed `ChainContract`: `address`, `version`, `deployed_at`, nullable for a chain with no deployment. Since 1.2.0 `Blockchain` is an alias of the schema component, so it types `contract` and picks up future fields on regenerate; each chain also carries `settlement`, typed `BlockchainSettlement` — see below) · `tokens.list(chainId?, symbol?, active?)` → `Token[]` (every token by default, retired ones included — each carries `active`; pass `active: true` where only what a new payment can use should be offered) · `health.get()` → `Health`.
+
+**Measured settlement time.** Every chain carries `settlement: { p50_seconds, p90_seconds,
+sample_size, window_days }` — how long an operation has taken from broadcast
+(`submitted_at`) to confirmation (`confirmed_at`) **on this gateway**, over the confirmed
+transactions of the trailing `window_days` (7 by default). It is end-to-end — the chain's
+finality lag plus the gateway/indexer pipeline — so it is what a client actually waits
+for. The object is always present; the percentiles are `null` below the gateway's minimum
+sample (20), and `sample_size` says why. The figures are cached by the gateway (refreshed
+at most every 10 minutes) and deliberately a long-window capacity figure, not a live alarm.
+
+Use it as a wait-deadline **hint**, not a guarantee: a small multiple of `p90_seconds`,
+with a fixed fallback for when it is null.
+
+```ts
+const chains = await client.chains.list()
+const chain = chains.find((c) => c.chain_id === payment.chain_id)
+const p90 = chain?.settlement.p90_seconds
+const deadlineSeconds = p90 == null ? 15 * 60 : Math.max(3 * p90, 60)
+```
 
 ### `client.auth`
 

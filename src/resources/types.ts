@@ -77,7 +77,15 @@ export type CircuitState = 'closed' | 'open'
  */
 export type EventCallbackStatus = 'delivered' | 'failed'
 export type HealthStatus = 'ok' | 'degraded'
-/** Webhook event topics. Mirrors the gateway's WebhookTopic enum. */
+/**
+ * Webhook event topics. Mirrors the gateway's WebhookTopic enum.
+ *
+ * `payments.authorization_expiring` is the advance notice of `payments.expired`: sent
+ * ONCE per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds (gateway default 86400, 24h)
+ * before `authorization_expiry`, while the payment is still capturable with a
+ * `capturable_amount` above zero. Time left is `payment.authorization_expiry` minus the
+ * event's `emitted_at`; capture before then, or the escrow can only go back via release.
+ */
 export type WebhookTopic =
   | 'payments.created'
   | 'payments.signed'
@@ -87,6 +95,7 @@ export type WebhookTopic =
   | 'payments.voided'
   | 'payments.released'
   | 'payments.refunded'
+  | 'payments.authorization_expiring'
   | 'payments.expired'
   | 'payments.failed'
   | 'payments.disputed'
@@ -244,9 +253,26 @@ export interface Payment {
   payer: Address
   payee: Address
   token: Address
+  /**
+   * Decimals of `token`: divide `amount`, `capturable_amount` and `refundable_amount`
+   * (base units) by 10^decimals to render them — no `tokens.list()` join on `token` +
+   * `chain_id` needed. Resolved by the gateway from its catalogue, retired tokens and
+   * archived contract versions included. Null only when the gateway cannot resolve the
+   * token; fall back to `tokens.list()` then. Optional so a payment built by hand (a
+   * fixture, an older gateway) still type-checks.
+   */
+  decimals?: number | null
   authorization_expiry: number
   refund_expiry: number
   disputed?: boolean
+  /**
+   * True while one of the payment's transactions is on its way to the chain: status
+   * `submitting`, `submitted`, or `pending` holding its signed transaction (`redrivable`).
+   * A pending row still awaiting its signature does not count, nor do confirmed/failed.
+   * While true the balances are about to move: disable further actions on the payment and
+   * keep polling until it turns false. Carried by list rows too, which embed no transactions.
+   */
+  in_flight?: boolean
   last_error_code?: string | null
   last_error_message?: string | null
   description?: string | null
@@ -393,12 +419,27 @@ export type ChainContract = NonNullable<components['schemas']['ChainContract']>
  * copy. It used to be spelled out field by field here, and so silently lacked
  * `contract` (the RAIL0 deployment per chain) that the gateway sends and the schema
  * types: a hand-written copy only learns about a new field when someone remembers to
- * add it. The alias picks up every future field on regenerate.
+ * add it. The alias picks up every future field on regenerate. The one refinement is
+ * `settlement`, narrowed to required because the gateway always sends it.
  *
  * Read `required_confirmations` together with `finality_tag`: where the tag is set
  * the gateway gates on it instead, so the number alone describes a wait nobody applies.
  */
-export type Blockchain = components['schemas']['Blockchain']
+export type Blockchain = Omit<components['schemas']['Blockchain'], 'settlement'> & {
+  settlement: BlockchainSettlement
+}
+/**
+ * How long an operation on a chain has taken to settle ON THIS GATEWAY — percentiles of
+ * broadcast (`submitted_at`) to confirmation (`confirmed_at`) over the confirmed
+ * transactions of the trailing `window_days`. End-to-end (chain finality plus the
+ * gateway/indexer pipeline), so it is what a client actually waits for.
+ *
+ * Always present on a `Blockchain` (hence required here, although the schema marks it
+ * optional). The percentiles are null below the gateway's minimum sample — `sample_size`
+ * says why. Use it as a wait-deadline HINT, not a guarantee: e.g. a small multiple of
+ * `p90_seconds`, with a fixed fallback for when it is null.
+ */
+export type BlockchainSettlement = Required<components['schemas']['BlockchainSettlement']>
 export interface AssetBalance {
   symbol?: string
   address?: string | null

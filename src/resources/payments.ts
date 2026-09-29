@@ -25,7 +25,11 @@ import type {
 // anything else, so they are typed as the unions rather than bare strings —
 // `list({ status: 'cancelled' })` is a compile error, not a runtime 400.
 export interface ListPaymentsParams {
-  status?: PaymentStatus
+  /**
+   * One status, or several: an array matches ANY of them and is sent comma-separated
+   * (`status=authorized,expired`), so one call replaces a fetch-per-status-and-merge.
+   */
+  status?: PaymentStatus | PaymentStatus[]
   mode?: PaymentMode
   payer?: string
   payee?: string
@@ -64,7 +68,11 @@ export interface ListTransactionsParams {
    * (commercelayer/rail0-gateway#177, fixed).
    */
   operation?: StoredTransactionOperation
-  status?: TransactionStatus
+  /**
+   * One status, or several (matches any; sent comma-separated) — e.g.
+   * `['submitting', 'submitted']` for "on its way to the chain" in one call.
+   */
+  status?: TransactionStatus | TransactionStatus[]
   sort?: string
   /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
@@ -318,9 +326,22 @@ export class PaymentsResource {
   }
 }
 
+/**
+ * Serialises a params object into a query string. An array value is sent as ONE
+ * comma-separated parameter (`status=authorized,expired`) — the OpenAPI `style: form,
+ * explode: false` the gateway documents for its multi-value filters — with each element
+ * encoded on its own so the separating commas stay literal. An empty array is dropped,
+ * as `status=` would be a 400. Scalars are unchanged.
+ */
 function buildQuery(params?: object): string {
   if (!params) return ''
-  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
+  const entries = Object.entries(params).filter(
+    ([, v]) => v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0),
+  )
   if (entries.length === 0) return ''
-  return `?${entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')}`
+  const encode = (v: unknown): string =>
+    Array.isArray(v)
+      ? v.map((x) => encodeURIComponent(String(x))).join(',')
+      : encodeURIComponent(String(v))
+  return `?${entries.map(([k, v]) => `${k}=${encode(v)}`).join('&')}`
 }
