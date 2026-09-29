@@ -100,6 +100,7 @@ export type {
   TransactionOperation,
   TransactionStatus,
   Uint256String,
+  UpdateAccountRequest,
   UpdateWalletRequest,
   UpdateWebhookRequest,
   Wallet,

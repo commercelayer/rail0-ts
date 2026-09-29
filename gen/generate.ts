@@ -221,6 +221,17 @@ export interface CreateWalletRequest {
   signature: string
   label?: string
 }
+/**
+ * Body for \`accounts.update\`. Both optional, AT LEAST ONE required — an empty PATCH is a
+ * caller bug and the gateway answers 400. Both columns are unique across accounts: a value
+ * another account already holds is a 409. The account's \`active\` flag is deliberately
+ * absent: it is the operator's field (admin-only), not something an owner can set.
+ */
+export interface UpdateAccountRequest {
+  name?: string
+  /** Contact email — where the merchant's operational notifications go. */
+  email?: string
+}
 export interface UpdateWalletRequest {
   label?: string
   active?: boolean
@@ -375,8 +386,8 @@ export interface Dispute {
   /** Parent payment (public-safe view), embedded by the account-level GET /disputes list. */
   payment?: Payment
 }
-/** A merchant account, as its own holder reads it (GET /accounts/:id). Email is included
- *  because that endpoint is behind an ownership guard — the holder is its only caller. */
+/** A merchant account profile (GET/PATCH /accounts/:id). Email is included because those
+ *  routes answer only the account's own holder — or an active admin operating it. */
 export interface Account {
   id: string
   name: string
@@ -384,14 +395,16 @@ export interface Account {
   created_at?: string
   updated_at?: string
 }
+/**
+ * A wallet as the merchant-facing routes return it — the gateway's Restricted view, an
+ * explicit allow-list of these four fields. It never carries \`account_id\` or the
+ * bookkeeping timestamps; they were typed here once and could only ever read undefined.
+ */
 export interface Wallet {
   id?: string
-  account_id?: string
   address?: string
   label?: string | null
   active?: boolean
-  created_at?: string
-  updated_at?: string
 }
 export interface WalletTokenHolding {
   /**
@@ -732,7 +745,14 @@ export interface ListPaymentsParams {
   /** Only payments created at/before this ISO-8601 timestamp. */
   created_to?: string
   rail0_id?: string
+  /**
+   * Only payments carrying at least one transaction with this operation. The RECORD
+   * vocabulary, as on \`transactions()\`: a payment whose only transaction is a dispute
+   * must be findable by it, so \`dispute\`/\`close_dispute\` are accepted too.
+   */
+  operation?: StoredTransactionOperation
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -748,6 +768,7 @@ export interface ListTransactionsParams {
   operation?: StoredTransactionOperation
   status?: TransactionStatus
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -756,6 +777,7 @@ export interface ListDisputesParams {
   /** Filter by dispute status ("open" or "closed"). */
   status?: DisputeStatus
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -975,16 +997,16 @@ ${BUILD_QUERY}`
 const ACCOUNTS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
 import { path } from '../core/path.js'
-import type { Account } from './types.js'
+import type { Account, UpdateAccountRequest } from './types.js'
 
 /**
- * The merchant account itself (GET /accounts/:id).
+ * The merchant account itself (GET/PATCH /accounts/:id).
  *
  * Behind SIWE and behind an ownership guard: the gateway requires a JWT whose account
- * matches the path, so this only ever reads the caller's OWN account — there is no
- * endpoint here for reading someone else's, by design. An id that is not an account
- * answers 404, the same shape the ownership guard gives for another account's id, so the
- * pair cannot be used to tell whether an account exists.
+ * matches the path — OR an active admin session, which may read and repair any account
+ * (the operator surface). For a merchant that means its OWN account only. An id that is
+ * not an account answers 404, the same shape the ownership guard gives a non-admin for
+ * another account's id, so the pair cannot be used to tell whether an account exists.
  *
  * The account's wallets live on WalletsResource (they are a collection under the same
  * path), and buyer-facing discovery on PaymentMethodsResource.
@@ -992,9 +1014,23 @@ import type { Account } from './types.js'
 export class AccountsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** The account's own profile: id, name, email, timestamps. */
+  /** The account's profile: id, name, email, timestamps. */
   get(account_id: string): Promise<Account> {
     return this.http.get(path\`/accounts/\${account_id}\`)
+  }
+
+  /**
+   * PATCH /accounts/:id — change the account's own \`name\` and/or \`email\`.
+   *
+   * At least one field is required (400 otherwise); a name or email another account
+   * already holds is a 409. It is a write, so the session's standing matters: a
+   * deactivated session wallet answers 403 \`wallet_deactivated\` and a deactivated
+   * account 403 \`account_deactivated\` — a revoked key must not be able to redirect the
+   * contact email. Another account's id is 403 \`not_your_account\` for a non-admin.
+   * The account's \`active\` flag is operator-only and not exposed here.
+   */
+  update(account_id: string, params: UpdateAccountRequest): Promise<Account> {
+    return this.http.patch(path\`/accounts/\${account_id}\`, params)
   }
 }
 `
@@ -1019,7 +1055,10 @@ export interface ListWalletsParams {
   active?: boolean
   /** Restrict nested token holdings to the default one. */
   default?: boolean
+  /** Restrict nested token holdings to this active status (does not hide wallets). */
+  token_active?: boolean
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -1097,8 +1136,9 @@ export class WalletsResource {
 
   /**
    * Stop accepting a token — soft delete (204). The holding row survives with
-   * active:false (and loses \`default\`), so its history is kept and enableToken
-   * can bring it back.
+   * active:false, so its history is kept and enableToken can bring it back.
+   * 422 \`default_payment_method\` when the holding is the wallet's DEFAULT: make
+   * another holding the default first (addToken with \`default: true\`).
    */
   removeToken(account_id: string, id: string, token_id: string): Promise<void> {
     return this.http.delete(path\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}\`)
@@ -1109,7 +1149,10 @@ export class WalletsResource {
     return this.http.patch(path\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}/enable\`)
   }
 
-  /** Disable an EXISTING holding (same effect as removeToken, but returns the holding). 404 when absent. */
+  /**
+   * Disable an EXISTING holding (same effect as removeToken, but returns the holding).
+   * 404 when absent; 422 \`default_payment_method\` when it is the wallet's default.
+   */
   disableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
     return this.http.patch(path\`/accounts/\${account_id}/wallets/\${id}/tokens/\${token_id}/disable\`)
   }
@@ -1166,10 +1209,11 @@ import type {
 
 export interface ListWebhooksParams {
   /** Narrow to the subscriptions that INCLUDE this event. */
-  topic?: string
+  topic?: WebhookTopic
   active?: boolean
   circuit_state?: 'closed' | 'open'
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -1190,6 +1234,7 @@ export interface ListEventCallbacksParams {
   /** ISO-8601. Deliveries at or before this instant. */
   until?: string
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -1236,6 +1281,29 @@ export class WebhooksResource {
   /** List delivery attempts for a webhook. */
   eventCallbacks(id: string, params?: ListEventCallbacksParams): Promise<PaginatedResponse<EventCallback>> {
     return this.http.getPaginated(path\`/webhooks/\${id}/event_callbacks\` + buildQuery(params))
+  }
+
+  /**
+   * POST /webhooks/:id/event_callbacks/:callback_id/redeliver — replay one recorded
+   * delivery (202, \`{ status: 'queued' }\`).
+   *
+   * The recovery lever for events lost while the circuit breaker was open: the gateway
+   * re-sends THAT delivery's stored payload verbatim — same embedded event \`id\`, so a
+   * receiver that already processed it deduplicates — under a fresh timestamped
+   * signature. \`callbackId\` is an \`EventCallback.id\` from eventCallbacks().
+   *
+   * Preconditions, because the replay is ASYNC and goes through the ordinary delivery job:
+   * - The webhook must be active with a closed circuit. A disabled or circuit-open
+   *   webhook drops the replay silently, like any delivery — the 202 only means queued.
+   *   Call resetCircuit() first: it closes the circuit AND clears a manual disable,
+   *   whereas enable() only clears the disable and leaves an open circuit open.
+   * - The callback must belong to this webhook and carry a stored payload: an unknown or
+   *   foreign callback id, or a row recorded before payloads were stored, answers 404.
+   *   Delivery rows are purged after the gateway's retention window, so very old
+   *   deliveries cannot be replayed either.
+   */
+  redeliver(id: string, callbackId: string): Promise<{ status: 'queued' }> {
+    return this.http.post(path\`/webhooks/\${id}/event_callbacks/\${callbackId}/redeliver\`, {})
   }
 
   delete(id: string): Promise<void> {

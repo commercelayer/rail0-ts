@@ -18,7 +18,10 @@ export interface ListWalletsParams {
   active?: boolean
   /** Restrict nested token holdings to the default one. */
   default?: boolean
+  /** Restrict nested token holdings to this active status (does not hide wallets). */
+  token_active?: boolean
   sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
   per_page?: number
 }
@@ -103,8 +106,9 @@ export class WalletsResource {
 
   /**
    * Stop accepting a token — soft delete (204). The holding row survives with
-   * active:false (and loses `default`), so its history is kept and enableToken
-   * can bring it back.
+   * active:false, so its history is kept and enableToken can bring it back.
+   * 422 `default_payment_method` when the holding is the wallet's DEFAULT: make
+   * another holding the default first (addToken with `default: true`).
    */
   removeToken(account_id: string, id: string, token_id: string): Promise<void> {
     return this.http.delete(path`/accounts/${account_id}/wallets/${id}/tokens/${token_id}`)
@@ -115,7 +119,10 @@ export class WalletsResource {
     return this.http.patch(path`/accounts/${account_id}/wallets/${id}/tokens/${token_id}/enable`)
   }
 
-  /** Disable an EXISTING holding (same effect as removeToken, but returns the holding). 404 when absent. */
+  /**
+   * Disable an EXISTING holding (same effect as removeToken, but returns the holding).
+   * 404 when absent; 422 `default_payment_method` when it is the wallet's default.
+   */
   disableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
     return this.http.patch(path`/accounts/${account_id}/wallets/${id}/tokens/${token_id}/disable`)
   }

@@ -101,6 +101,15 @@ describe('resource alignment', () => {
       expect(url).toContain('chain_id=84532')
     })
 
+    it('list forwards token_active, including false', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => okList([]))
+      await client.wallets.list(ACCOUNT_ID, { token_active: true })
+      await client.wallets.list(ACCOUNT_ID, { token_active: false })
+      expect(String(spy.mock.calls[0]?.[0])).toContain('token_active=true')
+      // false is a real filter value (the retired holdings), not "unset".
+      expect(String(spy.mock.calls[1]?.[0])).toContain('token_active=false')
+    })
+
     it('get / create / update (PATCH) / delete / balances hit the right endpoints', async () => {
       const spy = vi.spyOn(globalThis, 'fetch')
       spy.mockResolvedValueOnce(ok({ id: WALLET_ID }))
@@ -225,9 +234,56 @@ describe('resource alignment', () => {
       const actionMethods = [2, 3, 4, 5].map((i) => (spy.mock.calls[i]?.[1] as RequestInit).method)
       expect(actionMethods).toEqual(['PUT', 'PUT', 'PUT', 'PUT'])
     })
+
+    it('redeliver POSTs to the callback-scoped path and returns the queued status', async () => {
+      const CALLBACK_ID = '018e5555-6666-7abc-9def-012345678905'
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 202 }))
+
+      const res = await client.webhooks.redeliver(WEBHOOK_ID, CALLBACK_ID)
+
+      expect(res).toEqual({ status: 'queued' })
+      const [url, init] = spy.mock.calls[0] as [string, RequestInit]
+      expect(url).toBe(
+        `${BASE_URL}/webhooks/${WEBHOOK_ID}/event_callbacks/${CALLBACK_ID}/redeliver`,
+      )
+      expect(init.method).toBe('POST')
+    })
+
+    it('redeliver surfaces a 404 for a callback with nothing to replay', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: 'not_found',
+            title: 'Not found',
+            detail: 'event_callback payload not found',
+          }),
+          { status: 404 },
+        ),
+      )
+      await expect(client.webhooks.redeliver(WEBHOOK_ID, 'cb')).rejects.toMatchObject({
+        status: 404,
+        code: 'not_found',
+      })
+    })
   })
 
   // ── Payments: paginated disputes + idempotent create ────────────────────────
+
+  describe('payments.list operation filter', () => {
+    it('forwards operation, including the payer-route operations', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => okList([]))
+      await client.payments.list({ operation: 'capture' })
+      // The record vocabulary: a payment whose only transaction is a dispute must be
+      // findable by it, so this has to type-check as well as serialize.
+      await client.payments.list({ operation: 'dispute', status: 'authorized' })
+      expect(String(spy.mock.calls[0]?.[0])).toBe(`${BASE_URL}/payments?operation=capture`)
+      const second = String(spy.mock.calls[1]?.[0])
+      expect(second).toContain('operation=dispute')
+      expect(second).toContain('status=authorized')
+    })
+  })
 
   describe('payments.disputes', () => {
     it('returns a paginated envelope and forwards the status filter', async () => {
@@ -330,6 +386,36 @@ describe('resource alignment', () => {
       expect(String(spy.mock.calls[0]?.[0])).toMatch(
         /\/accounts\/019f8a3d-b781-7b00-8b75-8427f7e591d2$/,
       )
+    })
+
+    it('update PATCHes only the supplied fields and returns the profile', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          ok({ id: ACCOUNT_ID, name: 'Renamed', email: 'merchant@rail0.test' }),
+        )
+
+      const account = await client.accounts.update(ACCOUNT_ID, { name: 'Renamed' })
+
+      expect(account.name).toBe('Renamed')
+      const [url, init] = spy.mock.calls[0] as [string, RequestInit]
+      expect(url).toBe(`${BASE_URL}/accounts/${ACCOUNT_ID}`)
+      expect(init.method).toBe('PATCH')
+      // Only what was passed: an owner cannot send `active`, and an absent email must not
+      // go out as null (the gateway rejects a blank value).
+      expect(JSON.parse(String(init.body))).toEqual({ name: 'Renamed' })
+    })
+
+    it('update surfaces a taken email as a 409 with its code', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ code: 'conflict', title: 'Conflict', detail: 'email is already taken' }),
+          { status: 409 },
+        ),
+      )
+      await expect(
+        client.accounts.update(ACCOUNT_ID, { email: 'taken@rail0.test' }),
+      ).rejects.toMatchObject({ status: 409, code: 'conflict' })
     })
   })
 

@@ -169,6 +169,17 @@ export interface CreateWalletRequest {
   signature: string
   label?: string
 }
+/**
+ * Body for `accounts.update`. Both optional, AT LEAST ONE required — an empty PATCH is a
+ * caller bug and the gateway answers 400. Both columns are unique across accounts: a value
+ * another account already holds is a 409. The account's `active` flag is deliberately
+ * absent: it is the operator's field (admin-only), not something an owner can set.
+ */
+export interface UpdateAccountRequest {
+  name?: string
+  /** Contact email — where the merchant's operational notifications go. */
+  email?: string
+}
 export interface UpdateWalletRequest {
   label?: string
   active?: boolean
@@ -323,8 +334,8 @@ export interface Dispute {
   /** Parent payment (public-safe view), embedded by the account-level GET /disputes list. */
   payment?: Payment
 }
-/** A merchant account, as its own holder reads it (GET /accounts/:id). Email is included
- *  because that endpoint is behind an ownership guard — the holder is its only caller. */
+/** A merchant account profile (GET/PATCH /accounts/:id). Email is included because those
+ *  routes answer only the account's own holder — or an active admin operating it. */
 export interface Account {
   id: string
   name: string
@@ -332,14 +343,16 @@ export interface Account {
   created_at?: string
   updated_at?: string
 }
+/**
+ * A wallet as the merchant-facing routes return it — the gateway's Restricted view, an
+ * explicit allow-list of these four fields. It never carries `account_id` or the
+ * bookkeeping timestamps; they were typed here once and could only ever read undefined.
+ */
 export interface Wallet {
   id?: string
-  account_id?: string
   address?: string
   label?: string | null
   active?: boolean
-  created_at?: string
-  updated_at?: string
 }
 export interface WalletTokenHolding {
   /**
