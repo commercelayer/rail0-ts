@@ -558,6 +558,10 @@ otherwise back off using this value.
 `.detail` rather than a replacement — present only for codes worth adding a next step
 to, `undefined` otherwise.
 
+### Ids in request paths
+
+Every id a method puts into the URL path is encoded as one segment (`encodeURIComponent`), so an id carrying `/`, `?` or `#` cannot address a different route. An id that is empty, `.` or `..` is refused with a `TypeError`, thrown synchronously before any request, as rail0-go and rail0-ruby do.
+
 ## Development
 
 ```bash
