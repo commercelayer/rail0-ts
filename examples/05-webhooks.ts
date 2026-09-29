@@ -4,7 +4,7 @@
  * The gateway POSTs to your callback URL when a payment transitions (authorized,
  * captured, refunded, …), signed with an HMAC-SHA256 over `"{timestamp}.{body}"` using
  * the shared secret returned at creation — carried in X-Rail0-Signature alongside
- * X-Rail0-Timestamp. One topic per webhook — create several to cover multiple events.
+ * X-Rail0-Timestamp. One webhook covers a set of topics, with one secret and one circuit.
  * All calls require a JWT.
  *
  * (This comment used to say the digest covered the raw body alone. It has not since
@@ -40,6 +40,14 @@ try {
   const callbacks = await client.webhooks.eventCallbacks(created.id as string, { status: 'failed' })
   console.log('Failed deliveries:', callbacks.meta.total)
 
+  // Replay a failed delivery's exact payload (async: 202 queued). A circuit-open webhook
+  // drops the replay like any delivery, so close the circuit first.
+  const first = callbacks.data[0]
+  if (first?.id) {
+    await client.webhooks.resetCircuit(created.id as string)
+    await client.webhooks.redeliver(created.id as string, first.id)
+  }
+
   // Verifying a delivery in your own handler. The body must be the RAW bytes as
   // received: re-serialising a parsed object changes key order and whitespace, and the
   // digest with it. The timestamp is checked too — a matching digest on a three-day-old
@@ -56,6 +64,6 @@ try {
   // await client.webhooks.rotateSecret(created.id as string)
   await client.webhooks.delete(created.id as string)
 } catch (err) {
-  if (err instanceof Rail0ApiError) console.error(`[${err.error}] ${err.message}`)
+  if (err instanceof Rail0ApiError) console.error(`[${err.code}] ${err.message}`)
   throw err
 }
