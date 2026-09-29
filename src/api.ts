@@ -943,7 +943,7 @@ export interface paths {
         };
         /**
          * Orders aggregated by a dimension
-         * @description Account-only. Aggregate orders by `token`, `chain`, `mode`, or `status`. Accepts the same `payee` scope as /analytics/summary (403 `forbidden` for a payee that is not a wallet of the session's account). token/chain rows carry per-token volume; mode/status are counts only.
+         * @description Account-only. Aggregate orders by `token`, `chain`, `mode`, or `status`. Accepts the same `payee` scope as /analytics/summary (403 `forbidden` for a payee that is not a wallet of the session's account). token rows carry per-token volume; chain, mode and status rows are counts only (volume is never summed across tokens).
          */
         get: operations["analyticsBreakdown"];
         put?: never;
@@ -1456,7 +1456,7 @@ export interface components {
                      */
                     oldest_broadcast?: string | null;
                 };
-                /** @description Indexer callbacks the gateway accepted but could not apply (not_found, chain_mismatch, unapplicable). Each is an on-chain event the mirror never recorded. Excludes balance_divergence, which is its own check — one counter mixing "the numbers disagreed" with "we could not apply it at all" is unreadable. */
+                /** @description Indexer callbacks the gateway accepted but could not apply (not_found, chain_mismatch, payment_mismatch, unapplicable, impossible_balances). Each is an on-chain event the mirror never recorded. Excludes balance_divergence and external_operation, each its own check — one counter mixing "the numbers disagreed" with "we could not apply it at all" is unreadable. */
                 sync_callbacks: {
                     /**
                      * @description This check's own verdict; the top-level `status` is the worst of them.
@@ -1474,6 +1474,24 @@ export interface components {
                 };
                 /** @description Confirms whose reported balances disagreed with the gateway's own recomputation. The indexer's numbers are applied anyway — this is the second witness over them. */
                 balances: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    /** @description All-time count; the table is never pruned, so this is history — context, not the alert. */
+                    total?: number;
+                    last_24h?: number;
+                    /**
+                     * Format: date-time
+                     * @description When the most recent divergence landed, or null. The figure to act on: a monotonic total says nothing about now.
+                     */
+                    latest_at?: string | null;
+                };
+                /** @description On-chain operations on this gateway's payments that were sent to the contract directly (a buyer's dispute, a merchant capturing from their own wallet), recorded as sync_errors with reason external_operation. Not applied — the gateway mirrors only what it prepared — so each payment's state here is behind the chain and its merchant got no webhook. Same {total, last_24h, latest_at} figure as balances. */
+                external_operations: {
                     /**
                      * @description This check's own verdict; the top-level `status` is the worst of them.
                      * @enum {string}
@@ -1887,6 +1905,8 @@ export interface components {
             /** @description Protocol-level rail0_id. */
             payment_id?: string;
             chain_id?: number;
+            /** @description Address (lowercase) of the RAIL0 deployment the payment is bound to, archived versions included. The sweeper accepts a receipt's event only when this contract emitted it. */
+            contract_address?: string;
         };
         /** @description Per-chain indexer config. */
         SyncBlockchain: {
@@ -3028,7 +3048,7 @@ export interface operations {
                     amount?: string;
                     /** @description Payee's EIP-3009 refund signature (refund phase-2 only; 0x + 130 hex). */
                     signature?: string;
-                    /** @description Submitter address (release; defaults to payer). */
+                    /** @description Release submitter: the payment's payer or payee (422 release_submitter_not_a_party otherwise). The transaction is built with its nonce. Defaults to the caller. */
                     from?: string;
                 };
             };
@@ -3471,7 +3491,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). Plus `gas` per chain — `spent` on confirmed transactions and `wasted` by on-chain reverts, as wei-scale base-unit strings in the chain's native token (decimals 18) — with `confirmed`/`failed` resolved transaction counts, and `failed_rate` derived from them (per resolved transaction, not per order). `gas_by_status` and `gas_by_operation` are those same rows regrouped, each carrying a `key` (the payment status / the operation) alongside the same fields; every cut sums back to its chain's `gas` row. The status cut is a SNAPSHOT — a payment's status moves and its gas moves with it, so the same period changes over time; the operation cut is stable. Each chain/status row carries `orders`, the count of payments behind it (including those that produced no transaction), so `(spent + wasted) / orders` is the average cost of an order in that state; it is null on the operation cut, where one order spans several operations and `spent / confirmed` is the meaningful average instead. Gas covers only the operations the merchant broadcasts; dispute/close_dispute are the buyer's cost and release has no stored sender, so both are excluded. Also `failures` — one row per decoded failure code with the number of the merchant's transactions that hit it, commonest first — and `confirmation_secs` on each gas row: the mean seconds from broadcast to confirmation on that chain, weighted by its confirmations and null when none confirmed. */
+            /** @description Order counts, by-status counts, refund/dispute rates, and per-(token, chain) volume: gross authorized, net settled to the payee, still in escrow, and gross captured/refunded from the confirmed transactions (base units). Plus `gas` per chain — `spent` on confirmed transactions and `wasted` by on-chain reverts, as wei-scale base-unit strings in the chain's native token (decimals 18) — with `confirmed`/`failed` resolved transaction counts, and `failed_rate` derived from them (per resolved transaction, not per order). `gas_by_status` and `gas_by_operation` are those same rows regrouped, each carrying a `key` (the payment status / the operation) alongside the same fields; every cut sums back to its chain's `gas` row. The status cut is a SNAPSHOT — a payment's status moves and its gas moves with it, so the same period changes over time; the operation cut is stable. Each chain/status row carries `orders`, the count of payments behind it (including those that produced no transaction), so `(spent + wasted) / orders` is the average cost of an order in that state; it is null on the operation cut, where one order spans several operations and `spent / confirmed` is the meaningful average instead. Gas covers the operations the merchant broadcasts: dispute/close_dispute are the buyer's cost and are excluded; a release counts when its recorded `sender` is one of the account's wallets, and one with an unknown sender (a report-by-hash submit) stays out. Also `failures` — one row per decoded failure code with the number of the merchant's transactions that hit it, commonest first — and `confirmation_secs` on each gas row: the mean seconds from broadcast to confirmation on that chain, weighted by its confirmations and null when none confirmed. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3541,7 +3561,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description One row per dimension key with an order count (and volume for token/chain). */
+            /** @description One row per dimension key with an order count (and volume for token). */
             200: {
                 headers: {
                     [name: string]: unknown;
