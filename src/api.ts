@@ -1636,14 +1636,6 @@ export interface components {
             label?: string | null;
             active?: boolean;
         };
-        /** @description A wallet's token holding, with the wallet, token, and blockchain nested via their own schemas. */
-        WalletToken: {
-            default?: boolean;
-            active?: boolean;
-            wallet?: components["schemas"]["Wallet"];
-            token?: components["schemas"]["Token"];
-            blockchain?: components["schemas"]["Blockchain"];
-        };
         /** @description A wallet's token holding as nested under its wallet (GET /accounts/:id/wallets): the token plus this wallet's per-token flags, without re-nesting the wallet. */
         WalletTokenHolding: {
             /**
