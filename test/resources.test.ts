@@ -137,7 +137,7 @@ describe('resource alignment', () => {
       expect(String(spy.mock.calls[4]?.[0])).toContain(`/wallets/${WALLET_ID}/balances`)
 
       // create forwards the SIWE proof-of-ownership (message + signature) in the body
-      const createBody = JSON.parse((spy.mock.calls[1]?.[1] as RequestInit).body as string)
+      const createBody = JSON.parse((spy.mock.calls[1] as [unknown, RequestInit])[1].body as string)
       expect(createBody).toMatchObject({
         address: '0xabc',
         message: 'siwe-message',
@@ -182,7 +182,7 @@ describe('resource alignment', () => {
       expect(String(spy.mock.calls[3]?.[0])).toContain(`${base}/${TOKEN_ID}/disable`)
 
       // The upsert body carries chain_id + token (+ optional default).
-      expect(JSON.parse((spy.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+      expect(JSON.parse((spy.mock.calls[0] as [unknown, RequestInit])[1].body as string)).toEqual({
         chain_id: 84532,
         token: TOKEN_ADDRESS,
         default: true,
@@ -205,7 +205,7 @@ describe('resource alignment', () => {
       expect(created.shared_secret).toBe('whsec_x')
       // The set goes out as `topics`. The gateway still accepts the singular, so a body
       // that kept sending `topic` would create a DIFFERENT subscription and pass silently.
-      const sent = JSON.parse(String((spy.mock.calls[0]?.[1] as RequestInit).body))
+      const sent = JSON.parse(String((spy.mock.calls[0] as [unknown, RequestInit])[1].body))
       expect(sent.topics).toEqual(['payments.captured', 'payments.refunded'])
       expect(sent).not.toHaveProperty('topic')
 
@@ -231,7 +231,9 @@ describe('resource alignment', () => {
       spy.mockResolvedValueOnce(new Response(null, { status: 204 }))
       await client.webhooks.delete(WEBHOOK_ID)
 
-      const actionMethods = [2, 3, 4, 5].map((i) => (spy.mock.calls[i]?.[1] as RequestInit).method)
+      const actionMethods = [2, 3, 4, 5].map(
+        (i) => (spy.mock.calls[i] as [unknown, RequestInit])[1].method,
+      )
       expect(actionMethods).toEqual(['PUT', 'PUT', 'PUT', 'PUT'])
     })
 
@@ -313,8 +315,14 @@ describe('resource alignment', () => {
       await client.payments.create(body)
       await client.payments.create(body, 'key-123')
 
-      const first = (spy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
-      const second = (spy.mock.calls[1]?.[1] as RequestInit).headers as Record<string, string>
+      const first = (spy.mock.calls[0] as [unknown, RequestInit])[1].headers as Record<
+        string,
+        string
+      >
+      const second = (spy.mock.calls[1] as [unknown, RequestInit])[1].headers as Record<
+        string,
+        string
+      >
       expect(first['Idempotency-Key']).toBeUndefined()
       expect(second['Idempotency-Key']).toBe('key-123')
     })
@@ -355,7 +363,8 @@ describe('resource alignment', () => {
       await client.payments.disputeSubmitByHash(RAIL0_ID, { transaction_hash: '0xdisp' })
       expect(String(spy.mock.calls[0]?.[0])).toContain(`/payments/${RAIL0_ID}/dispute/submitted`)
       expect(
-        JSON.parse((spy.mock.calls[0]?.[1] as RequestInit).body as string).transaction_hash,
+        JSON.parse((spy.mock.calls[0] as [unknown, RequestInit])[1].body as string)
+          .transaction_hash,
       ).toBe('0xdisp')
 
       await client.payments.closeDisputeSubmitByHash(RAIL0_ID, { transaction_hash: '0xclose' })
@@ -571,7 +580,7 @@ describe('resource alignment', () => {
       expect(res).toEqual({ revokedAll: true, cutoffAt: '2026-08-27T21:00:00Z' })
       const url = String(spy.mock.calls[1]?.[0])
       expect(url).toContain('/auth/revoke_all')
-      const body = JSON.parse(String((spy.mock.calls[1]?.[1] as RequestInit).body))
+      const body = JSON.parse(String((spy.mock.calls[1] as [unknown, RequestInit])[1].body))
       expect(body.message).toContain('Sign out of RAIL0 everywhere')
       expect(body.message).toContain('abc123nonce9')
       expect(body.signature).toMatch(/^0x[0-9a-f]{130}$/)
@@ -591,7 +600,7 @@ describe('resource alignment', () => {
       expect(res.id).toBe('tx-1')
       const url = String(spy.mock.calls[0]?.[0])
       expect(url).toContain(`/payments/0x${'ab'.repeat(32)}/transactions/tx-1/redrive`)
-      expect((spy.mock.calls[0]?.[1] as RequestInit).method).toBe('POST')
+      expect((spy.mock.calls[0] as [unknown, RequestInit])[1].method).toBe('POST')
     })
   })
 
@@ -605,7 +614,7 @@ describe('resource alignment', () => {
 
       expect(res.revoked).toBe(true)
       expect(String(spy.mock.calls[0]?.[0])).toContain('/auth/logout')
-      expect((spy.mock.calls[0]?.[1] as RequestInit).method).toBe('POST')
+      expect((spy.mock.calls[0] as [unknown, RequestInit])[1].method).toBe('POST')
     })
 
     // The gateway's denylist fails open, so `false` is a real answer and not an
@@ -633,12 +642,12 @@ describe('resource alignment', () => {
       const spy = vi.spyOn(globalThis, 'fetch')
       spy.mockResolvedValueOnce(nonce()).mockResolvedValueOnce(session())
       await client.auth.login(KEY, 'localhost')
-      const defBody = JSON.parse((spy.mock.calls[1]?.[1] as RequestInit).body as string)
+      const defBody = JSON.parse((spy.mock.calls[1] as [unknown, RequestInit])[1].body as string)
       expect(defBody.message).toContain('Chain ID: 1')
 
       spy.mockResolvedValueOnce(nonce()).mockResolvedValueOnce(session())
       await client.auth.login(KEY, 'localhost', 5042002)
-      const customBody = JSON.parse((spy.mock.calls[3]?.[1] as RequestInit).body as string)
+      const customBody = JSON.parse((spy.mock.calls[3] as [unknown, RequestInit])[1].body as string)
       expect(customBody.message).toContain('Chain ID: 5042002')
     })
 
