@@ -145,6 +145,15 @@ export interface CreatePaymentRequest {
   description?: string
   metadata?: Record<string, unknown>
 }
+/**
+ * Body of PATCH /payments/:id. The description is the only editable field.
+ *
+ * The key is REQUIRED by the gateway — there is no "omit to leave unchanged"; send
+ * `null` (or `""`) to clear it. At most 255 characters (422 over).
+ */
+export interface UpdatePaymentRequest {
+  description: string | null
+}
 export interface PayerSignatureRequest {
   signature: string
 }
