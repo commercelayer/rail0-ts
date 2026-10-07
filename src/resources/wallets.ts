@@ -107,8 +107,10 @@ export class WalletsResource {
   /**
    * Stop accepting a token — soft delete (204). The holding row survives with
    * active:false, so its history is kept and enableToken can bring it back.
-   * 422 `default_payment_method` when the holding is the wallet's DEFAULT: make
-   * another holding the default first (addToken with `default: true`).
+   * 422 `default_payment_method` when the holding is the wallet's DEFAULT and the wallet
+   * accepts other tokens: make another holding the default first (addToken with
+   * `default: true`). The LAST active holding can be removed even as the default — the
+   * wallet then accepts nothing, and the gateway clears the flag with it.
    */
   removeToken(account_id: string, id: string, token_id: string): Promise<void> {
     return this.http.delete(path`/accounts/${account_id}/wallets/${id}/tokens/${token_id}`)
@@ -121,7 +123,8 @@ export class WalletsResource {
 
   /**
    * Disable an EXISTING holding (same effect as removeToken, but returns the holding).
-   * 404 when absent; 422 `default_payment_method` when it is the wallet's default.
+   * 404 when absent; 422 `default_payment_method` when it is the wallet's default and
+   * other holdings are active (the last active one can be disabled, flag and all).
    */
   disableToken(account_id: string, id: string, token_id: string): Promise<WalletTokenHolding> {
     return this.http.patch(path`/accounts/${account_id}/wallets/${id}/tokens/${token_id}/disable`)

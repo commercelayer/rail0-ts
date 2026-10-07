@@ -433,7 +433,7 @@ export interface paths {
         post?: never;
         /**
          * Disable a token this wallet accepts (soft delete)
-         * @description Soft-disables the accepted token/chain holding (active:false), removing it from discovery/creation while keeping the row. Re-enable via POST. Refused 422 `default_payment_method` when the holding is the wallet's ACTIVE default — switch the default over first (POST with default:true on its successor). An INACTIVE holding still carrying the flag is not protected: that is a row already stood down when its chain left service.
+         * @description Soft-disables the accepted token/chain holding (active:false), removing it from discovery/creation while keeping the row. Re-enable via POST. Refused 422 `default_payment_method` when the holding is the wallet's ACTIVE default and the wallet accepts other methods — switch the default over first (POST with default:true on its successor). The LAST active method can be disabled even as the default: the wallet then accepts nothing, and the flag is cleared with it. An INACTIVE holding still carrying the flag is not protected: that is a row already stood down when its chain left service.
          */
         delete: operations["disableWalletToken"];
         options?: never;
@@ -488,7 +488,7 @@ export interface paths {
         head?: never;
         /**
          * Disable an existing token holding
-         * @description Disables an existing holding (active:false). Returns 404 if the wallet has no holding for the token, and 422 `default_payment_method` when it is the wallet's active default — switch the default over first.
+         * @description Disables an existing holding (active:false). Returns 404 if the wallet has no holding for the token, and 422 `default_payment_method` when it is the wallet's active default and other methods are active — switch the default over first. The last active method can be disabled even as the default (the flag is cleared with it).
          */
         patch: operations["disableExistingWalletToken"];
         trace?: never;
@@ -1460,7 +1460,7 @@ export interface components {
                      */
                     oldest_broadcast?: string | null;
                 };
-                /** @description Indexer callbacks the gateway accepted but could not apply (not_found, chain_mismatch, payment_mismatch, unapplicable, impossible_balances). Each is an on-chain event the mirror never recorded. Excludes balance_divergence and external_operation, each its own check — one counter mixing "the numbers disagreed" with "we could not apply it at all" is unreadable. */
+                /** @description Indexer callbacks the gateway accepted but could not apply (not_found, chain_mismatch, payment_mismatch, operation_mismatch, unapplicable, impossible_balances). Each is an on-chain event the mirror never recorded. Excludes balance_divergence and external_operation, each its own check — one counter mixing "the numbers disagreed" with "we could not apply it at all" is unreadable. */
                 sync_callbacks: {
                     /**
                      * @description This check's own verdict; the top-level `status` is the worst of them.
@@ -2628,7 +2628,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The holding is the wallet's ACTIVE default payment method. `code` is `default_payment_method` — switch the default over first (POST .../tokens with default:true on the successor, which demotes this one in the same request). */
+            /** @description The holding is the wallet's ACTIVE default payment method and the wallet accepts other methods. `code` is `default_payment_method` — switch the default over first (POST .../tokens with default:true on the successor, which demotes this one in the same request). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2693,7 +2693,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The holding is the wallet's ACTIVE default payment method. `code` is `default_payment_method` — switch the default over first (POST .../tokens with default:true on the successor, which demotes this one in the same request). */
+            /** @description The holding is the wallet's ACTIVE default payment method and the wallet accepts other methods. `code` is `default_payment_method` — switch the default over first (POST .../tokens with default:true on the successor, which demotes this one in the same request). */
             422: {
                 headers: {
                     [name: string]: unknown;
