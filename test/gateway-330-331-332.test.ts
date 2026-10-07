@@ -37,13 +37,19 @@ describe('#331 — Idempotency-Key on prepare', () => {
       { amount: '1.00' },
       { idempotencyKey: 'k-1' },
     )
-    const sentWith = (withKey.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
+    const sentWith = (withKey.mock.calls[0] as [unknown, RequestInit])[1].headers as Record<
+      string,
+      string
+    >
     expect(sentWith['Idempotency-Key']).toBe('k-1')
     vi.restoreAllMocks()
 
     const noKey = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok({ id: 'tx-2' }))
     await client.payments.prepare(RAIL0_ID, 'capture', { amount: '1.00' })
-    const sentWithout = (noKey.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
+    const sentWithout = (noKey.mock.calls[0] as [unknown, RequestInit])[1].headers as Record<
+      string,
+      string
+    >
     expect(sentWithout['Idempotency-Key']).toBeUndefined()
     vi.restoreAllMocks()
   })
@@ -107,7 +113,10 @@ describe('#331 — Idempotency-Key on prepare', () => {
 
       const noKey = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok({ id: 'tx-2' }))
       await t.call(client)
-      const headers = (noKey.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
+      const headers = (noKey.mock.calls[0] as [unknown, RequestInit])[1].headers as Record<
+        string,
+        string
+      >
       expect(headers['Idempotency-Key']).toBeUndefined()
       vi.restoreAllMocks()
     })

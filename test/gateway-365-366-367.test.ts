@@ -156,7 +156,7 @@ describe('#366 F1 — payments.authorization_expiring topic', () => {
     })
     await client.webhooks.list({ topic: 'payments.authorization_expiring' })
 
-    const sent = JSON.parse((spy.mock.calls[0]?.[1] as RequestInit).body as string)
+    const sent = JSON.parse((spy.mock.calls[0] as [unknown, RequestInit])[1].body as string)
     expect(sent.topics).toEqual(['payments.authorization_expiring', 'payments.expired'])
     expect(String(spy.mock.calls[1]?.[0])).toBe(
       `${BASE_URL}/webhooks?topic=payments.authorization_expiring`,

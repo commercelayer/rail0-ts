@@ -144,7 +144,7 @@ describe('auth.login message', () => {
       )
 
     await client.auth.login(KEY, 'localhost:3000')
-    const body = JSON.parse((spy.mock.calls[1]?.[1] as RequestInit).body as string)
+    const body = JSON.parse((spy.mock.calls[1] as [unknown, RequestInit])[1].body as string)
 
     // domain is host-only (the port is stripped) while uri keeps it — the gateway
     // asserts URI.host == domain, and the ruby regex would swallow a port into
@@ -199,7 +199,7 @@ describe('SIWE statements are purpose-bound', () => {
       )
 
     await client.auth.login(KEY, 'localhost:3000')
-    const body = JSON.parse((spy.mock.calls[1]?.[1] as RequestInit).body as string)
+    const body = JSON.parse((spy.mock.calls[1] as [unknown, RequestInit])[1].body as string)
 
     expect(body.message).toContain(LOGIN_STATEMENT)
     expect(body.message).not.toContain(WALLET_LINK_STATEMENT)
@@ -244,7 +244,8 @@ describe('auth.login / auth.verify install the token on the client', () => {
       }),
     )
   const authHeader = (spy: ReturnType<typeof vi.spyOn>, call: number) =>
-    ((spy.mock.calls[call]?.[1] as RequestInit).headers as Record<string, string>).Authorization
+    ((spy.mock.calls[call] as [unknown, RequestInit])[1].headers as Record<string, string>)
+      .Authorization
 
   it('login: returns the AuthResponse AND sends the token on the next request', async () => {
     const client = new Rail0Client({ baseUrl: 'http://localhost:3000' })

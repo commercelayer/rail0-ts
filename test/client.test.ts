@@ -430,17 +430,26 @@ describe('Rail0Client', () => {
         )
 
       await client.payments.get(mockPaymentId)
-      const before = (spy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
+      const before = (spy.mock.calls[0] as [unknown, RequestInit])[1].headers as Record<
+        string,
+        string
+      >
       expect(before.Authorization).toBeUndefined()
 
       client.setAuthToken('jwt-abc')
       await client.payments.get(mockPaymentId)
-      const after = (spy.mock.calls[1]?.[1] as RequestInit).headers as Record<string, string>
+      const after = (spy.mock.calls[1] as [unknown, RequestInit])[1].headers as Record<
+        string,
+        string
+      >
       expect(after.Authorization).toBe('Bearer jwt-abc')
 
       client.setAuthToken(null)
       await client.payments.get(mockPaymentId)
-      const cleared = (spy.mock.calls[2]?.[1] as RequestInit).headers as Record<string, string>
+      const cleared = (spy.mock.calls[2] as [unknown, RequestInit])[1].headers as Record<
+        string,
+        string
+      >
       expect(cleared.Authorization).toBeUndefined()
     })
   })
