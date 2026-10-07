@@ -573,7 +573,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update a payment's description
+         * @description Participant-only (payer or payee): 401 without a token, 404 for a non-participant, 403 `wallet_deactivated` from a retired wallet. Allowed in every status, closed ones included. The description is gateway-side only — in nothing signed or hashed on chain — so this moves no money and dispatches no webhook. A changed value bumps `updated_at`; writing the same value back is a no-op.
+         */
+        patch: operations["updatePayment"];
         trace?: never;
     };
     "/payments/{id}/sign": {
@@ -2838,6 +2842,7 @@ export interface operations {
                     payer: string;
                     /** @description Merchant address (0x, 40 hex). */
                     payee: string;
+                    /** @description Free-text note (what is being paid for, a reconciliation reference). Gateway-side only: in nothing signed on chain, editable afterwards via PATCH /payments/{id}, and not an idempotency term. */
                     description?: string;
                     metadata?: {
                         [key: string]: unknown;
@@ -2898,6 +2903,40 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    updatePayment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The `:id` accepts either the payment UUID or its `rail0_id` (the contract's bytes32 paymentId, `0x…`), resolved to the UUID internally. This holds for every `/payments/{id}/…` route. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description New description; null or an empty string clears it. */
+                    description: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Payment updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
         };
     };
     signPayment: {

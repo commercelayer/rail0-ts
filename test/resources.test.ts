@@ -297,6 +297,35 @@ describe('resource alignment', () => {
     })
   })
 
+  describe('payments.update', () => {
+    it('PATCHes /payments/:id with the description and returns the PaymentDetail', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(ok({ rail0_id: RAIL0_ID, description: 'Order #42' }))
+      const detail = await client.payments.update(RAIL0_ID, { description: 'Order #42' })
+      expect(detail.description).toBe('Order #42')
+
+      const [url, init] = spy.mock.calls[0] as [string, RequestInit]
+      expect(String(url)).toBe(`${BASE_URL}/payments/${RAIL0_ID}`)
+      expect(init.method).toBe('PATCH')
+      expect(JSON.parse(String(init.body))).toEqual({ description: 'Order #42' })
+    })
+
+    it('sends an explicit null to clear the description', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(ok({ rail0_id: RAIL0_ID, description: null }))
+      const detail = await client.payments.update(RAIL0_ID, { description: null })
+      expect(detail.description).toBeNull()
+
+      // The key is required by the gateway: null must go out as `"description": null`,
+      // not be dropped from the body.
+      const init = spy.mock.calls[0]?.[1] as RequestInit
+      expect(init.method).toBe('PATCH')
+      expect(JSON.parse(String(init.body))).toEqual({ description: null })
+    })
+  })
+
   describe('payments.create idempotency', () => {
     it('sends the Idempotency-Key header only when provided', async () => {
       const spy = vi
