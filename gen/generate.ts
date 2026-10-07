@@ -197,6 +197,15 @@ export interface CreatePaymentRequest {
   description?: string
   metadata?: Record<string, unknown>
 }
+/**
+ * Body of PATCH /payments/:id. The description is the only editable field.
+ *
+ * The key is REQUIRED by the gateway — there is no "omit to leave unchanged"; send
+ * \`null\` (or \`""\`) to clear it. At most 255 characters (422 over).
+ */
+export interface UpdatePaymentRequest {
+  description: string | null
+}
 export interface PayerSignatureRequest {
   signature: string
 }
@@ -775,6 +784,7 @@ import type {
   TransactionOperation,
   TransactionStatus,
   StoredTransactionOperation,
+  UpdatePaymentRequest,
 } from './types.js'
 
 // The gateway validates these filters with Grape \`values:\` and answers 400 on
@@ -875,6 +885,21 @@ export class PaymentsResource {
   /** Fetch a payment's current state (DB status + live on-chain balances + transactions). */
   get(id: Bytes32): Promise<PaymentDetail> {
     return this.http.get(path\`/payments/\${id}\`)
+  }
+
+  /**
+   * PATCH /payments/:id — set or clear the payment's description. Returns the same
+   * PaymentDetail as \`get\`.
+   *
+   * \`id\` is the payment UUID or its \`rail0_id\`. Participant-only (payer or payee):
+   * 401 without a session, 404 for a non-participant (indistinguishable from an unknown
+   * id), 403 \`wallet_deactivated\` from a retired wallet. Allowed in every status,
+   * closed ones included: the description is gateway-side only — in nothing signed or
+   * hashed on chain — so this moves no money and dispatches no webhook. \`null\` or \`""\`
+   * clears it; over 255 characters is a 422.
+   */
+  update(id: string, body: UpdatePaymentRequest): Promise<PaymentDetail> {
+    return this.http.patch(path\`/payments/\${id}\`, body)
   }
 
   /** List a payment's on-chain transactions. */
