@@ -140,6 +140,12 @@ const errorHints: Record<string, string> = {
     "this wallet is deactivated and read-only — reactivate it, or sign in with another of the account's wallets",
   account_deactivated:
     'this merchant account is deactivated — it can still read, void, release and refund, but not create, authorize, charge or capture; ask an operator to reactivate it',
+  // last-one guards: login resolves the account FROM a wallet, so an account left with no
+  // active wallet could neither act nor add one back; the operator grant has the same floor.
+  last_active_wallet:
+    "this is the account's only active wallet — add or reactivate another wallet first, then switch this one off",
+  last_admin:
+    'the change would leave no active operator — grant the operator role to another active account first',
   // contract reverts (surfaced as contract_revert, or on a failed transaction)
   not_payee: 'only the merchant (payee) may do this',
   not_payer: 'only the buyer (payer) may do this',

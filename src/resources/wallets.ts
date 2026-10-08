@@ -64,12 +64,20 @@ export class WalletsResource {
     return this.http.post(path`/accounts/${account_id}/wallets`, params)
   }
 
-  /** Update a wallet's label or active flag. */
+  /**
+   * Update a wallet's label or active flag. `active: false` on the account's
+   * only active wallet is refused with 422 `last_active_wallet`: login resolves
+   * the account from a wallet, so an account with none could neither act nor add
+   * one back — add or reactivate another wallet first.
+   */
   update(account_id: string, id: string, params: UpdateWalletRequest): Promise<Wallet> {
     return this.http.patch(path`/accounts/${account_id}/wallets/${id}`, params)
   }
 
-  /** Soft-delete (deactivate) a wallet. */
+  /**
+   * Soft-delete (deactivate) a wallet — the same as `update(..., { active: false })`,
+   * so the account's only active wallet is refused with 422 `last_active_wallet`.
+   */
   delete(account_id: string, id: string): Promise<void> {
     return this.http.delete(path`/accounts/${account_id}/wallets/${id}`)
   }

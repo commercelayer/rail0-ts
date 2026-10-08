@@ -178,6 +178,10 @@ export interface PrepareRequest {
  * `address` (422 otherwise), consumes the nonce, and enforces global address
  * uniqueness (409 if already registered anywhere). The proven address need not
  * equal the session address — a merchant may control several payee wallets.
+ *
+ * `message`/`signature` stay required here although the OpenAPI marks them
+ * optional: only an ADMIN may add a wallet without the proof, and this method is
+ * the owner flow, where the gateway answers 400 without them.
  */
 export interface CreateWalletRequest {
   address: string
