@@ -341,6 +341,8 @@ describe('Rail0Client', () => {
         'not_redrivable',
         'event_not_found',
         'submission_timeout',
+        'last_active_wallet',
+        'last_admin',
       ]) {
         const err = new Rail0ApiError(403, { code })
         expect(err.hint, code).toBeTruthy()
