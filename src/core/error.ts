@@ -84,6 +84,8 @@ const errorHints: Record<string, string> = {
   already_disputed: 'a dispute is already open — close it first',
   not_disputed: 'there is no open dispute to close',
   nothing_to_dispute: 'a dispute needs a merchant-held (refundable) balance',
+  unknown_dispute_reason:
+    'the reason is not in the dispute-reason dictionary — send a code from DISPUTE_OPEN_REASONS / DISPUTE_CLOSE_REASONS (or its exact bytes32); full_refund is recorded by the protocol and cannot be sent',
   transaction_not_overwritable:
     'a transaction for this operation is already in flight — wait for it to settle',
   signer_mismatch: "the signing key doesn't match the payment's payer/payee",

@@ -21,15 +21,16 @@ const id = '0xdeadbeef00000000000000000000000000000000000000000000000000000004'
 try {
   await buyer.auth.login(BUYER_KEY, 'api.rail0.xyz')
 
-  // Open a dispute. `reason` is an optional bytes32 code.
-  const openPrep = await buyer.payments.disputePrepare(id, `0x${'11'.repeat(32)}`)
+  // Open a dispute. `reason` is required: a code from DISPUTE_OPEN_REASONS (or its bytes32).
+  const openPrep = await buyer.payments.disputePrepare(id, 'not_received')
   await buyer.payments.dispute(id, {
     signed_transaction: signTransaction(openPrep.unsigned_transaction as string, BUYER_KEY),
   })
   console.log('Dispute opened')
 
   // …later, the payer closes it.
-  const closePrep = await buyer.payments.closeDisputePrepare(id)
+  // `reason` is required here too: a code from DISPUTE_CLOSE_REASONS.
+  const closePrep = await buyer.payments.closeDisputePrepare(id, 'item_received')
   await buyer.payments.closeDispute(id, {
     signed_transaction: signTransaction(closePrep.unsigned_transaction as string, BUYER_KEY),
   })
@@ -37,7 +38,15 @@ try {
 
   // Inspect the dispute history (paginated).
   const history = await buyer.payments.disputes(id)
-  for (const d of history.data) console.log(d.status, d.opened_at, d.closed_at)
+  for (const d of history.data) {
+    console.log(
+      d.status,
+      d.reason_description,
+      d.close_reason_description,
+      d.opened_at,
+      d.closed_at,
+    )
+  }
 } catch (err) {
   if (err instanceof Rail0ApiError) console.error(`[${err.code}] ${err.message}`)
   throw err

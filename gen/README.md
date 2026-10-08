@@ -1,6 +1,6 @@
 # Code Generation
 
-This folder contains the generation pipeline for the RAIL0 SDK. The source of truth for the API surface is [`rail0-gateway/docs/openapi.json`](../../rail0-gateway/docs/openapi.json) (a sibling repo). Running the pipeline regenerates the raw TypeScript types in `src/api.ts` and rewrites the public types (`src/resources/types.ts`) and the generated resource classes (`src/resources/*.ts` except `auth.ts`) from templates held in `generate.ts`.
+This folder contains the generation pipeline for the RAIL0 SDK. The source of truth for the API surface is [`rail0-gateway/docs/openapi.json`](../../rail0-gateway/docs/openapi.json) (a sibling repo). Running the pipeline regenerates the raw TypeScript types in `src/api.ts`, rewrites the public types (`src/resources/types.ts`) and the generated resource classes (`src/resources/*.ts` except `auth.ts`) from templates held in `generate.ts`, and emits `src/dispute-reasons.ts` from the spec's dispute-reason dictionary.
 
 ## Run
 
@@ -55,6 +55,15 @@ The AST is serialised to a TypeScript source file. The output contains three int
 - **`operations`** — request/response shapes per `operationId`, fully resolved.
 
 The file is written as-is; it is never hand-edited.
+
+### Step 3 — Emit `src/dispute-reasons.ts`
+
+```
+openapi.json  →  DisputeOpenReason / DisputeCloseReason / DisputeSystemCloseReason
+              →  DISPUTE_OPEN_REASONS / DISPUTE_CLOSE_REASONS / DISPUTE_SYSTEM_CLOSE_REASONS
+```
+
+The dispute-reason dictionary (rail0-gateway#381) is published as three string-enum schemas, each with two arrays aligned to `enum` **by index**: `x-enum-descriptions` (English text) and `x-enum-bytes32` (the on-chain value, `keccak256("rail0.dispute.<code>")`). The step reads the spec as JSON (same source as Step 1), turns each schema into a `readonly DisputeReasonEntry[]` of `{ code, description, bytes32 }`, and emits the `lookupDisputeReason` helper with them. It **fails the run** when the arrays differ in length or a bytes32 is not the keccak256 of its code, so a misaligned spec cannot ship.
 
 ### How the output is consumed
 

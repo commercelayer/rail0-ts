@@ -1859,14 +1859,23 @@ export interface components {
             payment_id?: string;
             /** @enum {string} */
             status?: "open" | "closed";
-            /** @description On-chain bytes32 reason code (hex). */
+            /** @description On-chain bytes32 reason the dispute was opened with (hex), kept verbatim even when it is outside the dispute-reason dictionary. */
             reason?: string;
+            /** @description The DisputeOpenReason code `reason` reads as; null when the bytes32 is not in the dictionary (a direct contract call, or a pre-dictionary zero reason). */
+            reason_code?: components["schemas"]["DisputeOpenReason"] | null;
+            /** @description English description of `reason_code`; "Unrecognised reason" when the code is null. */
+            reason_description?: string;
             opened_block?: number | null;
             /** Format: date-time */
             opened_at?: string;
             /** @enum {string|null} */
             closed_by?: "payer" | "payee" | null;
+            /** @description On-chain bytes32 close reason (hex); null while the dispute is open. */
             close_reason?: string | null;
+            /** @description The code `close_reason` reads as: a DisputeCloseReason, or the system DisputeSystemCloseReason `full_refund` when a full refund auto-closed the dispute. Null while open, or when the bytes32 is not in the dictionary. */
+            close_reason_code?: components["schemas"]["DisputeCloseReason"] | components["schemas"]["DisputeSystemCloseReason"] | null;
+            /** @description English description of `close_reason_code`; "Unrecognised reason" when `close_reason` is set but outside the dictionary; null while open. */
+            close_reason_description?: string | null;
             closed_block?: number | null;
             /** Format: date-time */
             closed_at?: string | null;
@@ -2075,6 +2084,38 @@ export interface components {
             /** @description Active RAIL0 contract addresses on the chain (all watched versions). */
             contracts?: string[];
         };
+        /**
+         * @description Reason a payer may open a dispute with (POST /payments/{id}/dispute/prepare). On-chain the reason is a bytes32, derived from the code as keccak256("rail0.dispute.<code>") (see `x-enum-bytes32`).
+         *
+         *     - `not_received` — Goods or service not received
+         *     - `not_as_described` — Not as described, or not what was ordered
+         *     - `damaged_or_defective` — Arrived damaged or defective
+         *     - `duplicate` — Charged twice for the same purchase
+         *     - `incorrect_amount` — Amount differs from what was agreed
+         *     - `cancelled` — Order or subscription cancelled but still charged
+         *     - `refund_not_received` — A refund promised by the merchant never arrived
+         *     - `unauthorized` — Payment not recognised (e.g. a compromised wallet)
+         *     - `other` — Other reason, detailed off-chain
+         * @enum {string}
+         */
+        DisputeOpenReason: "not_received" | "not_as_described" | "damaged_or_defective" | "duplicate" | "incorrect_amount" | "cancelled" | "refund_not_received" | "unauthorized" | "other";
+        /**
+         * @description Reason a payer may close a dispute with (POST /payments/{id}/dispute/close/prepare). On-chain the reason is a bytes32, derived from the code as keccak256("rail0.dispute.<code>") (see `x-enum-bytes32`).
+         *
+         *     - `resolved_with_merchant` — Resolved with the merchant off-chain
+         *     - `withdrawn` — Withdrawn by the buyer (a mistake, or changed their mind)
+         *     - `item_received` — The disputed goods or service arrived after all
+         *     - `other` — Other reason
+         * @enum {string}
+         */
+        DisputeCloseReason: "resolved_with_merchant" | "withdrawn" | "item_received" | "other";
+        /**
+         * @description Close reason the protocol records on its own — never accepted from a caller. full_refund is emitted on DisputeClosed when a full refund auto-closes an open dispute. On-chain the reason is a bytes32, derived from the code as keccak256("rail0.dispute.<code>") (see `x-enum-bytes32`).
+         *
+         *     - `full_refund` — Closed automatically by a full refund
+         * @enum {string}
+         */
+        DisputeSystemCloseReason: "full_refund";
     };
     responses: {
         /** @description Resource not found. */
@@ -3518,11 +3559,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
-                    /** @description bytes32 reason code (0x + 64 hex); defaults to zero. */
-                    reason?: string;
+                    /** @description Required. A DisputeOpenReason code (e.g. `not_received`), or exactly that code's bytes32 — keccak256("rail0.dispute.<code>") as 0x-hex; the gateway encodes the bytes32 into the calldata. Anything else is refused 422 `unknown_dispute_reason`. */
+                    reason: components["schemas"]["DisputeOpenReason"];
                 };
             };
         };
@@ -3545,7 +3586,25 @@ export interface operations {
                     "application/json": components["schemas"]["Transaction"];
                 };
             };
+            /** @description `reason` missing (validation_failed). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
+            /** @description `unknown_dispute_reason` when `reason` is not a DisputeOpenReason code or its bytes32; otherwise the payment-state refusal or `idempotency_key_reused`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     submitDispute: {
@@ -3598,11 +3657,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
-                    /** @description bytes32 reason code (0x + 64 hex); defaults to zero. */
-                    reason?: string;
+                    /** @description Required. A DisputeCloseReason code (e.g. `withdrawn`), or exactly that code's bytes32 — keccak256("rail0.dispute.<code>") as 0x-hex; the gateway encodes the bytes32 into the calldata. `full_refund` is recorded by the protocol itself and is not accepted here. Anything else is refused 422 `unknown_dispute_reason`. */
+                    reason: components["schemas"]["DisputeCloseReason"];
                 };
             };
         };
@@ -3625,7 +3684,25 @@ export interface operations {
                     "application/json": components["schemas"]["Transaction"];
                 };
             };
+            /** @description `reason` missing (validation_failed). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
+            /** @description `unknown_dispute_reason` when `reason` is not a DisputeCloseReason code or its bytes32; otherwise the payment-state refusal or `idempotency_key_reused`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     submitCloseDispute: {
