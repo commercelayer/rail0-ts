@@ -9,12 +9,13 @@ import {
   DISPUTE_OPEN_REASONS,
   DISPUTE_SYSTEM_CLOSE_REASONS,
   lookupDisputeReason,
+  NO_DISPUTE_REASON,
   UNRECOGNISED_DISPUTE_REASON,
 } from '../src/index.js'
 
 // The dispute-reason dictionary (rail0-gateway#381): build-time constants emitted by
-// gen/generate.ts from the spec's x-enum-* arrays, and the now-required `reason` on
-// the two dispute prepare calls.
+// gen/generate.ts from the spec's x-enum-* arrays, and the optional `reason` on the
+// two dispute prepare calls (rail0-gateway#382: omitted/zero means no reason).
 
 const BASE_URL = 'http://localhost:3000'
 const RAIL0_ID = `0x${'ab'.repeat(32)}`
@@ -89,10 +90,11 @@ describe('lookupDisputeReason', () => {
     expect(lookupDisputeReason(null, 'close')).toBeUndefined()
     expect(lookupDisputeReason('', 'open')).toBeUndefined()
     expect(UNRECOGNISED_DISPUTE_REASON).toBe('Unrecognised reason')
+    expect(NO_DISPUTE_REASON).toBe('No reason given')
   })
 })
 
-describe('dispute prepare: required reason', () => {
+describe('dispute prepare: optional reason', () => {
   let client: Rail0Client
 
   beforeEach(() => {
@@ -118,15 +120,21 @@ describe('dispute prepare: required reason', () => {
     expect(new Headers(init.headers).get('Idempotency-Key')).toBe('k1')
   })
 
-  it('rejects a missing reason at compile time', () => {
-    // Type-level only: the calls are never awaited, so nothing reaches the network.
-    const typecheckOnly = () => {
-      // @ts-expect-error reason is required
-      void client.payments.disputePrepare(RAIL0_ID)
-      // @ts-expect-error reason is required
-      void client.payments.closeDisputePrepare(RAIL0_ID)
-    }
-    expect(typecheckOnly).toBeTypeOf('function')
+  it('sends no body when the open reason is omitted', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok({ id: 't3' }))
+    await client.payments.disputePrepare(RAIL0_ID)
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit]
+    expect(String(url)).toContain(`/payments/${RAIL0_ID}/dispute/prepare`)
+    expect(init.body).toBeUndefined()
+  })
+
+  it('omits the close reason but keeps the idempotency key', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok({ id: 't4' }))
+    await client.payments.closeDisputePrepare(RAIL0_ID, undefined, { idempotencyKey: 'k2' })
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit]
+    expect(String(url)).toContain(`/payments/${RAIL0_ID}/dispute/close/prepare`)
+    expect(init.body).toBeUndefined()
+    expect(new Headers(init.headers).get('Idempotency-Key')).toBe('k2')
   })
 
   it('surfaces 422 unknown_dispute_reason with a hint', async () => {
@@ -149,12 +157,12 @@ describe('dispute prepare: required reason', () => {
 })
 
 describe('Dispute type', () => {
-  it('carries the reason codes and descriptions, nullable when unrecognised', () => {
+  it('carries the reason codes and descriptions, nullable when none or unrecognised', () => {
     const d: Dispute = {
       status: 'closed',
       reason: `0x${'00'.repeat(32)}`,
       reason_code: null,
-      reason_description: UNRECOGNISED_DISPUTE_REASON,
+      reason_description: NO_DISPUTE_REASON,
       close_reason: reasonHash('full_refund'),
       close_reason_code: 'full_refund',
       close_reason_description: 'Closed automatically by a full refund',

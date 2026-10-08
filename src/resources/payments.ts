@@ -304,18 +304,20 @@ export class PaymentsResource {
   }
 
   /**
-   * Open a dispute (payer, signal-only). `reason` is REQUIRED: a DisputeOpenReason code
+   * Open a dispute (payer, signal-only). `reason` is optional: a DisputeOpenReason code
    * (e.g. `'not_received'`, see DISPUTE_OPEN_REASONS) or exactly that code's bytes32.
-   * Anything else is refused 422 `unknown_dispute_reason`.
+   * Omitted (or the all-zero bytes32) means no reason — the calldata carries bytes32 zero
+   * and the dispute reads "No reason given". Any other value is refused 422
+   * `unknown_dispute_reason`.
    */
   disputePrepare(
     id: Bytes32,
-    reason: DisputeOpenReason | Bytes32,
+    reason?: DisputeOpenReason | Bytes32,
     opts?: IdempotentRequest,
   ): Promise<Transaction> {
     return this.http.post(
       path`/payments/${id}/dispute/prepare`,
-      { reason },
+      reason ? { reason } : undefined,
       idempotencyHeader(opts),
     )
   }
@@ -324,18 +326,20 @@ export class PaymentsResource {
   }
 
   /**
-   * Close a dispute (payer). `reason` is REQUIRED: a DisputeCloseReason code (e.g.
-   * `'withdrawn'`, see DISPUTE_CLOSE_REASONS) or exactly that code's bytes32. The system
-   * `full_refund` is recorded by the protocol and refused here (422 `unknown_dispute_reason`).
+   * Close a dispute (payer). `reason` is optional: a DisputeCloseReason code (e.g.
+   * `'withdrawn'`, see DISPUTE_CLOSE_REASONS) or exactly that code's bytes32. Omitted
+   * (or the all-zero bytes32) means no reason. The system `full_refund` is recorded by
+   * the protocol and refused here (422 `unknown_dispute_reason`), as is any other value
+   * outside the dictionary.
    */
   closeDisputePrepare(
     id: Bytes32,
-    reason: DisputeCloseReason | Bytes32,
+    reason?: DisputeCloseReason | Bytes32,
     opts?: IdempotentRequest,
   ): Promise<Transaction> {
     return this.http.post(
       path`/payments/${id}/dispute/close/prepare`,
-      { reason },
+      reason ? { reason } : undefined,
       idempotencyHeader(opts),
     )
   }
