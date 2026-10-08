@@ -15,6 +15,7 @@ export {
   DISPUTE_OPEN_REASONS,
   DISPUTE_SYSTEM_CLOSE_REASONS,
   lookupDisputeReason,
+  NO_DISPUTE_REASON,
   UNRECOGNISED_DISPUTE_REASON,
 } from './dispute-reasons.js'
 export { AccountsResource } from './resources/accounts.js'

@@ -430,23 +430,23 @@ export interface Dispute {
   id?: string
   payment_id?: string
   status?: DisputeStatus
-  /** On-chain bytes32 open reason, verbatim — even when it is outside the dictionary. */
+  /** On-chain bytes32 open reason, verbatim — the all-zero word when no reason was given; kept even when outside the dictionary. */
   reason?: string
-  /** The DisputeOpenReason \`reason\` reads as; null when the bytes32 is not in the dictionary. */
+  /** The DisputeOpenReason \`reason\` reads as; null when no reason was given (zero) or the bytes32 is not in the dictionary. */
   reason_code?: DisputeOpenReason | null
-  /** English description of \`reason_code\`; "Unrecognised reason" when the code is null. */
+  /** English description of \`reason_code\`; "No reason given" for the zero bytes32, "Unrecognised reason" for a non-zero bytes32 outside the dictionary. */
   reason_description?: string
   opened_block?: number | null
   opened_at?: string
   closed_by?: 'payer' | 'payee' | null
-  /** On-chain bytes32 close reason; null while the dispute is open. */
+  /** On-chain bytes32 close reason; the all-zero word when closed with no reason; null while the dispute is open. */
   close_reason?: string | null
   /**
    * The code \`close_reason\` reads as — a DisputeCloseReason, or the system \`full_refund\`
    * when a full refund auto-closed the dispute. Null while open, or outside the dictionary.
    */
   close_reason_code?: DisputeCloseReason | DisputeSystemCloseReason | null
-  /** English description of \`close_reason_code\`; "Unrecognised reason" when outside the dictionary; null while open. */
+  /** English description of \`close_reason_code\`; "No reason given" for the zero bytes32, "Unrecognised reason" for a non-zero bytes32 outside the dictionary; null while open. */
   close_reason_description?: string | null
   closed_block?: number | null
   closed_at?: string | null
@@ -1078,18 +1078,20 @@ export class PaymentsResource {
   }
 
   /**
-   * Open a dispute (payer, signal-only). \`reason\` is REQUIRED: a DisputeOpenReason code
+   * Open a dispute (payer, signal-only). \`reason\` is optional: a DisputeOpenReason code
    * (e.g. \`'not_received'\`, see DISPUTE_OPEN_REASONS) or exactly that code's bytes32.
-   * Anything else is refused 422 \`unknown_dispute_reason\`.
+   * Omitted (or the all-zero bytes32) means no reason — the calldata carries bytes32 zero
+   * and the dispute reads "No reason given". Any other value is refused 422
+   * \`unknown_dispute_reason\`.
    */
   disputePrepare(
     id: Bytes32,
-    reason: DisputeOpenReason | Bytes32,
+    reason?: DisputeOpenReason | Bytes32,
     opts?: IdempotentRequest,
   ): Promise<Transaction> {
     return this.http.post(
       path\`/payments/\${id}/dispute/prepare\`,
-      { reason },
+      reason ? { reason } : undefined,
       idempotencyHeader(opts),
     )
   }
@@ -1098,18 +1100,20 @@ export class PaymentsResource {
   }
 
   /**
-   * Close a dispute (payer). \`reason\` is REQUIRED: a DisputeCloseReason code (e.g.
-   * \`'withdrawn'\`, see DISPUTE_CLOSE_REASONS) or exactly that code's bytes32. The system
-   * \`full_refund\` is recorded by the protocol and refused here (422 \`unknown_dispute_reason\`).
+   * Close a dispute (payer). \`reason\` is optional: a DisputeCloseReason code (e.g.
+   * \`'withdrawn'\`, see DISPUTE_CLOSE_REASONS) or exactly that code's bytes32. Omitted
+   * (or the all-zero bytes32) means no reason. The system \`full_refund\` is recorded by
+   * the protocol and refused here (422 \`unknown_dispute_reason\`), as is any other value
+   * outside the dictionary.
    */
   closeDisputePrepare(
     id: Bytes32,
-    reason: DisputeCloseReason | Bytes32,
+    reason?: DisputeCloseReason | Bytes32,
     opts?: IdempotentRequest,
   ): Promise<Transaction> {
     return this.http.post(
       path\`/payments/\${id}/dispute/close/prepare\`,
-      { reason },
+      reason ? { reason } : undefined,
       idempotencyHeader(opts),
     )
   }
@@ -1718,8 +1722,11 @@ export interface DisputeReasonEntry<C extends string = string> {
   readonly bytes32: Bytes32
 }
 
-/** What the gateway reports as the description of a reason outside the dictionary. */
+/** What the gateway reports as the description of a non-zero reason outside the dictionary. */
 export const UNRECOGNISED_DISPUTE_REASON = 'Unrecognised reason'
+
+/** What the gateway reports as the description of the zero bytes32 — no reason given. */
+export const NO_DISPUTE_REASON = 'No reason given'
 
 ${blocks.join('\n\n')}
 
@@ -1728,9 +1735,9 @@ ${blocks.join('\n\n')}
  * \`side\` picks the dictionary: \`'open'\` searches DISPUTE_OPEN_REASONS, \`'close'\`
  * searches DISPUTE_CLOSE_REASONS and the system DISPUTE_SYSTEM_CLOSE_REASONS. It is
  * required because the sides overlap — \`other\` is the same code and bytes32 on both,
- * with a different description. Undefined when the value is outside the dictionary
- * (a direct contract call, or a pre-dictionary zero reason): render
- * UNRECOGNISED_DISPUTE_REASON or the raw bytes32 then.
+ * with a different description. Undefined when the value is outside the dictionary:
+ * the zero bytes32 (no reason given — render NO_DISPUTE_REASON) or a non-zero value
+ * from a direct contract call (render UNRECOGNISED_DISPUTE_REASON or the raw bytes32).
  */
 export function lookupDisputeReason(
   value: string | null | undefined,

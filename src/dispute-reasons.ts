@@ -17,8 +17,11 @@ export interface DisputeReasonEntry<C extends string = string> {
   readonly bytes32: Bytes32
 }
 
-/** What the gateway reports as the description of a reason outside the dictionary. */
+/** What the gateway reports as the description of a non-zero reason outside the dictionary. */
 export const UNRECOGNISED_DISPUTE_REASON = 'Unrecognised reason'
+
+/** What the gateway reports as the description of the zero bytes32 — no reason given. */
+export const NO_DISPUTE_REASON = 'No reason given'
 
 /** Reasons a payer may open a dispute with. */
 export const DISPUTE_OPEN_REASONS: readonly DisputeReasonEntry<DisputeOpenReason>[] = [
@@ -108,9 +111,9 @@ export const DISPUTE_SYSTEM_CLOSE_REASONS: readonly DisputeReasonEntry<DisputeSy
  * `side` picks the dictionary: `'open'` searches DISPUTE_OPEN_REASONS, `'close'`
  * searches DISPUTE_CLOSE_REASONS and the system DISPUTE_SYSTEM_CLOSE_REASONS. It is
  * required because the sides overlap — `other` is the same code and bytes32 on both,
- * with a different description. Undefined when the value is outside the dictionary
- * (a direct contract call, or a pre-dictionary zero reason): render
- * UNRECOGNISED_DISPUTE_REASON or the raw bytes32 then.
+ * with a different description. Undefined when the value is outside the dictionary:
+ * the zero bytes32 (no reason given — render NO_DISPUTE_REASON) or a non-zero value
+ * from a direct contract call (render UNRECOGNISED_DISPUTE_REASON or the raw bytes32).
  */
 export function lookupDisputeReason(
   value: string | null | undefined,

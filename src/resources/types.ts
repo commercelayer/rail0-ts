@@ -373,23 +373,23 @@ export interface Dispute {
   id?: string
   payment_id?: string
   status?: DisputeStatus
-  /** On-chain bytes32 open reason, verbatim — even when it is outside the dictionary. */
+  /** On-chain bytes32 open reason, verbatim — the all-zero word when no reason was given; kept even when outside the dictionary. */
   reason?: string
-  /** The DisputeOpenReason `reason` reads as; null when the bytes32 is not in the dictionary. */
+  /** The DisputeOpenReason `reason` reads as; null when no reason was given (zero) or the bytes32 is not in the dictionary. */
   reason_code?: DisputeOpenReason | null
-  /** English description of `reason_code`; "Unrecognised reason" when the code is null. */
+  /** English description of `reason_code`; "No reason given" for the zero bytes32, "Unrecognised reason" for a non-zero bytes32 outside the dictionary. */
   reason_description?: string
   opened_block?: number | null
   opened_at?: string
   closed_by?: 'payer' | 'payee' | null
-  /** On-chain bytes32 close reason; null while the dispute is open. */
+  /** On-chain bytes32 close reason; the all-zero word when closed with no reason; null while the dispute is open. */
   close_reason?: string | null
   /**
    * The code `close_reason` reads as — a DisputeCloseReason, or the system `full_refund`
    * when a full refund auto-closed the dispute. Null while open, or outside the dictionary.
    */
   close_reason_code?: DisputeCloseReason | DisputeSystemCloseReason | null
-  /** English description of `close_reason_code`; "Unrecognised reason" when outside the dictionary; null while open. */
+  /** English description of `close_reason_code`; "No reason given" for the zero bytes32, "Unrecognised reason" for a non-zero bytes32 outside the dictionary; null while open. */
   close_reason_description?: string | null
   closed_block?: number | null
   closed_at?: string | null
