@@ -94,8 +94,8 @@ Payment status values: `unsigned`, `signed`, `authorized`, `charged`, `captured`
 | `voidPrepare` + `void` | payee | Cancel the hold, return funds to the payer — **only before any capture** (else the contract reverts `AlreadyCaptured`) |
 | `releasePrepare` + `release` | payer or payee | Return the uncaptured escrow after expiry (any other sender is refused `422 release_submitter_not_a_party`). A **total** release from `authorized`/`expired` closes as `released`; a release that leaves both balances at 0 (the captured part already refunded) closes as `refunded`; otherwise the status is unchanged |
 | `refundPrepare` + `refund` | payee | Two-phase EIP-3009 `receiveWithAuthorization` refund; closes as `refunded` only when **fully settled**, else status unchanged |
-| `disputePrepare` + `dispute` | payer | Open a dispute (signal-only) |
-| `closeDisputePrepare` + `closeDispute` | payer | Close an open dispute |
+| `disputePrepare` + `dispute` | payer | Open a dispute (signal-only) — `reason` required, from the dispute-reason dictionary |
+| `closeDisputePrepare` + `closeDispute` | payer | Close an open dispute — `reason` required, from the dispute-reason dictionary |
 
 ## Signing helpers
 
@@ -234,7 +234,7 @@ other.setAuthToken(token) // a second client on the same session
 `create(params, idempotencyKey?)` → `PaymentDetail` (from the **buyer's** session: `payer` must be the signed-in address, `403 payer_must_be_caller` otherwise; pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `update(id, { description })` → `PaymentDetail` (`PATCH /payments/:id`; participant-only — payer or payee, `404` for anyone else; allowed in any status; the `description` key is required, `null` or `""` clears it, over 255 characters is a `422`; gateway-side only, so it moves no money and fires no webhook) · `list(params?)` → `PaginatedResponse<Payment>` (JWT; `operation` narrows to payments carrying a transaction of that operation, `dispute`/`close_dispute` included; `status` takes one `PaymentStatus` or an array matching any of them) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` (`status` likewise takes one `TransactionStatus` or an array) · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
 
 Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transaction`):
-`authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason?)`/`dispute`, `closeDisputePrepare(id, reason?)`/`closeDispute`. A generic `prepare(id, op, body?, opts?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only, `release` either participant) and the payer-only `disputeSubmitByHash(id, { transaction_hash })` / `closeDisputeSubmitByHash(id, { transaction_hash })`.
+`authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason)`/`dispute`, `closeDisputePrepare(id, reason)`/`closeDispute` (`reason` is **required** — see [Dispute reasons](#dispute-reasons)). A generic `prepare(id, op, body?, opts?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only, `release` either participant) and the payer-only `disputeSubmitByHash(id, { transaction_hash })` / `closeDisputeSubmitByHash(id, { transaction_hash })`.
 
 **Several statuses in one call.** Pass an array to `status` and the SDK sends it
 comma-separated (`status=authorized,expired`), the form the gateway documents; a single
@@ -264,7 +264,7 @@ const capturable = data.filter((p) => !p.in_flight)
 
 `getTransaction(id, transactionId)` reads ONE of a payment's transactions. This is the lookup for an `action_id`: anything handed a transaction id when an operation was accepted resolves it directly, instead of fetching the payment and scanning its transactions for an id it already holds. `redrive(id, transactionId)` re-enqueues a stuck broadcast.
 
-**Idempotency.** Every prepare takes an optional trailing `opts: IdempotentRequest` — `{ idempotencyKey }`, sent as `Idempotency-Key`: the generic `prepare(id, op, body?, opts?)`, the typed `authorizePrepare(id, opts?)`, `chargePrepare(id, opts?)`, `capturePrepare(id, amount, opts?)`, `voidPrepare(id, opts?)`, `releasePrepare(id, from?, opts?)`, `refundPrepare(id, body, opts?)`, and `disputePrepare(id, reason?, opts?)` / `closeDisputePrepare(id, reason?, opts?)`. Without it, a retry arriving after the first transaction was signed and broadcast opens a **second** one — correct for a genuine sequential partial capture, wrong for a retry, and only the caller can tell those apart. Same key with different terms is refused `422 idempotency_key_reused`; the key is scoped to the payment.
+**Idempotency.** Every prepare takes an optional trailing `opts: IdempotentRequest` — `{ idempotencyKey }`, sent as `Idempotency-Key`: the generic `prepare(id, op, body?, opts?)`, the typed `authorizePrepare(id, opts?)`, `chargePrepare(id, opts?)`, `capturePrepare(id, amount, opts?)`, `voidPrepare(id, opts?)`, `releasePrepare(id, from?, opts?)`, `refundPrepare(id, body, opts?)`, and `disputePrepare(id, reason, opts?)` / `closeDisputePrepare(id, reason, opts?)`. Without it, a retry arriving after the first transaction was signed and broadcast opens a **second** one — correct for a genuine sequential partial capture, wrong for a retry, and only the caller can tell those apart. Same key with different terms is refused `422 idempotency_key_reused`; the key is scoped to the payment.
 
 ```ts
 await client.payments.capturePrepare(id, '50.00', { idempotencyKey: orderId })
@@ -416,6 +416,33 @@ while (page.meta.links.next) {
 Account-level dispute list — every dispute (open **and** closed) across the caller's payments, each with its parent `payment` embedded. Complements `payments.disputes(id)` (one payment's history); unlike the `disputed` filter on `payments.list` (current-state), it still surfaces closed disputes.
 
 `list(params?)` → `PaginatedResponse<Dispute>` — `params`: `{ status?: 'open' | 'closed', sort?, page?, per_page? }`.
+
+### Dispute reasons
+
+A dispute is opened and closed with a reason from the gateway's **dispute-reason dictionary** (rail0-gateway#381). On-chain a reason is a `bytes32`, `keccak256("rail0.dispute.<code>")`. The dictionary ships as **build-time constants** generated from the OpenAPI spec (`x-enum-descriptions` / `x-enum-bytes32`) — no gateway call:
+
+| Constant | Codes |
+|---|---|
+| `DISPUTE_OPEN_REASONS` | `not_received`, `not_as_described`, `damaged_or_defective`, `duplicate`, `incorrect_amount`, `cancelled`, `refund_not_received`, `unauthorized`, `other` |
+| `DISPUTE_CLOSE_REASONS` | `resolved_with_merchant`, `withdrawn`, `item_received`, `other` |
+| `DISPUTE_SYSTEM_CLOSE_REASONS` | `full_refund` — recorded by the protocol when a full refund auto-closes a dispute; never sent |
+
+Each entry is a `DisputeReasonEntry` `{ code, description, bytes32 }` (types: `DisputeOpenReason`, `DisputeCloseReason`, `DisputeSystemCloseReason`).
+
+```ts
+import { DISPUTE_OPEN_REASONS, lookupDisputeReason } from '@commercelayer/rail0-sdk'
+
+await client.payments.disputePrepare(id, 'not_received') // or the code's exact bytes32
+await client.payments.closeDisputePrepare(id, 'item_received')
+
+lookupDisputeReason('0x8b8e…28f9', 'open')?.description // 'Goods or service not received'
+```
+
+- **`reason` is required** on `disputePrepare` / `closeDisputePrepare` (a compile error without it; `400` from the gateway). A value outside the dictionary — including `full_refund` on close — is refused `422 unknown_dispute_reason`.
+- `lookupDisputeReason(codeOrBytes32, 'open' | 'close')` resolves a code or bytes32 (any case); the side is required because `other` exists on both with different descriptions. `'close'` also resolves `full_refund`.
+- A `Dispute` carries `reason_code` / `reason_description` and `close_reason_code` / `close_reason_description` beside the raw `reason` / `close_reason`. A bytes32 outside the dictionary (a direct contract call, or a pre-dictionary zero reason) reads `reason_code: null` with description `UNRECOGNISED_DISPUTE_REASON` (`"Unrecognised reason"`).
+
+> **Breaking (since 1.6.0):** `reason` was optional and free-form; it is now a required dictionary code or its bytes32.
 
 ### `client.analytics` (merchant, JWT + account)
 
@@ -601,7 +628,7 @@ never commit one.
 
 ```text
 gen/
-  generate.ts     regenerates src/api.ts + resources from the gateway OpenAPI
+  generate.ts     regenerates src/api.ts + resources + dispute-reasons.ts from the gateway OpenAPI
 
 src/
   core/
@@ -627,6 +654,7 @@ src/
   stablecoins.ts  static stablecoin registry
   signing.ts      EIP-3009 / EIP-1559 signing helpers
   webhook-signature.ts  webhook delivery verification (HMAC + freshness)
+  dispute-reasons.ts    dispute-reason dictionary constants (generated from the OpenAPI)
   client.ts       Rail0Client — assembles the resources
   index.ts        public re-exports
 ```

@@ -330,12 +330,15 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** List the account's wallets, each with its token holdings nested */
+        /**
+         * List the account's wallets, each with its token holdings nested
+         * @description Owner or admin.
+         */
         get: operations["listAccountWallets"];
         put?: never;
         /**
          * Add a wallet to the account
-         * @description Registers a wallet on the account. Requires a SIWE proof-of-ownership of the address being added: obtain a single-use nonce from `POST /auth/nonces`, build an EIP-4361 message carrying that nonce and signed by the address's private key, and submit `message` + `signature` here. The gateway verifies the signature recovers to `address`, the nonce is unused/unexpired, and the message binds to an allowed SIWE domain/chain — otherwise 422. The proven address need not equal the session address (a merchant may control several payee wallets). Wallet addresses are globally unique: an address already registered (to this or any other account) yields 409.
+         * @description Registers a wallet on the account. The OWNER must send a SIWE proof-of-ownership of the address being added: obtain a single-use nonce from `POST /auth/nonces`, build an EIP-4361 message carrying that nonce and signed by the address's private key, and submit `message` + `signature` here. The gateway verifies the signature recovers to `address`, the nonce is unused/unexpired, and the message binds to an allowed SIWE domain/chain — otherwise 422. The proven address need not equal the session address (a merchant may control several payee wallets). An ADMIN may add a wallet to any account without the proof — the operator vouches for the address, the same rule as POST /accounts; a proof an admin does send is still verified. Without a proof, a non-admin gets 400. Wallet addresses are globally unique: an address already registered (to this or any other account) yields 409.
          */
         post: operations["createWallet"];
         delete?: never;
@@ -359,12 +362,42 @@ export interface paths {
         get: operations["getWallet"];
         put?: never;
         post?: never;
-        /** Deactivate a wallet (soft delete) */
+        /**
+         * Deactivate a wallet (soft delete)
+         * @description Owner or admin. Only ever deactivates (payments name the address, so the row stays; there is no removal). Last-active-wallet guard: the account's only active wallet is refused with 422 last_active_wallet.
+         */
         delete: operations["deactivateWallet"];
         options?: never;
         head?: never;
-        /** Update a wallet label or active status */
+        /**
+         * Update a wallet label or active status
+         * @description Owner or admin. Last-active-wallet guard: `active: false` on the account's only active wallet is refused with 422 last_active_wallet.
+         */
         patch: operations["updateWallet"];
+        trace?: never;
+    };
+    "/accounts/{account_id}/wallets/{id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * What still names a wallet's address (admin)
+         * @description Admin only. Counts the payments naming the wallet's address as payee and as payer, and the transactions it sent — the history the admin console shows before switching the wallet off. Switching off keeps all of it.
+         */
+        get: operations["getWalletUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/accounts/{account_id}/wallets/{id}/balances": {
@@ -1228,6 +1261,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/rpc_health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * RPC endpoint reachability per active chain, probed from the gateway (admin)
+         * @description Every active chain's rpc_urls, probed FROM THE GATEWAY'S OWN PROCESS — the view an IP ban or a provider outage actually hits, and the one the pool's silent failover hides. Per endpoint: eth_chainId (must equal the chain), eth_blockNumber (head), first-round-trip latency, and the finality-tag block where the chain gates on safe/finalized (null with tag_error when the node refuses the tag — where the indexer falls back to depth). Per chain: `ok` (at least one endpoint serves it), `primary_status` (the first endpoint's, which the pool tries before any fallback) and `status` (ok all up / degraded some / error none). URLs are shown without query string or userinfo. Probed concurrently with short timeouts and cached 60s per process. Always 200: a dead endpoint is the content.
+         */
+        get: operations["getAdminRpcHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/catalog/reload": {
         parameters: {
             query?: never;
@@ -1260,6 +1313,26 @@ export interface paths {
          * @description What the GATEWAY has been doing: transactions handled per slice of time, across every account, with the failed count beside each total. Not the merchant rollup with a wider scope — GET /analytics/timeseries counts one account's ORDERS, this counts the machine's broadcasts. Buckets: minute, hour, day, week, month (default hour). `from`/`to` bound the window; omitted, each interval defaults to a span sized for it (minute → 2h, hour → 48h, day → 30d, week → 26w, month → 24m). The window is echoed in the response, because a caller that named none cannot otherwise label an axis. A window wider than 750 buckets is REFUSED with 422 window_too_wide rather than truncated: a chart missing its tail reads as a quiet period rather than as a clipped answer.
          */
         get: operations["adminTransactionThroughput"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/gas/by_hour": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Average gas per chain and hour of the day (admin)
+         * @description Average gas the gateway's OWN transactions paid, per chain and per hour of the day (UTC, by confirmation time), computed on request from the gas fields the indexer mirrors onto transactions — no sampling. Failed transactions count (a revert burns gas). Every chain lists all 24 hours; an hour with no transaction has 0 and null averages, and `transactions` beside each average says how much it rests on. Amounts are in each chain's native token and never summed across chains. The window defaults to the last 30 days and is echoed; one wider than 90 days is REFUSED with 422 window_too_wide rather than truncated. Answers are cached for 5 minutes.
+         */
+        get: operations["adminGasByHour"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1356,6 +1429,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description What still names a wallet's address: the payments and transactions an admin is shown before switching the wallet off. */
+        WalletUsage: {
+            /** Format: uuid */
+            wallet_id?: string;
+            address?: string;
+            payments_as_payee?: number;
+            payments_as_payer?: number;
+            transactions_as_sender?: number;
+        };
         /** @description A wallet's on-chain balances, one entry per chain. */
         WalletBalances: {
             /** Format: uuid */
@@ -1411,6 +1493,56 @@ export interface components {
             contract_version: string;
             active_chains: number;
             active_contracts: number;
+        };
+        /** @description GET /admin/rpc_health: per-chain RPC reachability as seen from the gateway's process. */
+        AdminRpcHealth: {
+            /**
+             * @description The worst chain status.
+             * @enum {string}
+             */
+            status?: "ok" | "degraded" | "error";
+            /**
+             * Format: date-time
+             * @description When the probe ran; a cached answer keeps its original time.
+             */
+            checked_at?: string;
+            chains?: components["schemas"]["AdminRpcHealthChain"][];
+        };
+        AdminRpcHealthChain: {
+            chain_id?: number;
+            name?: string;
+            /** @enum {string} */
+            finality_tag?: "safe" | "finalized" | "depth";
+            /** @description At least one endpoint serves the chain. */
+            ok?: boolean;
+            /**
+             * @description The first endpoint's status; null when none is configured.
+             * @enum {string|null}
+             */
+            primary_status?: "ok" | "wrong_chain" | "error" | null;
+            /**
+             * @description ok: every endpoint up; degraded: some; error: none, or no endpoint configured.
+             * @enum {string}
+             */
+            status?: "ok" | "degraded" | "error";
+            endpoints?: components["schemas"]["AdminRpcHealthEndpoint"][];
+        };
+        AdminRpcHealthEndpoint: {
+            /** @description Scheme, host, port and path only. */
+            url?: string;
+            ok?: boolean;
+            /** @enum {string} */
+            status?: "ok" | "wrong_chain" | "error";
+            /** @description Short `Class: first line`; never an upstream body. */
+            error?: string | null;
+            /** @description What the node reported. */
+            chain_id?: number | null;
+            /** @description First round trip, handshake included. */
+            latency_ms?: number | null;
+            head?: number | null;
+            /** @description The finality-tag block; null on depth chains or when the node refuses the tag. */
+            tag_block?: number | null;
+            tag_error?: string | null;
         };
         /** @description Operator diagnostics for GET /admin/health: one verdict plus a named check per standing failure condition, always 200 (a degraded system is the content, not an error — this is not a liveness probe). Every figure is computed on request from state the gateway already keeps; nothing here is a counter anyone increments. */
         AdminHealth: {
@@ -1727,14 +1859,23 @@ export interface components {
             payment_id?: string;
             /** @enum {string} */
             status?: "open" | "closed";
-            /** @description On-chain bytes32 reason code (hex). */
+            /** @description On-chain bytes32 reason the dispute was opened with (hex), kept verbatim even when it is outside the dispute-reason dictionary. */
             reason?: string;
+            /** @description The DisputeOpenReason code `reason` reads as; null when the bytes32 is not in the dictionary (a direct contract call, or a pre-dictionary zero reason). */
+            reason_code?: components["schemas"]["DisputeOpenReason"] | null;
+            /** @description English description of `reason_code`; "Unrecognised reason" when the code is null. */
+            reason_description?: string;
             opened_block?: number | null;
             /** Format: date-time */
             opened_at?: string;
             /** @enum {string|null} */
             closed_by?: "payer" | "payee" | null;
+            /** @description On-chain bytes32 close reason (hex); null while the dispute is open. */
             close_reason?: string | null;
+            /** @description The code `close_reason` reads as: a DisputeCloseReason, or the system DisputeSystemCloseReason `full_refund` when a full refund auto-closed the dispute. Null while open, or when the bytes32 is not in the dictionary. */
+            close_reason_code?: components["schemas"]["DisputeCloseReason"] | components["schemas"]["DisputeSystemCloseReason"] | null;
+            /** @description English description of `close_reason_code`; "Unrecognised reason" when `close_reason` is set but outside the dictionary; null while open. */
+            close_reason_description?: string | null;
             closed_block?: number | null;
             /** Format: date-time */
             closed_at?: string | null;
@@ -1943,6 +2084,38 @@ export interface components {
             /** @description Active RAIL0 contract addresses on the chain (all watched versions). */
             contracts?: string[];
         };
+        /**
+         * @description Reason a payer may open a dispute with (POST /payments/{id}/dispute/prepare). On-chain the reason is a bytes32, derived from the code as keccak256("rail0.dispute.<code>") (see `x-enum-bytes32`).
+         *
+         *     - `not_received` — Goods or service not received
+         *     - `not_as_described` — Not as described, or not what was ordered
+         *     - `damaged_or_defective` — Arrived damaged or defective
+         *     - `duplicate` — Charged twice for the same purchase
+         *     - `incorrect_amount` — Amount differs from what was agreed
+         *     - `cancelled` — Order or subscription cancelled but still charged
+         *     - `refund_not_received` — A refund promised by the merchant never arrived
+         *     - `unauthorized` — Payment not recognised (e.g. a compromised wallet)
+         *     - `other` — Other reason, detailed off-chain
+         * @enum {string}
+         */
+        DisputeOpenReason: "not_received" | "not_as_described" | "damaged_or_defective" | "duplicate" | "incorrect_amount" | "cancelled" | "refund_not_received" | "unauthorized" | "other";
+        /**
+         * @description Reason a payer may close a dispute with (POST /payments/{id}/dispute/close/prepare). On-chain the reason is a bytes32, derived from the code as keccak256("rail0.dispute.<code>") (see `x-enum-bytes32`).
+         *
+         *     - `resolved_with_merchant` — Resolved with the merchant off-chain
+         *     - `withdrawn` — Withdrawn by the buyer (a mistake, or changed their mind)
+         *     - `item_received` — The disputed goods or service arrived after all
+         *     - `other` — Other reason
+         * @enum {string}
+         */
+        DisputeCloseReason: "resolved_with_merchant" | "withdrawn" | "item_received" | "other";
+        /**
+         * @description Close reason the protocol records on its own — never accepted from a caller. full_refund is emitted on DisputeClosed when a full refund auto-closes an open dispute. On-chain the reason is a bytes32, derived from the code as keccak256("rail0.dispute.<code>") (see `x-enum-bytes32`).
+         *
+         *     - `full_refund` — Closed automatically by a full refund
+         * @enum {string}
+         */
+        DisputeSystemCloseReason: "full_refund";
     };
     responses: {
         /** @description Resource not found. */
@@ -2391,12 +2564,12 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description EVM wallet address to add (0x, 40 hex). Must be the address that signed the SIWE message. */
+                    /** @description EVM wallet address to add (0x, 40 hex). Must be the address that signed the SIWE message, when one is sent. */
                     address: string;
-                    /** @description EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). Purpose-bound: its `statement` must be exactly "Add this wallet to your RAIL0 account" — a login-shaped proof is refused with 422 `siwe_purpose_mismatch`, so a login signature can never be replayed here to bind someone else's wallet to the caller's account. */
-                    message: string;
-                    /** @description Signature over the SIWE message (0x…), proving control of the address's private key. */
-                    signature: string;
+                    /** @description Required for the owner (optional for an admin; send both or neither of message and signature). EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). Purpose-bound: its `statement` must be exactly "Add this wallet to your RAIL0 account" — a login-shaped proof is refused with 422 `siwe_purpose_mismatch`, so a login signature can never be replayed here to bind someone else's wallet to the caller's account. */
+                    message?: string;
+                    /** @description Required with `message`. Signature over the SIWE message (0x…), proving control of the address's private key. */
+                    signature?: string;
                     /** @description Human-readable label. */
                     label?: string;
                 };
@@ -2412,6 +2585,7 @@ export interface operations {
                     "application/json": components["schemas"]["Wallet"];
                 };
             };
+            400: components["responses"]["Validation"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             /** @description The address is already registered to an account (addresses are globally unique). */
@@ -2478,6 +2652,15 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description last_active_wallet: the wallet is the account's last active one. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     updateWallet: {
@@ -2508,6 +2691,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Wallet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description last_active_wallet: the wallet is the account's last active one. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getWalletUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                /** @description Wallet id (UUID) or 0x address. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The wallet's usage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletUsage"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -3340,11 +3559,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
-                    /** @description bytes32 reason code (0x + 64 hex); defaults to zero. */
-                    reason?: string;
+                    /** @description Required. A DisputeOpenReason code (e.g. `not_received`), or exactly that code's bytes32 — keccak256("rail0.dispute.<code>") as 0x-hex; the gateway encodes the bytes32 into the calldata. Anything else is refused 422 `unknown_dispute_reason`. */
+                    reason: components["schemas"]["DisputeOpenReason"];
                 };
             };
         };
@@ -3367,7 +3586,25 @@ export interface operations {
                     "application/json": components["schemas"]["Transaction"];
                 };
             };
+            /** @description `reason` missing (validation_failed). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
+            /** @description `unknown_dispute_reason` when `reason` is not a DisputeOpenReason code or its bytes32; otherwise the payment-state refusal or `idempotency_key_reused`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     submitDispute: {
@@ -3420,11 +3657,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
-                    /** @description bytes32 reason code (0x + 64 hex); defaults to zero. */
-                    reason?: string;
+                    /** @description Required. A DisputeCloseReason code (e.g. `withdrawn`), or exactly that code's bytes32 — keccak256("rail0.dispute.<code>") as 0x-hex; the gateway encodes the bytes32 into the calldata. `full_refund` is recorded by the protocol itself and is not accepted here. Anything else is refused 422 `unknown_dispute_reason`. */
+                    reason: components["schemas"]["DisputeCloseReason"];
                 };
             };
         };
@@ -3447,7 +3684,25 @@ export interface operations {
                     "application/json": components["schemas"]["Transaction"];
                 };
             };
+            /** @description `reason` missing (validation_failed). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
+            /** @description `unknown_dispute_reason` when `reason` is not a DisputeCloseReason code or its bytes32; otherwise the payment-state refusal or `idempotency_key_reused`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     submitCloseDispute: {
@@ -4193,6 +4448,28 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    getAdminRpcHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The verdict and every chain's endpoints. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRpcHealth"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     reloadCatalog: {
         parameters: {
             query?: never;
@@ -4259,6 +4536,61 @@ export interface operations {
                             bucket?: string;
                             transactions?: number;
                             failed?: number;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    adminGasByHour: {
+        parameters: {
+            query?: {
+                /** @description Only this chain (EVM chain id). */
+                chain_id?: number;
+                /** @description Window start (ISO-8601). Defaults to 30 days before `to`. */
+                from?: string;
+                /** @description Window end (ISO-8601). Defaults to now. */
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report and the window it covers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        from?: string;
+                        /** Format: date-time */
+                        to?: string;
+                        chains?: {
+                            chain_id?: number;
+                            chain_name?: string;
+                            native_symbol?: string;
+                            /** @description Always 18 (EVM native token). */
+                            decimals?: number;
+                            /** @description Transactions with gas figures in the window, all hours. */
+                            transactions?: number;
+                            hours?: {
+                                /** @description Hour of the day, UTC, of confirmation. */
+                                hour?: number;
+                                transactions?: number;
+                                /** @description Wei-scale integer string in the chain's native token (18 decimals); null for an hour with no transaction. */
+                                avg_gas_price?: string | null;
+                                /** @description Wei-scale integer string in the chain's native token (18 decimals); null for an hour with no transaction. */
+                                avg_base_fee?: string | null;
+                                /** @description Average gas_used × effective_gas_price per transaction, wei-scale integer string in the native token; null for an hour with no transaction. */
+                                avg_cost?: string | null;
+                            }[];
                         }[];
                     };
                 };

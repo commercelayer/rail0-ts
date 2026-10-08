@@ -69,6 +69,16 @@ export type StoredTransactionOperation = NonNullable<
 >
 export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
 export type DisputeStatus = 'open' | 'closed'
+/**
+ * The dispute-reason dictionary codes (rail0-gateway#381). On-chain a reason is a
+ * bytes32, keccak256("rail0.dispute.<code>"); the descriptions and bytes32 values
+ * for each code ship as build-time constants in `dispute-reasons.ts`
+ * (DISPUTE_OPEN_REASONS, DISPUTE_CLOSE_REASONS, DISPUTE_SYSTEM_CLOSE_REASONS).
+ */
+export type DisputeOpenReason = components['schemas']['DisputeOpenReason']
+export type DisputeCloseReason = components['schemas']['DisputeCloseReason']
+/** Recorded by the protocol itself (a full refund auto-closing a dispute) — never sent. */
+export type DisputeSystemCloseReason = components['schemas']['DisputeSystemCloseReason']
 export type CircuitState = 'closed' | 'open'
 /**
  * A delivery either arrived or did not. There is no 'pending': the row is written after
@@ -359,11 +369,24 @@ export interface Dispute {
   id?: string
   payment_id?: string
   status?: DisputeStatus
+  /** On-chain bytes32 open reason, verbatim — even when it is outside the dictionary. */
   reason?: string
+  /** The DisputeOpenReason `reason` reads as; null when the bytes32 is not in the dictionary. */
+  reason_code?: DisputeOpenReason | null
+  /** English description of `reason_code`; "Unrecognised reason" when the code is null. */
+  reason_description?: string
   opened_block?: number | null
   opened_at?: string
   closed_by?: 'payer' | 'payee' | null
+  /** On-chain bytes32 close reason; null while the dispute is open. */
   close_reason?: string | null
+  /**
+   * The code `close_reason` reads as — a DisputeCloseReason, or the system `full_refund`
+   * when a full refund auto-closed the dispute. Null while open, or outside the dictionary.
+   */
+  close_reason_code?: DisputeCloseReason | DisputeSystemCloseReason | null
+  /** English description of `close_reason_code`; "Unrecognised reason" when outside the dictionary; null while open. */
+  close_reason_description?: string | null
   closed_block?: number | null
   closed_at?: string | null
   /** Parent payment (public-safe view), embedded by the account-level GET /disputes list. */

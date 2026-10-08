@@ -8,6 +8,15 @@ export { throttleDelayMs } from './core/backoff.js'
 export { describeError, Rail0ApiError } from './core/error.js'
 export type { LogEntry, Logger } from './core/http.js'
 export { debugLogger } from './core/http.js'
+// ── Dispute-reason dictionary (build-time constants) ─────────────────
+export type { DisputeReasonEntry } from './dispute-reasons.js'
+export {
+  DISPUTE_CLOSE_REASONS,
+  DISPUTE_OPEN_REASONS,
+  DISPUTE_SYSTEM_CLOSE_REASONS,
+  lookupDisputeReason,
+  UNRECOGNISED_DISPUTE_REASON,
+} from './dispute-reasons.js'
 export { AccountsResource } from './resources/accounts.js'
 export type {
   AnalyticsDimension,
@@ -70,7 +79,10 @@ export type {
   // Generated internals (advanced use)
   components,
   Dispute,
+  DisputeCloseReason,
+  DisputeOpenReason,
   DisputeStatus,
+  DisputeSystemCloseReason,
   // Signing
   EIP712Domain,
   EIP3009Message,

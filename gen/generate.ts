@@ -8,6 +8,9 @@
  *   2. Generate raw TypeScript types via openapi-typescript → src/api.ts
  *   3. Emit src/resources/types.ts — public SDK types (gateway vocabulary)
  *   4. Emit src/resources/{payments,wallets,webhooks,chains,tokens,health}.ts
+ *   5. Emit src/dispute-reasons.ts — the dispute-reason dictionary as build-time
+ *      constants, read from the x-enum-descriptions / x-enum-bytes32 arrays of the
+ *      DisputeOpenReason / DisputeCloseReason / DisputeSystemCloseReason schemas
  *
  * The type vocabulary mirrors the gateway OpenAPI schemas (Payment, PaymentDetail,
  * Transaction, Dispute, Wallet, WalletWithTokens, WalletBalances, Webhook,
@@ -21,9 +24,11 @@
  *   3. Default: ../rail0-gateway/docs/openapi.json (sibling repo, the live API)
  */
 
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { keccak_256 } from '@noble/hashes/sha3.js'
+import { bytesToHex } from '@noble/hashes/utils.js'
 import openapiTS, { astToString } from 'openapi-typescript'
 
 const genDir = dirname(fileURLToPath(import.meta.url))
@@ -121,6 +126,16 @@ export type StoredTransactionOperation =
   NonNullable<components['schemas']['Transaction']['operation']>
 export type TransactionStatus = 'pending' | 'submitting' | 'submitted' | 'confirmed' | 'failed'
 export type DisputeStatus = 'open' | 'closed'
+/**
+ * The dispute-reason dictionary codes (rail0-gateway#381). On-chain a reason is a
+ * bytes32, keccak256("rail0.dispute.<code>"); the descriptions and bytes32 values
+ * for each code ship as build-time constants in \`dispute-reasons.ts\`
+ * (DISPUTE_OPEN_REASONS, DISPUTE_CLOSE_REASONS, DISPUTE_SYSTEM_CLOSE_REASONS).
+ */
+export type DisputeOpenReason = components['schemas']['DisputeOpenReason']
+export type DisputeCloseReason = components['schemas']['DisputeCloseReason']
+/** Recorded by the protocol itself (a full refund auto-closing a dispute) — never sent. */
+export type DisputeSystemCloseReason = components['schemas']['DisputeSystemCloseReason']
 export type CircuitState = 'closed' | 'open'
 /**
  * A delivery either arrived or did not. There is no 'pending': the row is written after
@@ -411,11 +426,24 @@ export interface Dispute {
   id?: string
   payment_id?: string
   status?: DisputeStatus
+  /** On-chain bytes32 open reason, verbatim — even when it is outside the dictionary. */
   reason?: string
+  /** The DisputeOpenReason \`reason\` reads as; null when the bytes32 is not in the dictionary. */
+  reason_code?: DisputeOpenReason | null
+  /** English description of \`reason_code\`; "Unrecognised reason" when the code is null. */
+  reason_description?: string
   opened_block?: number | null
   opened_at?: string
   closed_by?: 'payer' | 'payee' | null
+  /** On-chain bytes32 close reason; null while the dispute is open. */
   close_reason?: string | null
+  /**
+   * The code \`close_reason\` reads as — a DisputeCloseReason, or the system \`full_refund\`
+   * when a full refund auto-closed the dispute. Null while open, or outside the dictionary.
+   */
+  close_reason_code?: DisputeCloseReason | DisputeSystemCloseReason | null
+  /** English description of \`close_reason_code\`; "Unrecognised reason" when outside the dictionary; null while open. */
+  close_reason_description?: string | null
   closed_block?: number | null
   closed_at?: string | null
   /** Parent payment (public-safe view), embedded by the account-level GET /disputes list. */
@@ -770,6 +798,8 @@ import type {
   Bytes32,
   CreatePaymentRequest,
   Dispute,
+  DisputeCloseReason,
+  DisputeOpenReason,
   DisputeStatus,
   PaginatedResponse,
   Payment,
@@ -1043,11 +1073,19 @@ export class PaymentsResource {
     return this.http.post(path\`/payments/\${id}/refund\`, params)
   }
 
-  /** Open a dispute (payer, signal-only). Optional bytes32 reason code. */
-  disputePrepare(id: Bytes32, reason?: string, opts?: IdempotentRequest): Promise<Transaction> {
+  /**
+   * Open a dispute (payer, signal-only). \`reason\` is REQUIRED: a DisputeOpenReason code
+   * (e.g. \`'not_received'\`, see DISPUTE_OPEN_REASONS) or exactly that code's bytes32.
+   * Anything else is refused 422 \`unknown_dispute_reason\`.
+   */
+  disputePrepare(
+    id: Bytes32,
+    reason: DisputeOpenReason | Bytes32,
+    opts?: IdempotentRequest,
+  ): Promise<Transaction> {
     return this.http.post(
       path\`/payments/\${id}/dispute/prepare\`,
-      reason ? { reason } : undefined,
+      { reason },
       idempotencyHeader(opts),
     )
   }
@@ -1055,11 +1093,19 @@ export class PaymentsResource {
     return this.http.post(path\`/payments/\${id}/dispute\`, params)
   }
 
-  /** Close a dispute (payer). Optional bytes32 reason code. */
-  closeDisputePrepare(id: Bytes32, reason?: string, opts?: IdempotentRequest): Promise<Transaction> {
+  /**
+   * Close a dispute (payer). \`reason\` is REQUIRED: a DisputeCloseReason code (e.g.
+   * \`'withdrawn'\`, see DISPUTE_CLOSE_REASONS) or exactly that code's bytes32. The system
+   * \`full_refund\` is recorded by the protocol and refused here (422 \`unknown_dispute_reason\`).
+   */
+  closeDisputePrepare(
+    id: Bytes32,
+    reason: DisputeCloseReason | Bytes32,
+    opts?: IdempotentRequest,
+  ): Promise<Transaction> {
     return this.http.post(
       path\`/payments/\${id}/dispute/close/prepare\`,
-      reason ? { reason } : undefined,
+      { reason },
       idempotencyHeader(opts),
     )
   }
@@ -1564,6 +1610,140 @@ export class HealthResource {
 `
 
 // ---------------------------------------------------------------------------
+// Step 5 — src/dispute-reasons.ts (dispute-reason dictionary constants)
+// ---------------------------------------------------------------------------
+
+const DISPUTE_REASONS_FILE = resolve(root, 'src/dispute-reasons.ts')
+
+/** The three dictionary schemas, and the constant each one is emitted as. */
+const DISPUTE_REASON_SCHEMAS = [
+  ['DisputeOpenReason', 'DISPUTE_OPEN_REASONS', 'Reasons a payer may open a dispute with.'],
+  ['DisputeCloseReason', 'DISPUTE_CLOSE_REASONS', 'Reasons a payer may close a dispute with.'],
+  [
+    'DisputeSystemCloseReason',
+    'DISPUTE_SYSTEM_CLOSE_REASONS',
+    'Close reasons the protocol records on its own (a full refund auto-closing a dispute) — never sent.',
+  ],
+] as const
+
+interface EnumSchema {
+  enum?: unknown[]
+  'x-enum-descriptions'?: unknown[]
+  'x-enum-bytes32'?: unknown[]
+}
+
+/** Read the spec as JSON from the same source openapi-typescript used. */
+async function loadSpec(
+  url: URL,
+): Promise<{ components?: { schemas?: Record<string, EnumSchema> } }> {
+  if (url.protocol === 'file:') return JSON.parse(await readFile(fileURLToPath(url), 'utf-8'))
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Cannot fetch schema ${url}: HTTP ${res.status}`)
+  return res.json()
+}
+
+/**
+ * Turn one dictionary schema into its entries. The gateway publishes a code list
+ * (`enum`) with two parallel arrays aligned BY INDEX — `x-enum-descriptions` and
+ * `x-enum-bytes32` — so the generator refuses a spec whose arrays differ in length,
+ * and recomputes every bytes32 as keccak256("rail0.dispute.<code>"): a misaligned or
+ * stale spec fails the build here instead of shipping a constant that maps a code
+ * to another code's on-chain value.
+ */
+function disputeReasonEntries(
+  name: string,
+  schema: EnumSchema | undefined,
+): { code: string; description: string; bytes32: string }[] {
+  const codes = schema?.enum
+  const descriptions = schema?.['x-enum-descriptions']
+  const hashes = schema?.['x-enum-bytes32']
+  if (!Array.isArray(codes) || !Array.isArray(descriptions) || !Array.isArray(hashes)) {
+    throw new Error(`${name}: enum, x-enum-descriptions and x-enum-bytes32 are all required`)
+  }
+  if (descriptions.length !== codes.length || hashes.length !== codes.length) {
+    throw new Error(`${name}: enum and its x-enum-* arrays differ in length`)
+  }
+  return codes.map((code, i) => {
+    const bytes32 = String(hashes[i]).toLowerCase()
+    const expected = `0x${bytesToHex(keccak_256(new TextEncoder().encode(`rail0.dispute.${code}`)))}`
+    if (bytes32 !== expected) {
+      throw new Error(
+        `${name}.${code}: x-enum-bytes32 ${bytes32} is not keccak256("rail0.dispute.${code}")`,
+      )
+    }
+    return { code: String(code), description: String(descriptions[i]), bytes32 }
+  })
+}
+
+async function generateDisputeReasons(): Promise<void> {
+  const spec = await loadSpec(schemaSource())
+  const schemas = spec.components?.schemas ?? {}
+  const blocks = DISPUTE_REASON_SCHEMAS.map(([schema, constant, doc]) => {
+    const rows = disputeReasonEntries(schema, schemas[schema])
+      .map(
+        (e) =>
+          `  { code: ${JSON.stringify(e.code)}, description: ${JSON.stringify(e.description)}, bytes32: ${JSON.stringify(e.bytes32)} },`,
+      )
+      .join('\n')
+    return `/** ${doc} */\nexport const ${constant}: readonly DisputeReasonEntry<${schema}>[] = [\n${rows}\n]`
+  })
+  const out = `${FILE_HEADER}
+//
+// The dispute-reason dictionary (rail0-gateway#381), emitted from the x-enum-descriptions
+// and x-enum-bytes32 arrays of the gateway OpenAPI — build-time constants, no gateway call.
+import type {
+  Bytes32,
+  DisputeCloseReason,
+  DisputeOpenReason,
+  DisputeSystemCloseReason,
+} from './resources/types.js'
+
+/** One dictionary entry: the code, its English description and its on-chain bytes32. */
+export interface DisputeReasonEntry<C extends string = string> {
+  readonly code: C
+  readonly description: string
+  /** keccak256("rail0.dispute.<code>"), lowercase 0x-hex. */
+  readonly bytes32: Bytes32
+}
+
+/** What the gateway reports as the description of a reason outside the dictionary. */
+export const UNRECOGNISED_DISPUTE_REASON = 'Unrecognised reason'
+
+${blocks.join('\n\n')}
+
+/**
+ * Look up a dispute reason by code (\`'not_received'\`) or by bytes32 (hex, any case).
+ * \`side\` picks the dictionary: \`'open'\` searches DISPUTE_OPEN_REASONS, \`'close'\`
+ * searches DISPUTE_CLOSE_REASONS and the system DISPUTE_SYSTEM_CLOSE_REASONS. It is
+ * required because the sides overlap — \`other\` is the same code and bytes32 on both,
+ * with a different description. Undefined when the value is outside the dictionary
+ * (a direct contract call, or a pre-dictionary zero reason): render
+ * UNRECOGNISED_DISPUTE_REASON or the raw bytes32 then.
+ */
+export function lookupDisputeReason(
+  value: string | null | undefined,
+  side: 'open',
+): DisputeReasonEntry<DisputeOpenReason> | undefined
+export function lookupDisputeReason(
+  value: string | null | undefined,
+  side: 'close',
+): DisputeReasonEntry<DisputeCloseReason | DisputeSystemCloseReason> | undefined
+export function lookupDisputeReason(
+  value: string | null | undefined,
+  side: 'open' | 'close',
+): DisputeReasonEntry | undefined {
+  if (!value) return undefined
+  const needle = value.toLowerCase()
+  const dictionary: readonly DisputeReasonEntry[] =
+    side === 'open' ? DISPUTE_OPEN_REASONS : [...DISPUTE_CLOSE_REASONS, ...DISPUTE_SYSTEM_CLOSE_REASONS]
+  return dictionary.find((r) => r.code === value || r.bytes32 === needle)
+}
+`
+  await writeFile(DISPUTE_REASONS_FILE, out, 'utf-8')
+  console.log(`Generated: ${DISPUTE_REASONS_FILE}`)
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
 
@@ -1587,5 +1767,6 @@ await writeResource('chains.ts', CHAINS)
 await writeResource('tokens.ts', TOKENS)
 await writeResource('analytics.ts', ANALYTICS)
 await writeResource('health.ts', HEALTH)
+await generateDisputeReasons()
 
 console.log('Done.')
