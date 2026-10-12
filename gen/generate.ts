@@ -259,15 +259,20 @@ export interface CreateWalletRequest {
   label?: string
 }
 /**
- * Body for \`accounts.update\`. Both optional, AT LEAST ONE required — an empty PATCH is a
- * caller bug and the gateway answers 400. Both columns are unique across accounts: a value
- * another account already holds is a 409. The account's \`active\` flag is deliberately
+ * Body for \`accounts.update\`. Every field optional, AT LEAST ONE required — an empty PATCH
+ * is a caller bug and the gateway answers 400. name and email are unique across accounts: a
+ * value another account already holds is a 409. The account's \`active\` flag is deliberately
  * absent: it is the operator's field (admin-only), not something an owner can set.
  */
 export interface UpdateAccountRequest {
   name?: string
   /** Contact email — where the merchant's operational notifications go. */
   email?: string
+  /**
+   * Fee setting of the account's own transactions: false switches them to the chain's
+   * minimum tip, true back to the suggested priority fee. Owner or admin.
+   */
+  priority_tip?: boolean
 }
 export interface UpdateWalletRequest {
   label?: string
@@ -459,6 +464,13 @@ export interface Account {
   id: string
   name: string
   email: string
+  /**
+   * The fee setting of the account's OWN transactions (authorize, capture, void, release,
+   * refund): true (the default) tips the network's suggested priority fee, false uses the
+   * chain's minimum tip — 0 on most chains, 25 gwei on Polygon PoS/Amoy. The buyer's
+   * dispute/close_dispute never read it.
+   */
+  priority_tip: boolean
   created_at?: string
   updated_at?: string
 }
@@ -853,6 +865,21 @@ export interface ListPaymentsParams {
    * must be findable by it, so \`dispute\`/\`close_dispute\` are accepted too.
    */
   operation?: StoredTransactionOperation
+  /**
+   * \`'mine'\` (the default): the authenticated wallet's payments. \`'all'\`: every payment on
+   * the gateway — the operator's cross-account list on the same call, admin session
+   * required (403 otherwise, never silently narrowed to your own).
+   */
+  scope?: 'mine' | 'all'
+  /** scope 'all' only: payments whose payee is one of this account's wallets. */
+  account_id?: string
+  /** scope 'all' only: true = payments carrying a \`last_error_code\`, false = none. */
+  has_error?: boolean
+  /**
+   * scope 'all' only: \`authorized\` payments whose \`authorization_expiry\` falls within this
+   * many SECONDS from now (1..90 days).
+   */
+  expiring_within?: number
   sort?: string
   /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
@@ -966,6 +993,9 @@ export class PaymentsResource {
    * caller can offer the action exactly when it will succeed rather than discovering a
    * 422. A \`pending\` row with no signed transaction is NOT redrivable — there the next
    * step is submitting the signature, not retrying a send that never happened.
+   *
+   * Payee-gated, like the other operation writes — or an operator session on any payment,
+   * which the gateway records in its audit log as \`transaction.redrive\`.
    */
   redrive(id: Bytes32, transactionId: string): Promise<Transaction> {
     return this.http.post(path\`/payments/\${id}/transactions/\${transactionId}/redrive\`, {})
@@ -1155,13 +1185,14 @@ import type { Account, UpdateAccountRequest } from './types.js'
 export class AccountsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** The account's profile: id, name, email, timestamps. */
+  /** The account's profile: id, name, email, priority_tip, timestamps. */
   get(account_id: string): Promise<Account> {
     return this.http.get(path\`/accounts/\${account_id}\`)
   }
 
   /**
-   * PATCH /accounts/:id — change the account's own \`name\` and/or \`email\`.
+   * PATCH /accounts/:id — change the account's own \`name\`, \`email\` and/or
+   * \`priority_tip\` (the fee setting of its own transactions).
    *
    * At least one field is required (400 otherwise); a name or email another account
    * already holds is a 409. It is a write, so the session's standing matters: a
@@ -1420,7 +1451,16 @@ export class WebhooksResource {
     return this.http.put(path\`/webhooks/\${id}/disable\`)
   }
 
-  /** Rotate the shared secret — returned once in the response. */
+  /**
+   * Rotate the shared secret — returned once in the response.
+   *
+   * The replaced secret is kept for a grace window (the gateway's \`WEBHOOK_SECRET_GRACE\`,
+   * one hour by default): inside it every delivery carries \`X-Rail0-Signature\` under the
+   * new key AND \`X-Rail0-Signature-Previous\` under the old one, so an endpoint verifies
+   * with whichever key it has deployed and nothing in flight at rotation becomes
+   * unverifiable — see \`WEBHOOK_SIGNATURE_PREVIOUS_HEADER\`. The old key signs only, is
+   * never honoured past the window, and a second rotation inside it drops the oldest key.
+   */
   rotateSecret(id: string): Promise<WebhookWithSecret> {
     return this.http.put(path\`/webhooks/\${id}/rotate_secret\`)
   }

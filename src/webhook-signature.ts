@@ -17,6 +17,11 @@ import { sha256 } from '@noble/hashes/sha2.js'
  *   X-Rail0-Timestamp  unix seconds, as a string
  *   X-Rail0-Signature  hex HMAC-SHA256 over "{timestamp}.{body}", keyed by the secret
  *
+ * and, for a grace window after `rotateSecret` (the gateway's WEBHOOK_SECRET_GRACE, one
+ * hour by default), X-Rail0-Signature-Previous: the same digest under the REPLACED
+ * secret, so an endpoint still holding the old key verifies that header instead and no
+ * delivery in flight at rotation is rejected.
+ *
  * The timestamp is inside the signed string on purpose: without it a captured delivery
  * is replayable forever, because the body alone stays valid indefinitely. That is why a
  * stale timestamp is rejected even when the digest matches — checking the digest and
@@ -34,6 +39,12 @@ const encoder = new TextEncoder()
 export const WEBHOOK_TOPIC_HEADER = 'X-Rail0-Topic'
 export const WEBHOOK_TIMESTAMP_HEADER = 'X-Rail0-Timestamp'
 export const WEBHOOK_SIGNATURE_HEADER = 'X-Rail0-Signature'
+/**
+ * Present only inside the grace window after a secret rotation: the digest under the
+ * replaced secret. Verify against it when `WEBHOOK_SIGNATURE_HEADER` fails under the
+ * secret you have deployed — it is the old key signing, never honoured past the window.
+ */
+export const WEBHOOK_SIGNATURE_PREVIOUS_HEADER = 'X-Rail0-Signature-Previous'
 
 /**
  * Accepted clock skew in seconds, applied SYMMETRICALLY — a timestamp too far in the

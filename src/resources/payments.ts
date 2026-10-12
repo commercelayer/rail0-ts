@@ -56,6 +56,21 @@ export interface ListPaymentsParams {
    * must be findable by it, so `dispute`/`close_dispute` are accepted too.
    */
   operation?: StoredTransactionOperation
+  /**
+   * `'mine'` (the default): the authenticated wallet's payments. `'all'`: every payment on
+   * the gateway — the operator's cross-account list on the same call, admin session
+   * required (403 otherwise, never silently narrowed to your own).
+   */
+  scope?: 'mine' | 'all'
+  /** scope 'all' only: payments whose payee is one of this account's wallets. */
+  account_id?: string
+  /** scope 'all' only: true = payments carrying a `last_error_code`, false = none. */
+  has_error?: boolean
+  /**
+   * scope 'all' only: `authorized` payments whose `authorization_expiry` falls within this
+   * many SECONDS from now (1..90 days).
+   */
+  expiring_within?: number
   sort?: string
   /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
@@ -176,6 +191,9 @@ export class PaymentsResource {
    * caller can offer the action exactly when it will succeed rather than discovering a
    * 422. A `pending` row with no signed transaction is NOT redrivable — there the next
    * step is submitting the signature, not retrying a send that never happened.
+   *
+   * Payee-gated, like the other operation writes — or an operator session on any payment,
+   * which the gateway records in its audit log as `transaction.redrive`.
    */
   redrive(id: Bytes32, transactionId: string): Promise<Transaction> {
     return this.http.post(path`/payments/${id}/transactions/${transactionId}/redrive`, {})

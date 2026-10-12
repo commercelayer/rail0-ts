@@ -287,6 +287,30 @@ describe('resource alignment', () => {
     })
   })
 
+  describe('payments.list operator scope', () => {
+    it('forwards scope=all with the three operator-only filters, false included', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => okList([]))
+      await client.payments.list({
+        scope: 'all',
+        account_id: ACCOUNT_ID,
+        has_error: false,
+        expiring_within: 86_400,
+      })
+      const url = String(spy.mock.calls[0]?.[0])
+      expect(url).toContain('scope=all')
+      expect(url).toContain(`account_id=${ACCOUNT_ID}`)
+      // A tri-state: false is a filter (the clean payments), not an absence.
+      expect(url).toContain('has_error=false')
+      expect(url).toContain('expiring_within=86400')
+    })
+
+    it('sends nothing operator-flavoured by default', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => okList([]))
+      await client.payments.list({ status: 'authorized' })
+      expect(String(spy.mock.calls[0]?.[0])).toBe(`${BASE_URL}/payments?status=authorized`)
+    })
+  })
+
   describe('payments.disputes', () => {
     it('returns a paginated envelope and forwards the status filter', async () => {
       const spy = vi
@@ -442,6 +466,25 @@ describe('resource alignment', () => {
       // Only what was passed: an owner cannot send `active`, and an absent email must not
       // go out as null (the gateway rejects a blank value).
       expect(JSON.parse(String(init.body))).toEqual({ name: 'Renamed' })
+    })
+
+    // false is the value that switches the fee setting off; it must reach the wire as
+    // `false`, alone, and the profile must decode it back.
+    it('update sends priority_tip: false and decodes it from the profile', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        ok({
+          id: ACCOUNT_ID,
+          name: 'Merchant',
+          email: 'merchant@rail0.test',
+          priority_tip: false,
+        }),
+      )
+
+      const account = await client.accounts.update(ACCOUNT_ID, { priority_tip: false })
+
+      expect(account.priority_tip).toBe(false)
+      const [, init] = spy.mock.calls[0] as [string, RequestInit]
+      expect(JSON.parse(String(init.body))).toEqual({ priority_tip: false })
     })
 
     it('update surfaces a taken email as a 409 with its code', async () => {

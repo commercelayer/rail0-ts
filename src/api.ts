@@ -239,7 +239,7 @@ export interface paths {
         head?: never;
         /**
          * Update an account: own profile; an admin may also set active
-         * @description The one write on the account row. The owner updates name and/or email; active is an operator field — supplying it requires the operator grant (403 otherwise), and an admin may patch ANY account. The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself.
+         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise), and an admin may patch ANY account. The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself.
          */
         patch: {
             parameters: {
@@ -259,6 +259,8 @@ export interface paths {
                         email?: string;
                         /** @description Active status (admin only). */
                         active?: boolean;
+                        /** @description Tip the network's suggested priority fee on the merchant's own transactions (default true); false uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy). Owner or admin. */
+                        priority_tip?: boolean;
                     };
                 };
             };
@@ -695,8 +697,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Re-enqueue a stuck broadcast for this transaction (payee only)
-         * @description On-demand doorbell for the recovery the Recovery already performs at cadence: a `pending` transaction still holding its `signed_transaction` is a broadcast the queue lost (a hard worker kill drops the in-flight job), and this re-enqueues the broadcaster for it NOW instead of waiting for the recovery tick. Same redrivable predicate, same enqueue, no new state and no new worker. Payee-only, like the other operation writes. Idempotent under double-click: the broadcaster re-checks under the row lock before sending, so a duplicate enqueue is harmless and never double-broadcasts. Any other state is refused with 422 `not_redrivable`, the detail naming the state the row IS in (a pending row without its signed transaction has nothing to broadcast; submitting/submitted already reached the send; confirmed is settled; a failed row's repair path is the operation's /submitted endpoint, not another send).
+         * Re-enqueue a stuck broadcast for this transaction (payee, or an operator)
+         * @description Payee-gated, OR an operator session on any payment (audited as transaction.redrive; for an account-gated operation the gate is the payee's account, 403 account_deactivated when it is switched off). On-demand doorbell for the recovery the Recovery already performs at cadence: a `pending` transaction still holding its `signed_transaction` is a broadcast the queue lost (a hard worker kill drops the in-flight job), and this re-enqueues the broadcaster for it NOW instead of waiting for the recovery tick. Same redrivable predicate, same enqueue, no new state and no new worker. Payee-only, like the other operation writes. Idempotent under double-click: the broadcaster re-checks under the row lock before sending, so a duplicate enqueue is harmless and never double-broadcasts. Any other state is refused with 422 `not_redrivable`, the detail naming the state the row IS in (a pending row without its signed transaction has nothing to broadcast; submitting/submitted already reached the send; confirmed is settled; a failed row's repair path is the operation's /submitted endpoint, not another send).
          */
         post: operations["redrivePaymentTransaction"];
         delete?: never;
@@ -1078,7 +1080,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Rotate the shared secret — returns the new secret once */
+        /**
+         * Rotate the shared secret — returns the new secret once
+         * @description Replaces the shared secret and returns the new one once. The replaced key is kept for a grace window (WEBHOOK_SECRET_GRACE, one hour by default): inside it every delivery carries X-Rail0-Signature under the new key AND X-Rail0-Signature-Previous under the old one, so an endpoint verifies with whichever key it has deployed and no delivery in flight at rotation becomes unverifiable. The old key signs only, is never honoured past the window, and a second rotation inside it drops the oldest key.
+         */
         put: operations["rotateWebhookSecret"];
         post?: never;
         delete?: never;
@@ -1281,6 +1286,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This process's chain-config snapshot against the database (admin)
+         * @description What a reload would change, before anyone presses it: per table (blockchains, tokens, contracts) the rows added since the snapshot, removed, and changed with the differing fields as {from, to} — bookkeeping timestamps excluded — plus the snapshot's loaded_at, a stale flag and the pending count. One process, like the reload: a worker's snapshot is not visible from here (#374).
+         */
+        get: operations["adminCatalogDiff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/catalog/reload": {
         parameters: {
             query?: never;
@@ -1295,6 +1320,86 @@ export interface paths {
          * @description Chain config is read once at boot into an in-memory snapshot so hot paths never query the DB for it; after a seed changes a chain, a token or an RPC endpoint, the running process keeps serving what it read at boot. This rebuilds that snapshot. ONE PROCESS: it refreshes the process that serves this request, so a deployment with a web machine and a worker machine has two snapshots and several web machines have several — this is the tool for a single-process environment, not a fleet-wide invalidation, for which a restart is still the only honest instrument. Answers the counts it now holds, because "reloaded" alone cannot distinguish a snapshot that picked up the change from one that rebuilt the same rows.
          */
         post: operations["reloadCatalog"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Transactions across every account, or only the stuck ones (admin)
+         * @description The cross-account transaction list, and with `stuck` only the wedged rows: `unbroadcast` (signed, never sent, past two BROADCAST_REDRIVE_AFTER cycles — the rows behind /admin/health's broadcasts check), `unconfirmed` (broadcast past SUBMITTED_TX_TTL with no indexer confirm — the indexer_intake check) or `any`. Same predicates as the health figures, so count and page agree. Each row carries `redrivable` and its `payment` summary; never signed_transaction. Oldest first; paginated.
+         */
+        get: operations["listAdminTransactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/event_callbacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Webhook deliveries across accounts, by payment or subscription (admin)
+         * @description The delivery log across every account: the merchant's GET /webhooks/:id/event_callbacks is one subscription's; this answers from the payment (payment_id, UUID or rail0 id) or the subscription (webhook_id), with the same status / topic / response_code / since / until filters. Each row carries its webhook (operator view, no secrets) and through it the account; the payload is the JSON that was POSTed. Paginated.
+         */
+        get: operations["listAdminEventCallbacks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/disputes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every dispute across accounts, with the reason-mismatch flags (admin)
+         * @description Open and closed disputes on every account's payments, newest first, each with its payment summary, the dictionary reading of both reasons, and open_reason_mismatch / close_reason_mismatch: whether the chain's bytes32 reason differed from the one the gateway prepared on that side (the reason_mismatch sync error, matched on payment, event and block). Filters status, chain_id, reason_code (an open-reason dictionary code), mismatch=true, from/to on opened_at; paginated.
+         */
+        get: operations["listAdminDisputes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The effective operator policy of this process (admin)
+         * @description Every window, threshold and limit in config/policy.rb as this process resolved it from the environment, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, fees, rpc), each as {value, env, overridden}: the variable that sets it (null for a constant) and whether that variable is set. Read-only: changing a value is a deploy. Nothing secret.
+         */
+        get: operations["adminPolicy"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1360,6 +1465,88 @@ export interface paths {
          * @description Delete rows from the sync-error ledger, honouring the SAME filters as the listing (reason, outcome, tx_hash) — so a clear removes what the caller is looking at rather than whatever the table holds. Unfiltered it empties the table, which is what an operator's Clear button is for; the confirmation belongs at the click. The table is otherwise append-only — nothing prunes it on a clock — so this is the only way rows leave it. NOTE: balance_divergence rows live here too and GET /admin/health reports their standing count, so an unfiltered clear resets that count; filter by reason to keep them. Answers the number of rows deleted.
          */
         delete: operations["clearSyncErrors"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/administrators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every operator grant (admin)
+         * @description Every administrators row, expired ones included (the row lingers as audit history), newest first, with the grantee and the grantor named as `account` and `grantor` (null on a bootstrap grant). Unpaginated: a handful of operators, not a ledger.
+         */
+        get: operations["listAdministrators"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every webhook subscription across accounts (admin)
+         * @description Every account's subscriptions with circuit state, `active`, the owning `account` and the newest delivery attempt (`last_attempt_at`, `last_attempt_status`). Open circuits first. NEVER carries a signing key: shared_secret and previous_secret are returned once, to the owner, on create and rotate. Filters: account_id, circuit_state (closed|open), topic; sort created_at, updated_at, circuit_failure_count, name; paginated (x-total-count and friends).
+         */
+        get: operations["listAdminWebhooks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/webhooks/{id}/reset_circuit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Reset a webhook's circuit breaker on any account (admin)
+         * @description The same write as the owner's PUT /webhooks/:id/reset_circuit — closes the circuit, zeroes the failure count and re-enables the hook — on any account's subscription. Audited (webhook.reset_circuit): it re-arms delivery to an endpoint the operator does not control. Answers the operator view, secrets excluded.
+         */
+        put: operations["adminResetWebhookCircuit"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The operator audit log (admin)
+         * @description Every admin write, newest first: who (`actor`, and `actor_address` — the wallet the session signed in with), what (`action`), on which resource (`resource_type`, `resource_id`), to whom (`target_account`), with a small secret-free `detail`. Written inside the same transaction as the write it describes; append-only, never pruned, and there is deliberately no DELETE. Filters: action, actor_account_id, target_account_id, resource_type, from, to; paginated.
+         */
+        get: operations["listAdminActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2001,16 +2188,197 @@ export interface components {
          * @enum {string}
          */
         WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.authorization_expiring" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
-        /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
+        /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, priority_tip, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
         Account: {
             /** Format: uuid */
             id?: string;
             name?: string;
             email?: string | null;
+            /** @description Whether the merchant's own transactions tip the network's suggested priority fee (true, the default) or the chain's minimum tip (false: 0 on most chains, 25 gwei on Polygon PoS/Amoy). The buyer's dispute/close_dispute never read it. */
+            priority_tip?: boolean;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description An operator grant with the people named. */
+        AdministratorFull: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            account_id?: string;
+            /** Format: uuid */
+            granted_by?: string | null;
+            note?: string | null;
+            /** Format: date-time */
+            expires_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** @description The account's public shape (id, name, email, priority_tip, timestamps). */
+            account?: Record<string, never>;
+            /** @description The account's public shape (id, name, email, priority_tip, timestamps). */
+            grantor?: Record<string, never> | null;
+        };
+        WebhookOperator: components["schemas"]["Webhook"] & {
+            /** Format: uuid */
+            account_id?: string;
+            /** Format: date-time */
+            disabled_at?: string | null;
+            /** Format: date-time */
+            rotated_at?: string | null;
+            /** Format: date-time */
+            last_attempt_at?: string | null;
+            /** @enum {string|null} */
+            last_attempt_status?: "pending" | "delivered" | "failed" | null;
+            /** @description The account's public shape (id, name, email, priority_tip, timestamps). */
+            account?: Record<string, never>;
+        };
+        /** @description One row of the operator audit log. */
+        AdminAction: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            actor_account_id?: string | null;
+            actor_address?: string | null;
+            /** @example administrator.grant */
+            action?: string;
+            /** @example administrator */
+            resource_type?: string;
+            resource_id?: string | null;
+            /** Format: uuid */
+            target_account_id?: string | null;
+            detail?: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** @description The account's public shape (id, name, email, priority_tip, timestamps). */
+            actor?: Record<string, never> | null;
+            /** @description The account's public shape (id, name, email, priority_tip, timestamps). */
+            target_account?: Record<string, never> | null;
+        };
+        TransactionOperator: components["schemas"]["Transaction"] & {
+            redrivable?: boolean;
+            error_reason?: string | null;
+            payment?: {
+                /** Format: uuid */
+                id?: string;
+                rail0_id?: string;
+                chain_id?: number;
+                status?: string;
+                mode?: string;
+                amount?: string;
+                decimals?: number | null;
+                payer?: string;
+                payee?: string;
+                token?: string;
+            };
+        };
+        /** @description One reported policy value. */
+        PolicySetting: {
+            /** @description The effective value (number, boolean, string, list or map). */
+            value?: unknown;
+            /** @description The environment variable that sets it; null for a constant. */
+            env?: string | null;
+            /** @description Whether that variable is set in this process. */
+            overridden?: boolean;
+        };
+        /** @description GET /admin/policy: the effective policy, grouped. Every leaf is a PolicySetting. */
+        PolicyReport: {
+            payments?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            recovery?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            retention?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            webhooks?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            settlement?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            rate_limit?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            siwe?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            fees?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            rpc?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            /** Format: date-time */
+            generated_at?: string;
+        };
+        DisputeOperator: components["schemas"]["Dispute"] & {
+            open_reason_mismatch?: boolean;
+            close_reason_mismatch?: boolean;
+            payment?: {
+                /** Format: uuid */
+                id?: string;
+                rail0_id?: string;
+                chain_id?: number;
+                status?: string;
+                mode?: string;
+                amount?: string;
+                decimals?: number | null;
+                payer?: string;
+                payee?: string;
+                token?: string;
+            };
+        };
+        EventCallbackOperator: components["schemas"]["EventCallback"] & {
+            webhook?: components["schemas"]["WebhookOperator"];
+        };
+        /** @description GET /admin/catalog: the snapshot against the database, per table. */
+        CatalogDiff: {
+            /** Format: date-time */
+            loaded_at?: string;
+            /** Format: date-time */
+            checked_at?: string;
+            stale?: boolean;
+            pending?: number;
+            blockchains?: {
+                added?: Record<string, never>[];
+                removed?: Record<string, never>[];
+                changed?: {
+                    fields?: {
+                        [key: string]: {
+                            from?: unknown;
+                            to?: unknown;
+                        };
+                    };
+                }[];
+            };
+            tokens?: {
+                added?: Record<string, never>[];
+                removed?: Record<string, never>[];
+                changed?: {
+                    fields?: {
+                        [key: string]: {
+                            from?: unknown;
+                            to?: unknown;
+                        };
+                    };
+                }[];
+            };
+            contracts?: {
+                added?: Record<string, never>[];
+                removed?: Record<string, never>[];
+                changed?: {
+                    fields?: {
+                        [key: string]: {
+                            from?: unknown;
+                            to?: unknown;
+                        };
+                    };
+                }[];
+            };
         };
         Webhook: {
             /** Format: uuid */
@@ -2588,6 +2956,13 @@ export interface operations {
             400: components["responses"]["Validation"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such account (an admin naming an unknown or non-UUID `account_id`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description The address is already registered to an account (addresses are globally unique). */
             409: {
                 headers: {
@@ -3012,6 +3387,14 @@ export interface operations {
                 created_to?: string;
                 /** @description Only payments carrying at least one transaction with this operation. */
                 operation?: "authorize" | "capture" | "charge" | "void" | "release" | "refund" | "dispute" | "close_dispute";
+                /** @description `mine` (default): the authenticated wallet's payments. `all` (admin only, 403 otherwise): every payment on the gateway. */
+                scope?: "mine" | "all";
+                /** @description scope=all only: payments whose payee is one of this account's wallets. */
+                account_id?: string;
+                /** @description scope=all only: true = payments carrying a last_error_code; false = none. */
+                has_error?: boolean;
+                /** @description scope=all only: authorizations (status authorized) whose authorization_expiry falls within this many seconds from now. */
+                expiring_within?: number;
             };
             header?: never;
             path?: never;
@@ -4291,6 +4674,8 @@ export interface operations {
                     base_fee_per_gas?: string;
                     /** @description Transaction sender, from the receipt the indexer already reads for the gas fields. Mirrored ONLY into an empty column: when the gateway broadcast the transaction it recovered the sender from the signature, which is the verified fact — this fills the gap left by a wallet that broadcast for itself, where a release's gas would otherwise stay unattributable to either party. */
                     sender?: string;
+                    /** @description On-chain bytes32 dispute reason, read from the PaymentDisputed / DisputeClosed event (disputed and dispute_closed only). The dispute records THIS value, not the one the gateway prepared: a payer can broadcast their own dispute transaction with a different reason and report its hash. When the two differ the Syncer applies the on-chain word and records a sync_errors row with reason reason_mismatch. */
+                    reason?: string;
                 };
             };
         };
@@ -4452,6 +4837,28 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    adminCatalogDiff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The diff. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogDiff"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     reloadCatalog: {
         parameters: {
             query?: never;
@@ -4476,6 +4883,153 @@ export interface operations {
                         /** Format: date-time */
                         reloaded_at?: string;
                     };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminTransactions: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only stuck rows: `unbroadcast` (signed, never sent, past two redrive cycles), `unconfirmed` (broadcast past SUBMITTED_TX_TTL with no confirm), or `any` of the two. */
+                stuck?: "unbroadcast" | "unconfirmed" | "any";
+                /** @description Filter by status (comma-separated). */
+                status?: ("pending" | "submitting" | "submitted" | "confirmed" | "failed")[];
+                /** @description Filter by operation. */
+                operation?: "authorize" | "charge" | "capture" | "void" | "release" | "refund" | "dispute" | "close_dispute";
+                /** @description Only transactions on this chain (EVM chain id). */
+                chain_id?: number;
+                /** @description Only transactions on payments whose payee is one of this account's wallets. */
+                account_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rows, whole record each (Full entity, signed_transaction excluded). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionOperator"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminEventCallbacks: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only deliveries for this payment: its id (UUID) or its rail0_id (0x…). */
+                payment_id?: string;
+                /** @description Only this subscription's deliveries. */
+                webhook_id?: string;
+                /** @description Filter by delivery status. */
+                status?: "delivered" | "failed";
+                /** @description Filter by event topic. */
+                topic?: components["schemas"]["WebhookTopic"];
+                /** @description Filter by the subscriber's exact HTTP response code. */
+                response_code?: string;
+                /** @description Only deliveries at/after this time (ISO-8601). */
+                since?: string;
+                /** @description Only deliveries at/before this time (ISO-8601). */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deliveries, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventCallbackOperator"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminDisputes: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Filter by dispute status. */
+                status?: "open" | "closed";
+                /** @description Only this payment's disputes: its id (UUID) or its rail0_id (0x…). */
+                payment_id?: string;
+                /** @description Only disputes on payments of this chain (EVM chain id). */
+                chain_id?: number;
+                /** @description Only disputes opened with this dictionary code. */
+                reason_code?: "not_received" | "not_as_described" | "damaged_or_defective" | "duplicate" | "incorrect_amount" | "cancelled" | "refund_not_received" | "unauthorized" | "other";
+                /** @description true: only disputes whose on-chain reason differed from the prepared one on either side. */
+                mismatch?: boolean;
+                /** @description Only disputes opened at or after this instant (ISO-8601). */
+                from?: string;
+                /** @description Only disputes opened at or before this instant (ISO-8601). */
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The disputes, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisputeOperator"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    adminPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The effective policy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyReport"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -4597,6 +5151,8 @@ export interface operations {
                 outcome?: "confirmed" | "failed";
                 /** @description Filter by transaction hash. */
                 tx_hash?: string;
+                /** @description Only rows about this payment: its id (UUID) or its rail0_id (0x…). */
+                payment_id?: string;
             };
             header?: never;
             path?: never;
@@ -4626,6 +5182,8 @@ export interface operations {
                 outcome?: "confirmed" | "failed";
                 /** @description Only rows for this transaction hash. */
                 tx_hash?: string;
+                /** @description Only rows about this payment: its id (UUID) or its rail0_id (0x…). */
+                payment_id?: string;
             };
             header?: never;
             path?: never;
@@ -4643,6 +5201,131 @@ export interface operations {
                         /** @example 12 */
                         deleted: number;
                     };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdministrators: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rows, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdministratorFull"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listAdminWebhooks: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only this account's subscriptions. */
+                account_id?: string;
+                /** @description Filter by circuit state. */
+                circuit_state?: "closed" | "open";
+                /** @description Only subscriptions that include this topic. */
+                topic?: components["schemas"]["WebhookTopic"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rows, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookOperator"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    adminResetWebhookCircuit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Circuit reset. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookOperator"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAdminActions: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only this kind of action. */
+                action?: "account.create" | "account.update" | "account.activate" | "account.deactivate" | "wallet.add" | "wallet.update" | "wallet.deactivate" | "administrator.grant" | "administrator.revoke" | "webhook.reset_circuit" | "transaction.redrive" | "catalog.reload" | "sync_errors.clear";
+                /** @description Only actions by this admin account. */
+                actor_account_id?: string;
+                /** @description Only actions that landed on this account. */
+                target_account_id?: string;
+                /** @description Only actions on this kind of resource (e.g. wallet). */
+                resource_type?: string;
+                /** @description Only actions whose detail names this payment (a redrive): its UUID. */
+                payment_id?: string;
+                /** @description Only actions at or after this instant (ISO-8601). */
+                from?: string;
+                /** @description Only actions at or before this instant (ISO-8601). */
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rows, whole record each (Full entity). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAction"][];
                 };
             };
             401: components["responses"]["Unauthorized"];

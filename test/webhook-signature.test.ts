@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   expectedWebhookSignature,
   verifyWebhookSignature,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_SIGNATURE_PREVIOUS_HEADER,
   WEBHOOK_TOLERANCE_SECONDS,
 } from '../src/webhook-signature.js'
 
@@ -126,5 +128,39 @@ describe('verifyWebhookSignature', () => {
         signature: sign(BODY, NOW, ''),
       }),
     ).toBe(false)
+  })
+})
+
+// After a rotation the gateway signs twice for a grace window: the current header under
+// the new secret, the previous header under the replaced one. A receiver still on the
+// old secret verifies the previous header with the SAME helper — nothing new to learn,
+// which is the point; and the header names are what a handler reads them by.
+describe('secret rotation grace window', () => {
+  it('verifies the previous header under the replaced secret', () => {
+    const oldSecret = SECRET
+    const newSecret = 'whsec_9b1c2d3e4f5061728394a5b6c7d8e9f0'
+    const current = sign(BODY, NOW, newSecret)
+    const previous = sign(BODY, NOW, oldSecret)
+    expect(WEBHOOK_SIGNATURE_HEADER).toBe('X-Rail0-Signature')
+    expect(WEBHOOK_SIGNATURE_PREVIOUS_HEADER).toBe('X-Rail0-Signature-Previous')
+    // Not yet deployed the new secret: the current header fails, the previous one passes.
+    expect(
+      verifyWebhookSignature({
+        body: BODY,
+        signature: current,
+        timestamp: NOW,
+        secret: oldSecret,
+        nowSeconds: NOW,
+      }),
+    ).toBe(false)
+    expect(
+      verifyWebhookSignature({
+        body: BODY,
+        signature: previous,
+        timestamp: NOW,
+        secret: oldSecret,
+        nowSeconds: NOW,
+      }),
+    ).toBe(true)
   })
 })

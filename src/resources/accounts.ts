@@ -18,13 +18,14 @@ import type { Account, UpdateAccountRequest } from './types.js'
 export class AccountsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** The account's profile: id, name, email, timestamps. */
+  /** The account's profile: id, name, email, priority_tip, timestamps. */
   get(account_id: string): Promise<Account> {
     return this.http.get(path`/accounts/${account_id}`)
   }
 
   /**
-   * PATCH /accounts/:id — change the account's own `name` and/or `email`.
+   * PATCH /accounts/:id — change the account's own `name`, `email` and/or
+   * `priority_tip` (the fee setting of its own transactions).
    *
    * At least one field is required (400 otherwise); a name or email another account
    * already holds is a 409. It is a write, so the session's standing matters: a
