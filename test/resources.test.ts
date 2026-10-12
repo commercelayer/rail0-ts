@@ -471,16 +471,14 @@ describe('resource alignment', () => {
     // false is the value that switches the fee setting off; it must reach the wire as
     // `false`, alone, and the profile must decode it back.
     it('update sends priority_tip: false and decodes it from the profile', async () => {
-      const spy = vi
-        .spyOn(globalThis, 'fetch')
-        .mockResolvedValueOnce(
-          ok({
-            id: ACCOUNT_ID,
-            name: 'Merchant',
-            email: 'merchant@rail0.test',
-            priority_tip: false,
-          }),
-        )
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        ok({
+          id: ACCOUNT_ID,
+          name: 'Merchant',
+          email: 'merchant@rail0.test',
+          priority_tip: false,
+        }),
+      )
 
       const account = await client.accounts.update(ACCOUNT_ID, { priority_tip: false })
 
