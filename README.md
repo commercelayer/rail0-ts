@@ -262,7 +262,21 @@ const { data } = await client.payments.list({ status: 'authorized' })
 const capturable = data.filter((p) => !p.in_flight)
 ```
 
-`getTransaction(id, transactionId)` reads ONE of a payment's transactions. This is the lookup for an `action_id`: anything handed a transaction id when an operation was accepted resolves it directly, instead of fetching the payment and scanning its transactions for an id it already holds. `redrive(id, transactionId)` re-enqueues a stuck broadcast.
+**`scope: 'all'` (admin).** The operator's cross-account list, on the same call: every
+payment on the gateway, with the same filters. It needs an admin session — anyone else
+gets `403`, never a silent narrowing to their own payments. Three filters exist only
+there and are ignored without it: `account_id` (payments whose payee is one of that
+account's wallets), `has_error` (`true` = carrying a `last_error_code`, `false` = none)
+and `expiring_within` (`authorized` payments whose hold lapses within that many
+**seconds**, up to 90 days).
+
+```ts
+// Every failing payment, any account — and the holds lapsing within a day.
+const failing = await client.payments.list({ scope: 'all', has_error: true })
+const lapsing = await client.payments.list({ scope: 'all', expiring_within: 24 * 3600 })
+```
+
+`getTransaction(id, transactionId)` reads ONE of a payment's transactions. This is the lookup for an `action_id`: anything handed a transaction id when an operation was accepted resolves it directly, instead of fetching the payment and scanning its transactions for an id it already holds. `redrive(id, transactionId)` re-enqueues a stuck broadcast — payee-gated, or an operator session on any payment (audited as `transaction.redrive`).
 
 **Idempotency.** Every prepare takes an optional trailing `opts: IdempotentRequest` — `{ idempotencyKey }`, sent as `Idempotency-Key`: the generic `prepare(id, op, body?, opts?)`, the typed `authorizePrepare(id, opts?)`, `chargePrepare(id, opts?)`, `capturePrepare(id, amount, opts?)`, `voidPrepare(id, opts?)`, `releasePrepare(id, from?, opts?)`, `refundPrepare(id, body, opts?)`, and `disputePrepare(id, reason?, opts?)` / `closeDisputePrepare(id, reason?, opts?)`. Without it, a retry arriving after the first transaction was signed and broadcast opens a **second** one — correct for a genuine sequential partial capture, wrong for a retry, and only the caller can tell those apart. Same key with different terms is refused `422 idempotency_key_reused`; the key is scoped to the payment.
 
@@ -396,6 +410,23 @@ rejection, and `tolerance` / `nowSeconds` are injectable. No `node:crypto`: the 
 comes from `@noble/hashes`, already a dependency, so the helper works wherever the rest
 of the SDK does (a test pins byte-equality with node's implementation).
 
+**Rotating the secret without a gap.** After `rotateSecret` the gateway keeps the replaced
+key for a grace window (`WEBHOOK_SECRET_GRACE`, one hour by default): inside it every
+delivery carries `X-Rail0-Signature` under the new key **and** `X-Rail0-Signature-Previous`
+(`WEBHOOK_SIGNATURE_PREVIOUS_HEADER`) under the old one, so an endpoint verifies with
+whichever key it has deployed and nothing in flight at rotation becomes unverifiable.
+Deploy the new secret at your pace within the window; an endpoint that still holds the old
+one verifies the previous header instead — the old key signs only, and is never honoured
+past the window. A second rotation inside it drops the oldest key.
+
+```ts
+const verify = (signature: string | null) =>
+  verifyWebhookSignature({ body, signature, timestamp, secret: process.env.RAIL0_WEBHOOK_SECRET! })
+const ok =
+  verify(request.headers.get(WEBHOOK_SIGNATURE_HEADER)) ||
+  verify(request.headers.get(WEBHOOK_SIGNATURE_PREVIOUS_HEADER))
+```
+
 ### Pagination
 
 Every `PaginatedResponse<T>` carries `{ data, meta }`. `meta` is `{ page, per_page, total, total_pages, links }`.
@@ -471,7 +502,7 @@ const mine  = await client.analytics.summary({ payee: '0xYourWalletAddress' })
 
 ### `client.accounts` (merchant, JWT)
 
-`get(accountId)` → `Account` — the profile (`id`, `name`, `email`, timestamps) · `update(accountId, { name?, email? })` → `Account`.
+`get(accountId)` → `Account` — the profile (`id`, `name`, `email`, `priority_tip`, timestamps) · `update(accountId, { name?, email?, priority_tip? })` → `Account`.
 
 Behind SIWE and behind an ownership guard: the gateway requires a JWT whose account matches
 the path — or an active **admin** session, which may read and repair any account. A
@@ -479,16 +510,22 @@ merchant therefore only ever reaches its own. An id that is not an account answe
 the same shape a non-admin gets for another account's id, so the pair cannot be used to
 tell whether an account exists.
 
-`update` changes the account's own `name` and/or `email`: at least one is required (`400`
-otherwise), and both are unique across accounts (`409` when taken). It is a write, so the
-session's standing matters — a deactivated session wallet answers `403 wallet_deactivated`
-and a deactivated account `403 account_deactivated`. The account's `active` flag is the
-operator's and is not exposed here.
+`update` changes the account's own `name`, `email` and/or `priority_tip`: at least one is
+required (`400` otherwise), and name and email are unique across accounts (`409` when
+taken). It is a write, so the session's standing matters — a deactivated session wallet
+answers `403 wallet_deactivated` and a deactivated account `403 account_deactivated`. The
+account's `active` flag is the operator's and is not exposed here.
+
+**`priority_tip`** is the fee setting of the account's **own** transactions (authorize,
+capture, void, release, refund): `true`, the default, tips the network's suggested priority
+fee; `false` uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy) —
+cheaper, slower to confirm under load. The buyer's dispute/close-dispute never read it.
 
 ```ts
 const me = await client.accounts.get(session.accountId)
-console.log(me.name, me.email)
+console.log(me.name, me.email, me.priority_tip)
 await client.accounts.update(session.accountId, { email: 'ops@merchant.example' })
+await client.accounts.update(session.accountId, { priority_tip: false })
 ```
 
 The account's wallets are on `client.wallets` (a collection under the same path), and

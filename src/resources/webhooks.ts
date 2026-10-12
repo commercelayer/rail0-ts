@@ -72,7 +72,16 @@ export class WebhooksResource {
     return this.http.put(path`/webhooks/${id}/disable`)
   }
 
-  /** Rotate the shared secret — returned once in the response. */
+  /**
+   * Rotate the shared secret — returned once in the response.
+   *
+   * The replaced secret is kept for a grace window (the gateway's `WEBHOOK_SECRET_GRACE`,
+   * one hour by default): inside it every delivery carries `X-Rail0-Signature` under the
+   * new key AND `X-Rail0-Signature-Previous` under the old one, so an endpoint verifies
+   * with whichever key it has deployed and nothing in flight at rotation becomes
+   * unverifiable — see `WEBHOOK_SIGNATURE_PREVIOUS_HEADER`. The old key signs only, is
+   * never honoured past the window, and a second rotation inside it drops the oldest key.
+   */
   rotateSecret(id: string): Promise<WebhookWithSecret> {
     return this.http.put(path`/webhooks/${id}/rotate_secret`)
   }

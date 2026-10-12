@@ -202,15 +202,20 @@ export interface CreateWalletRequest {
   label?: string
 }
 /**
- * Body for `accounts.update`. Both optional, AT LEAST ONE required — an empty PATCH is a
- * caller bug and the gateway answers 400. Both columns are unique across accounts: a value
- * another account already holds is a 409. The account's `active` flag is deliberately
+ * Body for `accounts.update`. Every field optional, AT LEAST ONE required — an empty PATCH
+ * is a caller bug and the gateway answers 400. name and email are unique across accounts: a
+ * value another account already holds is a 409. The account's `active` flag is deliberately
  * absent: it is the operator's field (admin-only), not something an owner can set.
  */
 export interface UpdateAccountRequest {
   name?: string
   /** Contact email — where the merchant's operational notifications go. */
   email?: string
+  /**
+   * Fee setting of the account's own transactions: false switches them to the chain's
+   * minimum tip, true back to the suggested priority fee. Owner or admin.
+   */
+  priority_tip?: boolean
 }
 export interface UpdateWalletRequest {
   label?: string
@@ -402,6 +407,13 @@ export interface Account {
   id: string
   name: string
   email: string
+  /**
+   * The fee setting of the account's OWN transactions (authorize, capture, void, release,
+   * refund): true (the default) tips the network's suggested priority fee, false uses the
+   * chain's minimum tip — 0 on most chains, 25 gwei on Polygon PoS/Amoy. The buyer's
+   * dispute/close_dispute never read it.
+   */
+  priority_tip: boolean
   created_at?: string
   updated_at?: string
 }
