@@ -339,8 +339,8 @@ export interface paths {
         get: operations["listAccountWallets"];
         put?: never;
         /**
-         * Add a wallet to the account
-         * @description Registers a wallet on the account. The OWNER must send a SIWE proof-of-ownership of the address being added: obtain a single-use nonce from `POST /auth/nonces`, build an EIP-4361 message carrying that nonce and signed by the address's private key, and submit `message` + `signature` here. The gateway verifies the signature recovers to `address`, the nonce is unused/unexpired, and the message binds to an allowed SIWE domain/chain — otherwise 422. The proven address need not equal the session address (a merchant may control several payee wallets). An ADMIN may add a wallet to any account without the proof — the operator vouches for the address, the same rule as POST /accounts; a proof an admin does send is still verified. Without a proof, a non-admin gets 400. Wallet addresses are globally unique: an address already registered (to this or any other account) yields 409.
+         * Add a wallet to the account (suspended)
+         * @description SUSPENDED: every session is refused 403 `wallet_add_unavailable` ("Adding a wallet is not available yet."). A session is bound to the one wallet it signed in with; adding another wallet will return with a dedicated merchant wallet-management section that requires a fresh signature by the wallet being added. The request shape and the proof verification below are kept for that section. When it returns: Registers a wallet on the account. Owner only. Requires a SIWE proof-of-ownership of the address being added: obtain a single-use nonce from `POST /auth/nonces`, build an EIP-4361 message carrying that nonce and signed by the address's private key, and submit `message` + `signature` here. The gateway verifies the signature recovers to `address`, the nonce is unused/unexpired, and the message binds to an allowed SIWE domain/chain — otherwise 422. The proven address need not equal the session address (a merchant may control several payee wallets). An admin cannot add a wallet to another account (403): the proof is exactly what an operator cannot produce. Wallet addresses are globally unique: an address already registered (to this or any other account) yields 409.
          */
         post: operations["createWallet"];
         delete?: never;
@@ -366,14 +366,14 @@ export interface paths {
         post?: never;
         /**
          * Deactivate a wallet (soft delete)
-         * @description Owner or admin. Only ever deactivates (payments name the address, so the row stays; there is no removal). Last-active-wallet guard: the account's only active wallet is refused with 422 last_active_wallet.
+         * @description Owner or admin. An owner session may change ONLY the wallet it signed in with (the session's address): another wallet of the same account is refused 403 `not_your_wallet`. An admin may switch off any wallet. Only ever deactivates (payments name the address, so the row stays; there is no removal). Last-active-wallet guard: the account's only active wallet is refused with 422 last_active_wallet.
          */
         delete: operations["deactivateWallet"];
         options?: never;
         head?: never;
         /**
          * Update a wallet label or active status
-         * @description Owner or admin. Last-active-wallet guard: `active: false` on the account's only active wallet is refused with 422 last_active_wallet.
+         * @description Owner or admin. An owner session may change ONLY the wallet it signed in with (the session's address): another wallet of the same account is refused 403 `not_your_wallet`. An admin may change any wallet, including the guarded switch-off. Last-active-wallet guard: `active: false` on the account's only active wallet is refused with 422 last_active_wallet.
          */
         patch: operations["updateWallet"];
         trace?: never;
@@ -441,7 +441,7 @@ export interface paths {
         put?: never;
         /**
          * Enable a token (chain) this wallet accepts
-         * @description Upserts an accepted token/chain combination for the wallet — the same combinations exposed by GET /payment_methods and enforced by POST /payments. Re-enabling a previously-disabled holding reactivates its row rather than duplicating it (200 vs 201 on a first enable). THE DEFAULT: a wallet that accepts anything keeps exactly one, so the FIRST token enabled takes the role unasked, and `default: true` here is how it is switched OVER — the successor is promoted and the incumbent demoted in the same request. `default: false` on the CURRENT default is refused 422 `default_payment_method`: clearing it without naming a successor would leave the wallet with no preferred method and nothing saying so.
+         * @description Upserts an accepted token/chain combination for the wallet — the same combinations exposed by GET /payment_methods and enforced by POST /payments. Re-enabling a previously-disabled holding reactivates its row rather than duplicating it (200 vs 201 on a first enable). THE DEFAULT: a wallet that accepts anything keeps exactly one, so the FIRST token enabled takes the role unasked, and `default: true` here is how it is switched OVER — the successor is promoted and the incumbent demoted in the same request. `default: false` on the CURRENT default is refused 422 `default_payment_method`: clearing it without naming a successor would leave the wallet with no preferred method and nothing saying so. Owner only, and only on the wallet the session signed in with: another wallet of the same account is refused 403 `not_your_wallet`.
          */
         post: operations["enableWalletToken"];
         delete?: never;
@@ -468,7 +468,7 @@ export interface paths {
         post?: never;
         /**
          * Disable a token this wallet accepts (soft delete)
-         * @description Soft-disables the accepted token/chain holding (active:false), removing it from discovery/creation while keeping the row. Re-enable via POST. Refused 422 `default_payment_method` when the holding is the wallet's ACTIVE default and the wallet accepts other methods — switch the default over first (POST with default:true on its successor). The LAST active method can be disabled even as the default: the wallet then accepts nothing, and the flag is cleared with it. An INACTIVE holding still carrying the flag is not protected: that is a row already stood down when its chain left service.
+         * @description Soft-disables the accepted token/chain holding (active:false), removing it from discovery/creation while keeping the row. Re-enable via POST. Refused 422 `default_payment_method` when the holding is the wallet's ACTIVE default and the wallet accepts other methods — switch the default over first (POST with default:true on its successor). The LAST active method can be disabled even as the default: the wallet then accepts nothing, and the flag is cleared with it. An INACTIVE holding still carrying the flag is not protected: that is a row already stood down when its chain left service. Owner only, and only on the wallet the session signed in with: another wallet of the same account is refused 403 `not_your_wallet`.
          */
         delete: operations["disableWalletToken"];
         options?: never;
@@ -497,7 +497,7 @@ export interface paths {
         head?: never;
         /**
          * Enable an existing token holding
-         * @description Enables an existing holding (active:true). Returns 404 if the wallet has no holding for the token (use POST to create one).
+         * @description Enables an existing holding (active:true). Returns 404 if the wallet has no holding for the token (use POST to create one). Owner only, and only on the wallet the session signed in with: another wallet of the same account is refused 403 `not_your_wallet`.
          */
         patch: operations["enableExistingWalletToken"];
         trace?: never;
@@ -523,7 +523,7 @@ export interface paths {
         head?: never;
         /**
          * Disable an existing token holding
-         * @description Disables an existing holding (active:false). Returns 404 if the wallet has no holding for the token, and 422 `default_payment_method` when it is the wallet's active default and other methods are active — switch the default over first. The last active method can be disabled even as the default (the flag is cleared with it).
+         * @description Disables an existing holding (active:false). Returns 404 if the wallet has no holding for the token, and 422 `default_payment_method` when it is the wallet's active default and other methods are active — switch the default over first. The last active method can be disabled even as the default (the flag is cleared with it). Owner only, and only on the wallet the session signed in with: another wallet of the same account is refused 403 `not_your_wallet`.
          */
         patch: operations["disableExistingWalletToken"];
         trace?: never;
@@ -698,7 +698,7 @@ export interface paths {
         put?: never;
         /**
          * Re-enqueue a stuck broadcast for this transaction (payee, or an operator)
-         * @description Payee-gated, OR an operator session on any payment (audited as transaction.redrive; for an account-gated operation the gate is the payee's account, 403 account_deactivated when it is switched off). On-demand doorbell for the recovery the Recovery already performs at cadence: a `pending` transaction still holding its `signed_transaction` is a broadcast the queue lost (a hard worker kill drops the in-flight job), and this re-enqueues the broadcaster for it NOW instead of waiting for the recovery tick. Same redrivable predicate, same enqueue, no new state and no new worker. Payee-only, like the other operation writes. Idempotent under double-click: the broadcaster re-checks under the row lock before sending, so a duplicate enqueue is harmless and never double-broadcasts. Any other state is refused with 422 `not_redrivable`, the detail naming the state the row IS in (a pending row without its signed transaction has nothing to broadcast; submitting/submitted already reached the send; confirmed is settled; a failed row's repair path is the operation's /submitted endpoint, not another send).
+         * @description Payee-gated, OR an operator session on any payment (audited as transaction.redrive). On-demand doorbell for the recovery the Recovery already performs at cadence: a `pending` transaction still holding its `signed_transaction` is a broadcast the queue lost (a hard worker kill drops the in-flight job), and this re-enqueues the broadcaster for it NOW instead of waiting for the recovery tick. Same redrivable predicate, same enqueue, no new state and no new worker. Payee-only, like the other operation writes. Idempotent under double-click: the broadcaster re-checks under the row lock before sending, so a duplicate enqueue is harmless and never double-broadcasts. Any other state is refused with 422 `not_redrivable`, the detail naming the state the row IS in (a pending row without its signed transaction has nothing to broadcast; submitting/submitted already reached the send; confirmed is settled; a failed row's repair path is the operation's /submitted endpoint, not another send).
          */
         post: operations["redrivePaymentTransaction"];
         delete?: never;
@@ -1275,7 +1275,7 @@ export interface paths {
         };
         /**
          * RPC endpoint reachability per active chain, probed from the gateway (admin)
-         * @description Every active chain's rpc_urls, probed FROM THE GATEWAY'S OWN PROCESS — the view an IP ban or a provider outage actually hits, and the one the pool's silent failover hides. Per endpoint: eth_chainId (must equal the chain), eth_blockNumber (head), first-round-trip latency, and the finality-tag block where the chain gates on safe/finalized (null with tag_error when the node refuses the tag — where the indexer falls back to depth). Per chain: `ok` (at least one endpoint serves it), `primary_status` (the first endpoint's, which the pool tries before any fallback) and `status` (ok all up / degraded some / error none). URLs are shown without query string or userinfo. Probed concurrently with short timeouts and cached 60s per process. Always 200: a dead endpoint is the content.
+         * @description Every active chain's rpc_urls, probed FROM THE GATEWAY'S OWN PROCESS — the view an IP ban or a provider outage actually hits, and the one the pool's silent failover hides. Per endpoint: eth_chainId (must equal the chain), eth_blockNumber (head), first-round-trip latency, and the finality-tag block where the chain gates on safe/finalized (null with tag_error when the node refuses the tag — where the indexer falls back to depth). Per chain: `ok` (at least one endpoint serves it), `primary_status` (the first endpoint's, which the pool tries before any fallback) and `status` (ok all up / degraded some / error none). URLs are shown as configured, as on GET /admin/blockchains. Probed concurrently with short timeouts and cached 60s per process. Always 200: a dead endpoint is the content.
          */
         get: operations["getAdminRpcHealth"];
         put?: never;
@@ -1374,8 +1374,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Every dispute across accounts, with the reason-mismatch flags (admin)
-         * @description Open and closed disputes on every account's payments, newest first, each with its payment summary, the dictionary reading of both reasons, and open_reason_mismatch / close_reason_mismatch: whether the chain's bytes32 reason differed from the one the gateway prepared on that side (the reason_mismatch sync error, matched on payment, event and block). Filters status, chain_id, reason_code (an open-reason dictionary code), mismatch=true, from/to on opened_at; paginated.
+         * Every dispute across accounts (admin)
+         * @description Open and closed disputes on every account's payments, newest first, each with its payment summary and the dictionary reading of both reasons. Filters status, chain_id, reason_code (an open-reason dictionary code), from/to on opened_at; paginated.
          */
         get: operations["listAdminDisputes"];
         put?: never;
@@ -1715,7 +1715,7 @@ export interface components {
             endpoints?: components["schemas"]["AdminRpcHealthEndpoint"][];
         };
         AdminRpcHealthEndpoint: {
-            /** @description Scheme, host, port and path only. */
+            /** @description The endpoint, as configured. */
             url?: string;
             ok?: boolean;
             /** @enum {string} */
@@ -2316,8 +2316,6 @@ export interface components {
             generated_at?: string;
         };
         DisputeOperator: components["schemas"]["Dispute"] & {
-            open_reason_mismatch?: boolean;
-            close_reason_mismatch?: boolean;
             payment?: {
                 /** Format: uuid */
                 id?: string;
@@ -2932,19 +2930,19 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description EVM wallet address to add (0x, 40 hex). Must be the address that signed the SIWE message, when one is sent. */
+                    /** @description EVM wallet address to add (0x, 40 hex). Must be the address that signed the SIWE message. */
                     address: string;
-                    /** @description Required for the owner (optional for an admin; send both or neither of message and signature). EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). Purpose-bound: its `statement` must be exactly "Add this wallet to your RAIL0 account" — a login-shaped proof is refused with 422 `siwe_purpose_mismatch`, so a login signature can never be replayed here to bind someone else's wallet to the caller's account. */
-                    message?: string;
-                    /** @description Required with `message`. Signature over the SIWE message (0x…), proving control of the address's private key. */
-                    signature?: string;
+                    /** @description EIP-4361 SIWE message text signed by the address being added (carries the nonce from POST /auth/nonces). Purpose-bound: its `statement` must be exactly "Add this wallet to your RAIL0 account" — a login-shaped proof is refused with 422 `siwe_purpose_mismatch`, so a login signature can never be replayed here to bind someone else's wallet to the caller's account. */
+                    message: string;
+                    /** @description Signature over the SIWE message (0x…), proving control of the address's private key. */
+                    signature: string;
                     /** @description Human-readable label. */
                     label?: string;
                 };
             };
         };
         responses: {
-            /** @description Wallet created. */
+            /** @description Wallet created (unreachable while the route is suspended). */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -2956,13 +2954,6 @@ export interface operations {
             400: components["responses"]["Validation"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description No such account (an admin naming an unknown or non-UUID `account_id`). */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description The address is already registered to an account (addresses are globally unique). */
             409: {
                 headers: {
@@ -3393,7 +3384,7 @@ export interface operations {
                 account_id?: string;
                 /** @description scope=all only: true = payments carrying a last_error_code; false = none. */
                 has_error?: boolean;
-                /** @description scope=all only: authorizations (status authorized) whose authorization_expiry falls within this many seconds from now. */
+                /** @description scope=all only: capturable holds (authorized, or partially captured with escrow still held) whose authorization_expiry falls within this many seconds from now and has not yet passed. */
                 expiring_within?: number;
             };
             header?: never;
@@ -4662,7 +4653,7 @@ export interface operations {
                     log_index?: number;
                     /** @description On-chain bytes32 paymentId, read from the event. REQUIRED: it is the compensating control for the submit-by-hash hole — /{operation}/submitted accepts a transaction hash no node has seen yet, so the Syncer's comparison of this value against the payment the transaction row belongs to is what rejects a squatted hash. It was optional, which meant a caller omitting it silently skipped that check. */
                     payment_id: string;
-                    /** @description Revert reason / raw error data (fail only). */
+                    /** @description Revert reason / raw error data (fail only). Stored whole: the columns it lands in are text, so a long Error(string) or a multi-word custom error no longer fails the callback. */
                     revert_reason?: string;
                     /** @description Gas units used (confirm and fail — a reverted transaction still burns gas). Decimal digits. */
                     gas_used?: string;
@@ -4674,7 +4665,7 @@ export interface operations {
                     base_fee_per_gas?: string;
                     /** @description Transaction sender, from the receipt the indexer already reads for the gas fields. Mirrored ONLY into an empty column: when the gateway broadcast the transaction it recovered the sender from the signature, which is the verified fact — this fills the gap left by a wallet that broadcast for itself, where a release's gas would otherwise stay unattributable to either party. */
                     sender?: string;
-                    /** @description On-chain bytes32 dispute reason, read from the PaymentDisputed / DisputeClosed event (disputed and dispute_closed only). The dispute records THIS value, not the one the gateway prepared: a payer can broadcast their own dispute transaction with a different reason and report its hash. When the two differ the Syncer applies the on-chain word and records a sync_errors row with reason reason_mismatch. */
+                    /** @description On-chain bytes32 dispute reason, read from the PaymentDisputed / DisputeClosed event (disputed and dispute_closed only). The dispute records THIS value, not the one the gateway prepared: a payer can broadcast their own dispute transaction with a different reason and report its hash. */
                     reason?: string;
                 };
             };
@@ -4988,8 +4979,6 @@ export interface operations {
                 chain_id?: number;
                 /** @description Only disputes opened with this dictionary code. */
                 reason_code?: "not_received" | "not_as_described" | "damaged_or_defective" | "duplicate" | "incorrect_amount" | "cancelled" | "refund_not_received" | "unauthorized" | "other";
-                /** @description true: only disputes whose on-chain reason differed from the prepared one on either side. */
-                mismatch?: boolean;
                 /** @description Only disputes opened at or after this instant (ISO-8601). */
                 from?: string;
                 /** @description Only disputes opened at or before this instant (ISO-8601). */
