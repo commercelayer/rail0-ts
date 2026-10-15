@@ -133,6 +133,14 @@ const errorHints: Record<string, string> = {
   not_the_payer: "only the payment's payer can do this — sign in with the buyer's wallet",
   not_a_participant: 'only the payer and the payee can see or act on a payment',
   not_your_account: 'the session belongs to a different account than the one in the path',
+  // A session is bound to the one wallet it signed in with: the account's other wallets
+  // are readable, but not this session's to change (operators are exempt).
+  not_your_wallet:
+    'a session can change only the wallet it signed in with — sign in with that wallet to update it, deactivate it or manage its tokens',
+  // POST /accounts/:id/wallets is suspended for every session until the merchant
+  // wallet-management section lands.
+  wallet_add_unavailable:
+    'adding a wallet to an account is not available yet — it returns with the merchant wallet-management section',
   payer_must_be_caller:
     "a payment's payer must be the signed-in wallet — create it from the buyer's session",
   release_submitter_not_a_party:
@@ -144,8 +152,10 @@ const errorHints: Record<string, string> = {
     'this merchant account is deactivated — it can still read, void, release and refund, but not create, authorize, charge or capture; ask an operator to reactivate it',
   // last-one guards: login resolves the account FROM a wallet, so an account left with no
   // active wallet could neither act nor add one back; the operator grant has the same floor.
+  // Adding a wallet is suspended and a session changes only its own wallet, so the other
+  // wallet has to be reactivated by an operator.
   last_active_wallet:
-    "this is the account's only active wallet — add or reactivate another wallet first, then switch this one off",
+    "this is the account's only active wallet — another wallet must be active before this one can be switched off (adding a wallet is not available yet; an operator can reactivate one)",
   last_admin:
     'the change would leave no active operator — grant the operator role to another active account first',
   // contract reverts (surfaced as contract_revert, or on a failed transaction)

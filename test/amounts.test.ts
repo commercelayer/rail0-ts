@@ -61,6 +61,11 @@ describe('describeError', () => {
     expect(describeError(null)).toBeUndefined()
   })
 
+  it('describes the own-wallet and suspended add-wallet codes (gateway #411)', () => {
+    expect(describeError('not_your_wallet')).toContain('signed in with')
+    expect(describeError('wallet_add_unavailable')).toContain('not available yet')
+  })
+
   it('exposes the hint on Rail0ApiError', () => {
     // One field to key on: the body is exactly code/title/detail now, with the `status`
     // and `error` aliases deleted rather than dual-sent (gateway #252).
