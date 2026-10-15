@@ -36,6 +36,12 @@ export interface WalletBalancesParams {
  * WalletsService. Every method is behind SIWE — a merchant manages its OWN
  * wallets here. Public, buyer-facing discovery of a merchant's accepted
  * wallets/tokens lives on PaymentMethodsResource (GET /payment_methods).
+ *
+ * A session is bound to the wallet it signed in with. Reads (list, get, balances)
+ * are account-wide, but update, delete and the token methods act only on the
+ * session's own wallet: another wallet of the same account is refused 403
+ * `not_your_wallet` (an operator session is exempt). create is suspended for
+ * every session (403 `wallet_add_unavailable`).
  */
 export class WalletsResource {
   constructor(private readonly http: HttpClient) {}
@@ -59,16 +65,20 @@ export class WalletsResource {
    * `POST /auth/nonces`) and its `signature`, produced with the added wallet's
    * own key — see CreateWalletRequest. The gateway rejects a signature that does
    * not recover to `address` (422) and an address already registered anywhere (409).
+   *
+   * CURRENTLY UNAVAILABLE: the gateway answers every session 403
+   * `wallet_add_unavailable` until the merchant wallet-management section lands.
    */
   create(account_id: string, params: CreateWalletRequest): Promise<Wallet> {
     return this.http.post(path`/accounts/${account_id}/wallets`, params)
   }
 
   /**
-   * Update a wallet's label or active flag. `active: false` on the account's
-   * only active wallet is refused with 422 `last_active_wallet`: login resolves
-   * the account from a wallet, so an account with none could neither act nor add
-   * one back — add or reactivate another wallet first.
+   * Update a wallet's label or active flag. Only the wallet the session signed in
+   * with: another wallet of the account is refused 403 `not_your_wallet` (an
+   * operator may change any). `active: false` on the account's only active wallet
+   * is refused with 422 `last_active_wallet`: login resolves the account from a
+   * wallet, so an account with none could neither act nor add one back.
    */
   update(account_id: string, id: string, params: UpdateWalletRequest): Promise<Wallet> {
     return this.http.patch(path`/accounts/${account_id}/wallets/${id}`, params)
@@ -76,7 +86,8 @@ export class WalletsResource {
 
   /**
    * Soft-delete (deactivate) a wallet — the same as `update(..., { active: false })`,
-   * so the account's only active wallet is refused with 422 `last_active_wallet`.
+   * so the account's only active wallet is refused with 422 `last_active_wallet`, and
+   * another wallet than the session's own with 403 `not_your_wallet`.
    */
   delete(account_id: string, id: string): Promise<void> {
     return this.http.delete(path`/accounts/${account_id}/wallets/${id}`)
@@ -97,6 +108,9 @@ export class WalletsResource {
   // `token_id` on remove/enable/disable is the TOKEN's UUID (as returned in
   // WalletTokenHolding.token), NOT an id of the holding row — the gateway looks
   // the holding up by (wallet, token). A non-UUID is a clean 404.
+  //
+  // Owner only, and only on the wallet the session signed in with: another wallet of
+  // the same account is refused 403 `not_your_wallet`.
 
   /**
    * Accept a token (chain) on this wallet — an upsert on (wallet, token): a

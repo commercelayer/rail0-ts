@@ -189,9 +189,13 @@ export interface PrepareRequest {
  * uniqueness (409 if already registered anywhere). The proven address need not
  * equal the session address — a merchant may control several payee wallets.
  *
- * `message`/`signature` stay required here although the OpenAPI marks them
- * optional: only an ADMIN may add a wallet without the proof, and this method is
- * the owner flow, where the gateway answers 400 without them.
+ * `message`/`signature` are required: adding a wallet is the owner's alone, and
+ * an admin cannot add one to another account (the proof is exactly what an operator
+ * cannot produce).
+ *
+ * CURRENTLY UNAVAILABLE: the gateway answers every session 403
+ * `wallet_add_unavailable` until the merchant wallet-management section lands; the
+ * request shape stays because that section reuses it.
  */
 export interface CreateWalletRequest {
   address: string
