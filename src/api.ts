@@ -160,6 +160,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim a pending account with its emailed invite and a SIWE proof by its registered wallet
+         * @description Unauthenticated: a pending account has no session to show — its wallet resolves to no account at login until this call succeeds. Two factors at once: `invite`, the HMAC-signed link the admin emailed to the account's address (it covers the account id, the wallet address, the email and an expiry, so an operator's correction of the address or email invalidates every earlier invite), and a SIWE proof whose statement is exactly "Claim this RAIL0 merchant account with this wallet", signed by the account's REGISTERED wallet (nonce from POST /auth/nonces; same domain/uri/chain binding as login). The invite and the account state are checked before the proof, so a stale link never spends the nonce. On success sets `claimed_at` (the account becomes operational) and answers with the same session POST /auth would mint. Single use: once claimed the account is no longer pending. The account is the one the invite names: there is no account id in the path. Throttled per client IP with the rest of the public surface (the same limit as POST /auth).
+         */
+        post: operations["claimAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/blockchains": {
         parameters: {
             query?: never;
@@ -203,13 +223,13 @@ export interface paths {
         };
         /**
          * List every account (admin)
-         * @description Admin only (require_admin!: the session account must hold the operator grant — a row in administrators — and be active, re-read from the rows per request, so a revocation bites on the next request; the session wallet must be active even for reads, because these reads are cross-account). Every account, Full entity, each carrying `admin` (whether the account holds the grant). Filters: admin, active; sort and pagination.
+         * @description Admin only (require_admin!: the session account must hold the operator grant — a row in administrators — and be active, re-read from the rows per request, so a revocation bites on the next request; the session wallet must be active even for reads, because these reads are cross-account). Every account, Full entity, each carrying `admin` (whether the account holds the grant), `claimed_at` (null while the account is pending its merchant's claim) and the derived `status`: `pending_claim` (created by an operator, not yet claimed — not operational: no login, payment methods, payments, webhooks or operator grant), `active` (claimed and active) or `deactivated` (switched off by an operator, claimed or not). Filters: admin, status (`status=active` is the operational filter; there is no raw `active` filter, which would also match a pending account); sort and pagination.
          */
         get: operations["listAccounts"];
         put?: never;
         /**
-         * Create an account with its first wallet (admin)
-         * @description Admin only. The first wallet is required and registered WITHOUT a SIWE proof — the admin vouches: auth resolves the account FROM the wallet, so a walletless account could never be signed into to add one. Ownership is still proven at the owner's first SIWE login; a typo is recoverable by deactivating the wallet before first use. One transaction — the account cannot exist without its wallet. Unique name/email/address collisions answer 409. Creation never carries the operator grant — granting is a separate POST /admin/administrators/{account_id}.
+         * Create a pending account with its first wallet (admin)
+         * @description Admin only. The first wallet is required and registered WITHOUT a SIWE proof: the merchant gives the operator its address, and the account is born PENDING (`claimed_at` null, `status` `pending_claim`) — the wallet row exists, but the account is not operational until the merchant claims it at POST /claim with the emailed invite and a SIWE proof by that wallet. While pending, a typo is corrected with PATCH /accounts/{account_id} `address`. One transaction — the account cannot exist without its wallet. Unique name/email/address collisions answer 409. Creation never carries the operator grant — granting is a separate POST /admin/administrators/{account_id}.
          */
         post: operations["createAccount"];
         delete?: never;
@@ -229,7 +249,7 @@ export interface paths {
         };
         /**
          * Read an account profile (own account; any account for an admin)
-         * @description The account row. The owner reads their own profile (id, name, email and timestamps — the explicit allow-list, with no admin/role field: the operator axis leaves no trace on a standard response); an active admin reads ANY account, whole record (Full entity) plus `admin`, whether the account holds the operator grant. For a non-admin, another account's id and an id that is not an account answer alike, so this cannot be used to tell whether an account exists.
+         * @description The account row. The owner reads their own profile (id, name, email, priority_tip and timestamps — the explicit allow-list, with no admin/role field: the operator axis leaves no trace on a standard response); an active admin reads ANY account, whole record (AccountFull: every column plus `admin`, whether the account holds the operator grant, and the derived `status`). For a non-admin, another account's id and an id that is not an account answer alike, so this cannot be used to tell whether an account exists.
          */
         get: operations["getAccount"];
         put?: never;
@@ -238,8 +258,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Update an account: own profile; an admin may also set active
-         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise), and an admin may patch ANY account. The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself.
+         * Update an account: own profile; an admin may also set active and correct a pending account
+         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise), and an admin may patch ANY account. The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself. Claim terms: while the account is PENDING its claim, an operator may correct its `email` and its wallet `address` (admin only; repoints the account's single wallet, audited as account.update with the previous and new address) — each correction invalidates every claim invite sent before it, since the invite's signature covers both. Once the account is claimed an operator can no longer change either (422 account_not_pending); the owner's own email edit is unchanged.
          */
         patch: {
             parameters: {
@@ -255,23 +275,25 @@ export interface paths {
                     "application/json": {
                         /** @description Display name. Unique across accounts. */
                         name?: string;
-                        /** @description Contact email. Unique across accounts. */
+                        /** @description Contact email. Stored lowercase; unique across accounts case-insensitively. */
                         email?: string;
                         /** @description Active status (admin only). */
                         active?: boolean;
                         /** @description Tip the network's suggested priority fee on the merchant's own transactions (default true); false uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy). Owner or admin. */
                         priority_tip?: boolean;
+                        /** @description Corrected wallet address of a PENDING account (admin only; 403 for an owner, 422 account_not_pending once claimed). Unique across wallets (409). */
+                        address?: string;
                     };
                 };
             };
             responses: {
-                /** @description The updated account profile. */
+                /** @description The updated account: the owner's profile (Account), or for an admin session the whole record (AccountFull). */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Account"];
+                        "application/json": components["schemas"]["Account"] | components["schemas"]["AccountFull"];
                     };
                 };
                 /** @description Neither field was supplied, or a value was blank/malformed. */
@@ -310,7 +332,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description last_admin: the change would leave zero active admins. */
+                /** @description last_admin: the change would leave zero active admins. account_not_pending: an operator tried to change the email or address of an account its merchant has already claimed. */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1182,8 +1204,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Start blocks and confirmations per chain for the indexer
-         * @description HMAC-protected, indexer-facing.
+         * Start blocks and confirmations per chain (currently unused by the indexer)
+         * @description HMAC-protected, indexer-facing. Currently unused: under Envio the indexer's chain and contract list must be static in its config.yaml at codegen/boot, so rail0-indexer generates it offline from the gateway's config/seeds.yml (bin/sync-indexer-config.ts). Kept as a possible future hook, e.g. for the resync floor computed here.
          */
         get: operations["getSyncBlockchains"];
         put?: never;
@@ -1395,7 +1417,7 @@ export interface paths {
         };
         /**
          * The effective operator policy of this process (admin)
-         * @description Every window, threshold and limit in config/policy.rb as this process resolved it from the environment, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, fees, rpc), each as {value, env, overridden}: the variable that sets it (null for a constant) and whether that variable is set. Read-only: changing a value is a deploy. Nothing secret.
+         * @description Every window, threshold and limit in config/policy.rb as this process resolved it from the environment, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, fees, rpc), each as {value, env, overridden, description}: the variable that sets it (null for a constant), whether that variable is set, and a plain-text explanation of what the entry is for. Read-only: changing a value is a deploy. Nothing secret.
          */
         get: operations["adminPolicy"];
         put?: never;
@@ -2201,6 +2223,34 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        /** @description The whole account record, as an operator reads it (Full entity: GET /accounts, POST /accounts, and GET/PATCH /accounts/{account_id} for an admin session): every column plus `admin` and the derived `status`. */
+        AccountFull: {
+            /** Format: uuid */
+            id?: string;
+            name?: string;
+            /** @description Stored lowercase. */
+            email?: string;
+            /** @description The operator's switch. false = deactivated. */
+            active?: boolean;
+            /** @description The merchant's fee setting (see Account.priority_tip). */
+            priority_tip?: boolean;
+            /**
+             * Format: date-time
+             * @description When the merchant claimed the account at POST /claim; null while it is pending its claim.
+             */
+            claimed_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+            /** @description Whether the account holds the operator grant (a row in administrators). */
+            admin?: boolean;
+            /**
+             * @description One-word reading of active and claimed_at together: pending_claim (not yet claimed, not operational), active (claimed and active) or deactivated (switched off by an operator, claimed or not).
+             * @enum {string}
+             */
+            status?: "pending_claim" | "active" | "deactivated";
+        };
         /** @description An operator grant with the people named. */
         AdministratorFull: {
             /** Format: uuid */
@@ -2282,6 +2332,8 @@ export interface components {
             env?: string | null;
             /** @description Whether that variable is set in this process. */
             overridden?: boolean;
+            /** @description Plain-text explanation of the entry: what it controls, which part of the gateway reads it and the effect of raising or lowering it, and its unit (from config/policy_descriptions.yml). Every entry has one; older gateways omit the field. */
+            description?: string;
         };
         /** @description GET /admin/policy: the effective policy, grouped. Every leaf is a PolicySetting. */
         PolicyReport: {
@@ -2711,6 +2763,64 @@ export interface operations {
             };
         };
     };
+    claimAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The claim invite from the merchant's email: base64url(JSON payload) "." base64url(HMAC-SHA256(RAIL0_CLAIM_SECRET, payload segment)), both unpadded. Payload keys: v (1), account_id, address (lowercase), email, exp (unix seconds). */
+                    invite: string;
+                    /** @description EIP-4361 SIWE message signed by the account's registered wallet. Its statement must be exactly "Claim this RAIL0 merchant account with this wallet" — a login or wallet-add proof is refused with 422 siwe_purpose_mismatch. */
+                    message: string;
+                    /** @description Signature over the SIWE message (0x…). */
+                    signature: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Claimed; the account is operational. The session, as POST /auth returns it. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description invite, message or signature missing. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description claim_invite_invalid (not signed by the gateway's claim secret, malformed, for an account that does not exist, or for an email/address the account no longer has), claim_invite_expired, account_not_pending (already claimed, or deactivated), signer_mismatch (the proof is not signed by the registered wallet), or one of the SIWE failures of POST /auth (invalid_siwe, invalid_nonce, nonce_used, siwe_purpose_mismatch, siwe_domain_not_allowed, siwe_uri_mismatch, siwe_chain_mismatch, siwe_proof_expired). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description claim_unavailable: this gateway has no RAIL0_CLAIM_SECRET configured. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listBlockchains: {
         parameters: {
             query?: {
@@ -2774,8 +2884,8 @@ export interface operations {
                 sort?: components["parameters"]["Sort"];
                 /** @description Filter by whether the account holds the operator grant. */
                 admin?: boolean;
-                /** @description Filter by active status. */
-                active?: boolean;
+                /** @description Filter by derived status: pending_claim (not yet claimed by its merchant), active (claimed and active) or deactivated. */
+                status?: "pending_claim" | "active" | "deactivated";
             };
             header?: never;
             path?: never;
@@ -2789,7 +2899,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["AccountFull"][];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -2808,9 +2918,9 @@ export interface operations {
                 "application/json": {
                     /** @description Display name. Unique. */
                     name: string;
-                    /** @description Contact email. Unique. */
+                    /** @description Contact email. Stored lowercase; unique case-insensitively. */
                     email: string;
-                    /** @description The owner's wallet address (0x…40 hex). Vouched, not proven. */
+                    /** @description The owner's wallet address (0x…40 hex). Proven by the merchant's claim, not here. */
                     address: string;
                     /** @description Label for the first wallet. */
                     label?: string;
@@ -2824,7 +2934,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["AccountFull"];
                 };
             };
             /** @description A required field is missing or malformed. */
@@ -2860,13 +2970,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The account's profile: id, name, email, created_at, updated_at. */
+            /** @description The owner's profile (Account: id, name, email, priority_tip, timestamps), or for an admin session the whole record (AccountFull). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Account"] | components["schemas"]["AccountFull"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -4740,7 +4850,7 @@ export interface operations {
                     "application/json": Record<string, never>;
                 };
             };
-            /** @description expiry_in_the_past: expires_at is not in the future. */
+            /** @description expiry_in_the_past: expires_at is not in the future. account_unclaimed: the account is still pending its merchant's claim, so it cannot hold the grant. */
             422: {
                 headers: {
                     [name: string]: unknown;
