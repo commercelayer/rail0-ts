@@ -170,10 +170,35 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Claim a pending account with its emailed invite and a SIWE proof by its registered wallet
-         * @description Unauthenticated: a pending account has no session to show — its wallet resolves to no account at login until this call succeeds. Two factors at once: `invite`, the HMAC-signed link the admin emailed to the account's address (it covers the account id, the wallet address, the email and an expiry, so an operator's correction of the address or email invalidates every earlier invite), and a SIWE proof whose statement is exactly "Claim this RAIL0 merchant account with this wallet", signed by the account's REGISTERED wallet (nonce from POST /auth/nonces; same domain/uri/chain binding as login). The invite and the account state are checked before the proof, so a stale link never spends the nonce. On success sets `claimed_at` (the account becomes operational) and answers with the same session POST /auth would mint. Single use: once claimed the account is no longer pending. The account is the one the invite names: there is no account id in the path. Throttled per client IP with the rest of the public surface (the same limit as POST /auth).
+         * Complete an onboarding request: create the account with the emailed link and a SIWE proof by its wallet
+         * @description Unauthenticated: the account does not exist until this call succeeds. The one way an account is born, for an operator's invite and a public sign-up alike. Two factors at once: `token`, the link the GATEWAY emailed for the onboarding request (HMAC-signed; it names the request, its link version, address, email and name, and expires with the request), and a SIWE proof whose statement is exactly "Claim this RAIL0 merchant account with this wallet", signed by the request's wallet (nonce from POST /auth/nonces; same domain/uri/chain binding as login). The link and the request are checked before the proof, so a stale link never spends the nonce. On success, in one transaction: the account is created with the REQUEST'S id, active, with its wallet; the request is marked completed with `terms_version`. The answer is the same session POST /auth would mint (201). A repeat with the same link after completion is a login: 200 and a fresh session if the account is active. A name, email or address taken by an account between the request and the claim answers 409 and leaves the request open. Throttled per client IP with the rest of the public surface (the same limit as POST /auth).
          */
-        post: operations["claimAccount"];
+        post: operations["claimOnboarding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an onboarding request: a public sign-up, or an operator's invite
+         * @description One endpoint and one body for both entrances, discriminated by the Authorization header BEFORE the body is read:
+         *     - **no header**: a public self-service sign-up (origin `signup`, link valid 24 h). Every outcome — a request created, an open one reused, or an email that already has an account (then the mailbox receives "account already exists" instead of a link) — answers the SAME 202 `{status: "check_your_email"}`, so the response reveals nothing about which emails are registered. An address or a name already registered is explicit (409): addresses are public on-chain, and names are shown to payers.
+         *     - **an admin session** (require_admin!): an operator's invite (origin `operator`, link valid 7 days), audited as onboarding.create (onboarding.send when an open invite with the same email and address is reused), with explicit 409s.
+         *     - **any other token**: 401 (invalid, expired, revoked; the codes of every authenticated route) or 403 (valid but without the operator grant, or a deactivated wallet) — never a fallback to the public path.
+         *
+         *     Before anything is written: validation (400), a delivering email provider (503) and the email domain allowlist (422). An open request of the same origin with the same email and address is REUSED (a new link: link_version + 1, renewed expiry, send_count + 1, and the name just submitted); otherwise a new request is inserted, and the open requests already past their expiry are deleted in the same transaction. Open requests never block each other: clashes with other requests are reported to the operator as `conflicts`. The mail is queued after the commit and sent by the gateway's worker; no response ever contains the link. `RAIL0_SIGNUP_ENABLED=false` switches the public path off (503 signup_unavailable) without touching invites. Rate limits: `signup/ip` (5/h per client IP, an IPv6 client by its /64) without a verifiable token, `signup/operator` (60/h per session) with one, plus the shared public per-IP tier.
+         */
+        post: operations["signup"];
         delete?: never;
         options?: never;
         head?: never;
@@ -223,15 +248,11 @@ export interface paths {
         };
         /**
          * List every account (admin)
-         * @description Admin only (require_admin!: the session account must hold the operator grant — a row in administrators — and be active, re-read from the rows per request, so a revocation bites on the next request; the session wallet must be active even for reads, because these reads are cross-account). Every account, Full entity, each carrying `admin` (whether the account holds the grant), `claimed_at` (null while the account is pending its merchant's claim) and the derived `status`: `pending_claim` (created by an operator, not yet claimed — not operational: no login, payment methods, payments, webhooks or operator grant), `active` (claimed and active) or `deactivated` (switched off by an operator, claimed or not). Filters: admin, status (`status=active` is the operational filter; there is no raw `active` filter, which would also match a pending account); sort and pagination.
+         * @description Admin only (require_admin!: the session account must hold the operator grant — a row in administrators — and be active, re-read from the rows per request, so a revocation bites on the next request; the session wallet must be active even for reads, because these reads are cross-account). Every account, Full entity, each carrying `admin` (whether the account holds the grant) and the derived `status`: `active` or `deactivated` (switched off by an operator). Filters: admin, status; sort and pagination. There is no create: an account is born only at POST /claim, from an onboarding request (POST /signup).
          */
         get: operations["listAccounts"];
         put?: never;
-        /**
-         * Create a pending account with its first wallet (admin)
-         * @description Admin only. The first wallet is required and registered WITHOUT a SIWE proof: the merchant gives the operator its address, and the account is born PENDING (`claimed_at` null, `status` `pending_claim`) — the wallet row exists, but the account is not operational until the merchant claims it at POST /claim with the emailed invite and a SIWE proof by that wallet. While pending, a typo is corrected with PATCH /accounts/{account_id} `address`. One transaction — the account cannot exist without its wallet. Unique name/email/address collisions answer 409. Creation never carries the operator grant — granting is a separate POST /admin/administrators/{account_id}.
-         */
-        post: operations["createAccount"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -258,8 +279,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Update an account: own profile; an admin may also set active and correct a pending account
-         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise), and an admin may patch ANY account. The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself. Claim terms: while the account is PENDING its claim, an operator may correct its `email` and its wallet `address` (admin only; repoints the account's single wallet, audited as account.update with the previous and new address) — each correction invalidates every claim invite sent before it, since the invite's signature covers both. Once the account is claimed an operator can no longer change either (422 account_not_pending); the owner's own email edit is unchanged.
+         * Update an account: own profile; an admin may also set active
+         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise). An admin may also rename ANY account (audited as account.update), but not change another account's email (403 forbidden): the contact email is its owner's, and corrections before the account exists are made on the onboarding request (PATCH /admin/onboardings/{id}). The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself.
          */
         patch: {
             parameters: {
@@ -281,8 +302,6 @@ export interface paths {
                         active?: boolean;
                         /** @description Tip the network's suggested priority fee on the merchant's own transactions (default true); false uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy). Owner or admin. */
                         priority_tip?: boolean;
-                        /** @description Corrected wallet address of a PENDING account (admin only; 403 for an owner, 422 account_not_pending once claimed). Unique across wallets (409). */
-                        address?: string;
                     };
                 };
             };
@@ -314,7 +333,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description Another account's id, or the session wallet is deactivated. */
+                /** @description Another account's id, the session wallet is deactivated, active without the operator grant, or an operator changing another account's email (forbidden). */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -332,7 +351,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description last_admin: the change would leave zero active admins. account_not_pending: an operator tried to change the email or address of an account its merchant has already claimed. */
+                /** @description last_admin: the change would leave zero active admins. */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1417,7 +1436,7 @@ export interface paths {
         };
         /**
          * The effective operator policy of this process (admin)
-         * @description Every window, threshold and limit in config/policy.rb as this process resolved it from the environment, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, fees, rpc), each as {value, env, overridden, description}: the variable that sets it (null for a constant), whether that variable is set, and a plain-text explanation of what the entry is for. Read-only: changing a value is a deploy. Nothing secret.
+         * @description Every window, threshold and limit in config/policy.rb as this process resolved it from the environment, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, fees, rpc, email), each as {value, env, overridden, description}: the variable that sets it (null for a constant), whether that variable is set, and a plain-text explanation of what the entry is for. Read-only: changing a value is a deploy. Nothing secret.
          */
         get: operations["adminPolicy"];
         put?: never;
@@ -1568,6 +1587,76 @@ export interface paths {
         get: operations["listAdminActions"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/onboardings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Onboarding requests, with their clashes (admin)
+         * @description Every onboarding request in the selected states — open and expired by default, newest first — whole record each with the derived `status`, the `creator` (the operator account of an invite; null for a sign-up) and `conflicts`: the accounts and the other not-completed requests that already hold its name (accounts only), email or address. Clashes do not block anything: the first claim wins and the other fails with a 409. An expired request stays listed until the next new request deletes it. `last_sent_at`/`send_count` count the QUEUED sends; `last_delivered_at`/`last_send_error` say what the provider did with the last one (both null while it is in flight). Filters: status (multi-value), origin, send_failed; sort (created_at, expires_at, last_sent_at, name, email) and pagination.
+         */
+        get: operations["listOnboardings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/onboardings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The onboarding request id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel an onboarding request that is not completed (admin)
+         * @description Deletes the request (a mistaken invite, a suspicious sign-up); its links stop working. Audited as onboarding.delete with its name, email and address. A completed request is history: to stop the merchant, deactivate the account.
+         */
+        delete: operations["deleteOnboarding"];
+        options?: never;
+        head?: never;
+        /**
+         * Correct an onboarding request and send a new link (admin)
+         * @description New values for a request that is not completed (an expired one is renewed). The resulting values are validated and checked like a creation — a delivering provider, the domain allowlist, and no account holding the email, address or name (explicit 409s) — then, under the row lock: the values are written, link_version + 1 (every earlier link is superseded), a renewed expiry, send_count + 1, audited as onboarding.update with the changed `fields` and their `previous` values, and a correction mail queued to the (new) email, saying what changed. Nothing goes to the old address.
+         */
+        patch: operations["updateOnboarding"];
+        trace?: never;
+    };
+    "/admin/onboardings/{id}/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The onboarding request id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resend a request's link: the invite again, or a reminder for a sign-up (admin)
+         * @description No body. The same values, a new link: checked like a creation (provider, domain, no account holding the email, address or name — correct the request first on a 409), then link_version + 1, renewed expiry, send_count + 1, the last send's outcome cleared, audited as onboarding.send, and the mail queued: `invite` for an operator request, `solicit` (a reminder) for a sign-up. Also the way to retry a failed send.
+         */
+        post: operations["sendOnboarding"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2223,7 +2312,7 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
-        /** @description The whole account record, as an operator reads it (Full entity: GET /accounts, POST /accounts, and GET/PATCH /accounts/{account_id} for an admin session): every column plus `admin` and the derived `status`. */
+        /** @description The whole account record, as an operator reads it (Full entity: GET /accounts, and GET/PATCH /accounts/{account_id} for an admin session): every column plus `admin` and the derived `status`. */
         AccountFull: {
             /** Format: uuid */
             id?: string;
@@ -2234,11 +2323,6 @@ export interface components {
             active?: boolean;
             /** @description The merchant's fee setting (see Account.priority_tip). */
             priority_tip?: boolean;
-            /**
-             * Format: date-time
-             * @description When the merchant claimed the account at POST /claim; null while it is pending its claim.
-             */
-            claimed_at?: string | null;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -2246,10 +2330,107 @@ export interface components {
             /** @description Whether the account holds the operator grant (a row in administrators). */
             admin?: boolean;
             /**
-             * @description One-word reading of active and claimed_at together: pending_claim (not yet claimed, not operational), active (claimed and active) or deactivated (switched off by an operator, claimed or not).
+             * @description One-word reading of active: active, or deactivated (switched off by an operator).
              * @enum {string}
              */
-            status?: "pending_claim" | "active" | "deactivated";
+            status?: "active" | "deactivated";
+        };
+        /** @description An onboarding request (Full entity): every column plus the derived `status` and the `creator`. Never a token or a link: the token is not stored. */
+        Onboarding: {
+            /**
+             * Format: uuid
+             * @description Also the id of the account the claim creates.
+             */
+            id?: string;
+            /** @enum {string} */
+            origin?: "operator" | "signup";
+            name?: string;
+            /** @description Lowercase. */
+            email?: string;
+            /** @description Lowercase 0x + 40 hex. */
+            address?: string;
+            /**
+             * Format: uuid
+             * @description The operator account of an invite; null for a sign-up.
+             */
+            created_by?: string | null;
+            /** @description The version of the last link minted; a link for any lower one answers onboarding_link_superseded. */
+            link_version?: number;
+            /**
+             * Format: date-time
+             * @description When the last send was queued.
+             */
+            last_sent_at?: string;
+            /** @description Sends queued in all (0 for a request migrated from a pending account, which has no link in the current format yet). */
+            send_count?: number;
+            /**
+             * Format: date-time
+             * @description When the provider accepted the last send.
+             */
+            last_delivered_at?: string | null;
+            /** @description A short fixed code for why the last send failed (provider_rejected, timeout, email_domain_not_allowed, …); null when it was delivered or is in flight. */
+            last_send_error?: string | null;
+            /**
+             * Format: date-time
+             * @description When the last link, and the open request, expire.
+             */
+            expires_at?: string;
+            /**
+             * Format: date-time
+             * @description When the claim created the account.
+             */
+            completed_at?: string | null;
+            /** @description The terms version accepted at the claim. */
+            terms_version?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+            /** @enum {string} */
+            status?: "open" | "expired" | "completed";
+            /** @description The operator who created an invite; null for a sign-up. */
+            creator?: components["schemas"]["Account"] | null;
+        };
+        /** @description A row of GET /admin/onboardings: the request and its clashes. */
+        OnboardingListed: components["schemas"]["Onboarding"] & {
+            conflicts?: components["schemas"]["OnboardingConflict"][];
+        };
+        /** @description A clash of a request with an account (the value already belongs to it) or with another request not yet completed. */
+        OnboardingConflict: {
+            /** @enum {string} */
+            field: "name" | "email" | "address";
+            /** @enum {string} */
+            with: "account" | "onboarding";
+            /**
+             * Format: uuid
+             * @description The account's or the other request's id.
+             */
+            id: string;
+        };
+        /** @description The mail queued for the request — never its link, which exists only in the mail. */
+        QueuedEmail: {
+            /** @enum {string} */
+            kind: "invite" | "solicit" | "correction";
+            to: string;
+            /** @enum {boolean} */
+            queued: true;
+        };
+        /** @description An operator's create, reuse or correction. */
+        OnboardingOutcome: {
+            onboarding: components["schemas"]["Onboarding"];
+            conflicts: components["schemas"]["OnboardingConflict"][];
+            email: components["schemas"]["QueuedEmail"];
+        };
+        /** @description A resend or reminder. */
+        OnboardingSent: {
+            onboarding: components["schemas"]["Onboarding"];
+            email: components["schemas"]["QueuedEmail"];
+        };
+        /** @description The mail as it would have been sent, rendered by the gateway's template with `<claim link generated after the request is created>` in place of the link. */
+        EmailPreview: {
+            to: string;
+            subject: string;
+            text: string;
         };
         /** @description An operator grant with the people named. */
         AdministratorFull: {
@@ -2362,6 +2543,12 @@ export interface components {
                 [key: string]: components["schemas"]["PolicySetting"];
             };
             rpc?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            onboarding?: {
+                [key: string]: components["schemas"]["PolicySetting"];
+            };
+            email?: {
                 [key: string]: components["schemas"]["PolicySetting"];
             };
             /** Format: date-time */
@@ -2763,7 +2950,7 @@ export interface operations {
             };
         };
     };
-    claimAccount: {
+    claimOnboarding: {
         parameters: {
             query?: never;
             header?: never;
@@ -2773,17 +2960,28 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The claim invite from the merchant's email: base64url(JSON payload) "." base64url(HMAC-SHA256(RAIL0_CLAIM_SECRET, payload segment)), both unpadded. Payload keys: v (1), account_id, address (lowercase), email, exp (unix seconds). */
-                    invite: string;
-                    /** @description EIP-4361 SIWE message signed by the account's registered wallet. Its statement must be exactly "Claim this RAIL0 merchant account with this wallet" — a login or wallet-add proof is refused with 422 siwe_purpose_mismatch. */
+                    /** @description The token from the emailed link (`<claim page>#<token>`): base64url(JSON payload) "." base64url(HMAC-SHA256(RAIL0_ONBOARDING_SECRET, payload segment)), both unpadded. Payload keys: v (2), onboarding_id, lv (the link version), address (lowercase), email (lowercase), name, exp (unix seconds). Minted only by the gateway; a client may decode the payload to show it, never mint one. */
+                    token: string;
+                    /** @description EIP-4361 SIWE message signed by the request's wallet. Its statement must be exactly "Claim this RAIL0 merchant account with this wallet" — a login or wallet-add proof is refused with 422 siwe_purpose_mismatch. */
                     message: string;
                     /** @description Signature over the SIWE message (0x…). */
                     signature: string;
+                    /** @description The version of the terms the merchant accepted. Missing or blank is 422 terms_required. */
+                    terms_version: string;
                 };
             };
         };
         responses: {
-            /** @description Claimed; the account is operational. The session, as POST /auth returns it. */
+            /** @description The request was already completed: a fresh session for its (active) account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Account created and operational. The session, as POST /auth returns it. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -2792,7 +2990,7 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            /** @description invite, message or signature missing. */
+            /** @description token, message or signature missing. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2801,7 +2999,25 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description claim_invite_invalid (not signed by the gateway's claim secret, malformed, for an account that does not exist, or for an email/address the account no longer has), claim_invite_expired, account_not_pending (already claimed, or deactivated), signer_mismatch (the proof is not signed by the registered wallet), or one of the SIWE failures of POST /auth (invalid_siwe, invalid_nonce, nonce_used, siwe_purpose_mismatch, siwe_domain_not_allowed, siwe_uri_mismatch, siwe_chain_mismatch, siwe_proof_expired). */
+            /** @description account_deactivated: a repeat of a completed claim whose account an operator has deactivated. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description account_name_taken, account_email_taken or account_wallet_taken: an account took the value first. The request stays open. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description onboarding_link_invalid (not signed by the gateway, malformed, for a request that no longer exists, or whose email/address differ from the request), onboarding_link_expired, onboarding_link_superseded (a newer link was sent: use the newest email), terms_required, signer_mismatch (the proof is not signed by the request's wallet), or one of the SIWE failures of POST /auth (invalid_siwe, invalid_nonce, nonce_used, siwe_purpose_mismatch, siwe_domain_not_allowed, siwe_uri_mismatch, siwe_chain_mismatch, siwe_proof_expired). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2810,13 +3026,139 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description claim_unavailable: this gateway has no RAIL0_CLAIM_SECRET configured. */
+            /** @description rate_limited. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description onboarding_unavailable: this gateway has no RAIL0_ONBOARDING_SECRET configured. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    signup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The account's name (stripped). Unique among accounts. */
+                    name: string;
+                    /** @description Contact email, `x@y`; the link is sent here. Stored stripped and lowercase. */
+                    email: string;
+                    /** @description The merchant's wallet (stored lowercase). The claim must be signed by it. */
+                    address: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Operator: an open invite with the same email and address was reused and a new link queued. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingOutcome"];
+                };
+            };
+            /** @description Operator: the invite was created and its mail queued. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingOutcome"];
+                };
+            };
+            /** @description Public: always this body — created, reused, or the email already has an account. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "check_your_email";
+                    };
+                };
+            };
+            /** @description validation_failed: a field is missing or malformed (name 1–100 characters, email `x@y`, address 0x + 40 hex). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A token was sent but is not valid: invalid_token, token_expired, token_revoked, sessions_revoked. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description forbidden (a valid session without the operator grant) or wallet_deactivated. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description account_wallet_taken or account_name_taken; for the operator also account_email_taken (the public path answers that one with the neutral 202). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description email_domain_not_allowed: the email is outside EMAIL_ALLOWED_DOMAINS (the body carries `allowed`, the domains that are); nothing was written. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description rate_limited. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description signup_unavailable (public path switched off), onboarding_unavailable, or email_provider_not_configured (operator: with `preview`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"] & {
+                        preview?: components["schemas"]["EmailPreview"];
+                    };
                 };
             };
         };
@@ -2884,8 +3226,8 @@ export interface operations {
                 sort?: components["parameters"]["Sort"];
                 /** @description Filter by whether the account holds the operator grant. */
                 admin?: boolean;
-                /** @description Filter by derived status: pending_claim (not yet claimed by its merchant), active (claimed and active) or deactivated. */
-                status?: "pending_claim" | "active" | "deactivated";
+                /** @description Filter by status: active or deactivated. */
+                status?: "active" | "deactivated";
             };
             header?: never;
             path?: never;
@@ -2904,59 +3246,6 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-        };
-    };
-    createAccount: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** @description Display name. Unique. */
-                    name: string;
-                    /** @description Contact email. Stored lowercase; unique case-insensitively. */
-                    email: string;
-                    /** @description The owner's wallet address (0x…40 hex). Proven by the merchant's claim, not here. */
-                    address: string;
-                    /** @description Label for the first wallet. */
-                    label?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description The created account, whole record (Full entity). */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AccountFull"];
-                };
-            };
-            /** @description A required field is missing or malformed. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            /** @description name, email or wallet address already taken. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
         };
     };
     getAccount: {
@@ -4850,7 +5139,7 @@ export interface operations {
                     "application/json": Record<string, never>;
                 };
             };
-            /** @description expiry_in_the_past: expires_at is not in the future. account_unclaimed: the account is still pending its merchant's claim, so it cannot hold the grant. */
+            /** @description expiry_in_the_past: expires_at is not in the future. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5398,7 +5687,7 @@ export interface operations {
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Only this kind of action. */
-                action?: "account.create" | "account.update" | "account.activate" | "account.deactivate" | "wallet.add" | "wallet.update" | "wallet.deactivate" | "administrator.grant" | "administrator.revoke" | "webhook.reset_circuit" | "transaction.redrive" | "catalog.reload" | "sync_errors.clear";
+                action?: "account.create" | "account.update" | "account.activate" | "account.deactivate" | "onboarding.create" | "onboarding.update" | "onboarding.send" | "onboarding.delete" | "wallet.add" | "wallet.update" | "wallet.deactivate" | "administrator.grant" | "administrator.revoke" | "webhook.reset_circuit" | "transaction.redrive" | "catalog.reload" | "sync_errors.clear";
                 /** @description Only actions by this admin account. */
                 actor_account_id?: string;
                 /** @description Only actions that landed on this account. */
@@ -5429,6 +5718,234 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listOnboardings: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description State(s): open, expired, completed — one value, a comma-separated list or the repeated `status[]=` form. Default: open,expired. */
+                status?: ("open" | "expired" | "completed")[];
+                /** @description Only requests from this entrance: operator (an invite) or signup (self-service). */
+                origin?: "operator" | "signup";
+                /** @description true: only requests whose last send failed (last_send_error set); false: only the others. */
+                send_failed?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The requests. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingListed"][];
+                };
+            };
+            /** @description validation_failed: an unknown status or origin. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The onboarding request id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description onboarding_not_found: no request with that id (never created, cancelled, or deleted after it expired). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description onboarding_completed: the request is completed (history); act on its account instead. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The onboarding request id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    email?: string;
+                    address?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Corrected; the correction mail is queued. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingOutcome"];
+                };
+            };
+            /** @description validation_failed: nothing supplied, nothing different, or a malformed value. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description onboarding_not_found: no request with that id (never created, cancelled, or deleted after it expired). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description account_email_taken, account_wallet_taken or account_name_taken. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description onboarding_completed: the request is completed (history); act on its account instead. email_domain_not_allowed: the email is outside EMAIL_ALLOWED_DOMAINS (the body carries `allowed`, the domains that are); nothing was written. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description email_provider_not_configured: no email provider that delivers is configured, so nothing was written; for the operator the body also carries `preview` (EmailPreview: the mail as it would have gone, with a placeholder instead of the link). onboarding_unavailable: RAIL0_ONBOARDING_SECRET (or the claim URL) is not configured. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"] & {
+                        preview?: components["schemas"]["EmailPreview"];
+                    };
+                };
+            };
+        };
+    };
+    sendOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The onboarding request id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new link is queued. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingSent"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description onboarding_not_found: no request with that id (never created, cancelled, or deleted after it expired). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description account_email_taken, account_wallet_taken or account_name_taken. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description onboarding_completed: the request is completed (history); act on its account instead. email_domain_not_allowed: the email is outside EMAIL_ALLOWED_DOMAINS (the body carries `allowed`, the domains that are); nothing was written. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description email_provider_not_configured: no email provider that delivers is configured, so nothing was written; for the operator the body also carries `preview` (EmailPreview: the mail as it would have gone, with a placeholder instead of the link). onboarding_unavailable: RAIL0_ONBOARDING_SECRET (or the claim URL) is not configured. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"] & {
+                        preview?: components["schemas"]["EmailPreview"];
+                    };
+                };
+            };
         };
     };
     listAdminBlockchains: {

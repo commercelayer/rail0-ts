@@ -66,6 +66,26 @@ describe('describeError', () => {
     expect(describeError('wallet_add_unavailable')).toContain('not available yet')
   })
 
+  it('describes the public onboarding codes of POST /signup and POST /claim', () => {
+    for (const code of [
+      'signup_unavailable',
+      'onboarding_unavailable',
+      'email_provider_not_configured',
+      'email_domain_not_allowed',
+      'account_email_taken',
+      'account_wallet_taken',
+      'account_name_taken',
+      'terms_required',
+      'onboarding_link_invalid',
+      'onboarding_link_expired',
+      'onboarding_link_superseded',
+    ]) {
+      expect(describeError(code), code).toBeTruthy()
+    }
+    // The console-only codes of /admin/onboardings stay out of the SDK's table.
+    expect(describeError('onboarding_completed')).toBeUndefined()
+  })
+
   it('exposes the hint on Rail0ApiError', () => {
     // One field to key on: the body is exactly code/title/detail now, with the `status`
     // and `error` aliases deleted rather than dual-sent (gateway #252).
