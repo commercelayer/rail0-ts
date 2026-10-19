@@ -417,6 +417,22 @@ describe('signSigningPayload (and its signPayment / signRefund wrappers)', () =>
     expect(fromPayload).toEqual(explicit)
   })
 
+  // Why signAuthorize / signCharge are deprecated: they hardcode the Transfer typehash,
+  // while every active deployment (v1.4.0) has the payer sign a ReceiveWithAuthorization
+  // — the gateway then recovers another address and answers 422 signer_mismatch.
+  it('signAuthorize does not match a ReceiveWithAuthorization payload (deprecated)', () => {
+    const params = {
+      privateKey: PRIVATE_KEY,
+      payment: PAYMENT,
+      nonce: NONCE,
+      contractAddress: CONTRACT_ADDRESS,
+      tokenDomain: TOKEN_DOMAIN,
+    }
+    const receive = signSigningPayload(PRIVATE_KEY, payload('ReceiveWithAuthorization'))
+    expect(signAuthorize(params)).not.toEqual(receive)
+    expect(signCharge(params)).not.toEqual(receive)
+  })
+
   it('throws on an unknown primaryType instead of silently using the transfer typehash', () => {
     expect(() => signPayment(PRIVATE_KEY, { signing_payload: payload('SomethingElse') })).toThrow(
       /unsupported EIP-712 primaryType: SomethingElse/,

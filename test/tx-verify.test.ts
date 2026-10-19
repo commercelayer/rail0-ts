@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { signTransaction } from '../src/signing.js'
+import type { SigningPayload } from '../src/resources/types.js'
+import { signPayment, signRefund, signSigningPayload, signTransaction } from '../src/signing.js'
 import {
   canonicalOperation,
   RAIL0_FUNCTION_SIGNATURES,
   RAIL0_SELECTORS,
   type Rail0Operation,
+  type SigningPayloadExpectation,
   signerAddress,
   type TxExpectation,
+  verifySigningPayload,
   verifyUnsignedTransaction,
 } from '../src/tx-verify.js'
 
@@ -219,8 +222,8 @@ describe('verifyUnsignedTransaction', () => {
     )
   })
 
-  it('skips the comparisons the payment record cannot support, but never the value', () => {
-    const sparse = { payment: {}, operation: 'void' }
+  it('skips the comparisons the payment record cannot support, but never the value or `to`', () => {
+    const sparse = { payment: { rail0_contract: RAIL0_CONTRACT }, operation: 'void' }
     expect(() => verifyUnsignedTransaction(unsigned(), sparse)).not.toThrow()
     expect(() => verifyUnsignedTransaction(unsigned({ value: 1 }), sparse)).toThrow(
       /attaches native currency/,
@@ -228,8 +231,41 @@ describe('verifyUnsignedTransaction', () => {
     // No usable rail0_id: nothing to assert rather than a false alarm.
     for (const rail0_id of ['', '0x', 'not-an-id', '0xabc', null]) {
       expect(() =>
-        verifyUnsignedTransaction(unsigned(), { payment: { rail0_id }, operation: 'void' }),
+        verifyUnsignedTransaction(unsigned(), {
+          payment: { rail0_id, rail0_contract: RAIL0_CONTRACT },
+          operation: 'void',
+        }),
       ).not.toThrow()
+    }
+    // …but the recipient is never skipped: without the contract there is nothing to hold
+    // `to` to, so the check refuses.
+    expect(() => verifyUnsignedTransaction(unsigned(), { payment: {}, operation: 'void' })).toThrow(
+      /without the payment's rail0_contract/,
+    )
+  })
+
+  // S1: a missing / "" / null `to` used to skip the comparison, and the signer then
+  // encoded the empty recipient — a CONTRACT CREATION deploying the gateway's `data`.
+  it('refuses a transaction with no recipient in all three shapes, and a non-address one', () => {
+    const noTo = JSON.parse(unsigned())
+    delete noTo.to
+    const shapes: [string, string][] = [
+      ['missing', JSON.stringify(noTo)],
+      ['empty', unsigned({ to: '' })],
+      ['null', unsigned({ to: null })],
+    ]
+    for (const [name, tx] of shapes) {
+      expect(() => verifyUnsignedTransaction(tx, expect_('void'), SIGNER), name).toThrow(
+        /refusing to sign: transaction has no recipient .* would deploy a contract/,
+      )
+      expect(() => signTransaction(tx, PRIVATE_KEY, expect_('void')), name).toThrow(
+        /would deploy a contract/,
+      )
+    }
+    for (const to of ['0x1234', 'not-an-address', 42]) {
+      expect(() => verifyUnsignedTransaction(unsigned({ to }), expect_('void'))).toThrow(
+        /refusing to sign/,
+      )
     }
   })
 
@@ -259,7 +295,231 @@ describe('signTransaction with an expectation', () => {
     expect(() => signTransaction(other, bytes, expect_('void'))).toThrow(/the signing key is/)
   })
 
+  // The signer refuses an empty recipient on its own, so even the deprecated blind form
+  // cannot produce a contract-creation transaction (rail0-go's SignTransaction does too).
+  it('refuses an empty or non-address `to` even without an expectation', () => {
+    const noTo = JSON.parse(unsigned())
+    delete noTo.to
+    for (const tx of [
+      JSON.stringify(noTo),
+      unsigned({ to: '' }),
+      unsigned({ to: null }),
+      unsigned({ to: '0x12' }),
+    ]) {
+      expect(() => signTransaction(tx, PRIVATE_KEY)).toThrow(/refusing to sign: invalid to address/)
+    }
+  })
+
+  // S3: the signer stripped only a lowercase 0x, so `0X…` calldata passed the checks
+  // (which normalise either prefix) and was signed with "0X" decoded as a 0x00 byte.
+  it('signs 0X-prefixed hex as the same bytes the checks verified', () => {
+    const data = calldataFor('void')
+    const upper = unsigned({
+      data: `0X${data.slice(2).toUpperCase()}`,
+      to: `0X${RAIL0_CONTRACT.slice(2)}`,
+    })
+    expect(() => verifyUnsignedTransaction(upper, expect_('void'), SIGNER)).not.toThrow()
+    expect(signTransaction(upper, PRIVATE_KEY, expect_('void'))).toBe(
+      signTransaction(unsigned(), PRIVATE_KEY, expect_('void')),
+    )
+    // Malformed hex throws rather than decoding to zeros.
+    expect(() => signTransaction(unsigned({ data: '0xzz' }), PRIVATE_KEY)).toThrow(/invalid hex/)
+    expect(() => signTransaction(unsigned({ data: '0xabc' }), PRIVATE_KEY)).toThrow(/invalid hex/)
+  })
+
   it('derives the signer address from the key', () => {
     expect(signerAddress(PRIVATE_KEY)).toBe(SIGNER.toLowerCase())
+  })
+})
+
+// ── verifySigningPayload ─────────────────────────────────────────────────────
+//
+// The EIP-712 authorization is the more dangerous artifact: the token honours it
+// directly, with no RAIL0 involvement, for up to message.value. Vectors from the CLI's
+// cmd/tx_verify_test.go (token 0x33…, attacker 0x44…, contract 0x22…, 1000000 units).
+
+const PAYLOAD_TOKEN = '0x3333333333333333333333333333333333333333'
+const ATTACKER = '0x4444444444444444444444444444444444444444'
+
+const payloadPayment = {
+  chain_id: CHAIN_ID,
+  token: PAYLOAD_TOKEN,
+  rail0_contract: RAIL0_CONTRACT,
+  amount: '1000000',
+  decimals: 6,
+}
+
+function testPayload(mutate?: (p: SigningPayload) => void): SigningPayload {
+  const p: SigningPayload = {
+    primaryType: 'ReceiveWithAuthorization',
+    types: {},
+    domain: { name: 'USD Coin', version: '2', chainId: CHAIN_ID, verifyingContract: PAYLOAD_TOKEN },
+    message: {
+      from: SIGNER,
+      to: RAIL0_CONTRACT,
+      value: '1000000',
+      validAfter: '0',
+      validBefore: '2000000000',
+      nonce: `0x${'ab'.repeat(32)}`,
+    },
+  }
+  mutate?.(p)
+  return p
+}
+
+const payloadExpect: SigningPayloadExpectation = { payment: payloadPayment, amount: '1' }
+
+describe('verifySigningPayload', () => {
+  it('accepts a well-formed payload, case-insensitively on addresses', () => {
+    expect(verifySigningPayload(testPayload(), payloadExpect, SIGNER)).toEqual(testPayload())
+    const upper = testPayload((p) => {
+      p.message.from = SIGNER.toUpperCase().replace('0X', '0x')
+      p.domain.verifyingContract = PAYLOAD_TOKEN.toUpperCase().replace('0X', '0x')
+      p.message.to = RAIL0_CONTRACT.toUpperCase().replace('0X', '0x')
+    })
+    expect(() => verifySigningPayload(upper, payloadExpect, SIGNER)).not.toThrow()
+    // Without `amount`, the payment's own stored base units are the expectation.
+    expect(() =>
+      verifySigningPayload(testPayload(), { payment: payloadPayment }, SIGNER),
+    ).not.toThrow()
+  })
+
+  const hostile: [string, (p: SigningPayload) => void, RegExp][] = [
+    // THE case this exists for: a drain of the signer's whole balance.
+    [
+      'value inflated far past the amount asked for',
+      (p) => {
+        p.message.value = '999999999999'
+      },
+      /the authorization is for 999999999999 base units but you asked for 1000000/,
+    ],
+    [
+      'from is not the signing key',
+      (p) => {
+        p.message.from = ATTACKER
+      },
+      /the authorization is from 0x4444.* but the signing key is/,
+    ],
+    [
+      'domain names another token',
+      (p) => {
+        p.domain.verifyingContract = ATTACKER
+      },
+      /the authorization is against token 0x4444.* but this payment's token is/,
+    ],
+    [
+      'domain names another chain',
+      (p) => {
+        p.domain.chainId = CHAIN_ID + 1
+      },
+      /the authorization is scoped to chain 84533 but this payment is on chain 84532/,
+    ],
+    [
+      'pays an address other than the RAIL0 contract',
+      (p) => {
+        p.message.to = PAYLOAD_TOKEN
+      },
+      /the authorization pays 0x3333.* but this payment's RAIL0 contract is/,
+    ],
+    [
+      'a smaller value (exact, not a ceiling)',
+      (p) => {
+        p.message.value = '999999'
+      },
+      /base units but you asked for 1000000/,
+    ],
+    [
+      'a non-integer value',
+      (p) => {
+        p.message.value = '1e6'
+      },
+      /base units but you asked for/,
+    ],
+  ]
+  for (const [name, mutate, want] of hostile) {
+    it(`refuses: ${name}`, () => {
+      expect(() => verifySigningPayload(testPayload(mutate), payloadExpect, SIGNER)).toThrow(want)
+      expect(() => verifySigningPayload(testPayload(mutate), payloadExpect, SIGNER)).toThrow(
+        /^refusing to sign: /,
+      )
+      // And the checked signer produces nothing for it.
+      expect(() => signSigningPayload(PRIVATE_KEY, testPayload(mutate), payloadExpect)).toThrow(
+        /refusing to sign/,
+      )
+    })
+  }
+
+  it('fails closed on what it cannot compare', () => {
+    const p = testPayload()
+    expect(() => verifySigningPayload(null, payloadExpect)).toThrow(/no signing payload/)
+    expect(() =>
+      verifySigningPayload(p, { payment: { ...payloadPayment, chain_id: null } }),
+    ).toThrow(/without the payment's chain_id/)
+    expect(() => verifySigningPayload(p, { payment: { ...payloadPayment, token: null } })).toThrow(
+      /without the payment's token/,
+    )
+    expect(() =>
+      verifySigningPayload(p, { payment: { ...payloadPayment, rail0_contract: null } }),
+    ).toThrow(/without the payment's rail0_contract/)
+    // No amount and no stored amount.
+    expect(() => verifySigningPayload(p, { payment: { ...payloadPayment, amount: null } })).toThrow(
+      /cannot check the authorization's amount/,
+    )
+    // An amount with no decimals to scale it by.
+    expect(() =>
+      verifySigningPayload(p, { payment: { ...payloadPayment, decimals: null }, amount: '1' }),
+    ).toThrow(/decimals are unknown/)
+    // An amount finer than the token allows (the CLI's `-a 1.0000001` on USDC).
+    expect(() => verifySigningPayload(p, { payment: payloadPayment, amount: '1.0000001' })).toThrow(
+      /refusing to sign: amount "1.0000001"/,
+    )
+    expect(() => verifySigningPayload(p, { payment: payloadPayment, amount: '' })).toThrow(
+      /without the amount you asked for/,
+    )
+  })
+
+  it('scales the human amount by decimals rather than reading the gateway back', () => {
+    // A refund of 0.5 against a 1.0 payment: the payment's own amount would refuse it.
+    const half = testPayload((p) => {
+      p.message.value = '500000'
+    })
+    expect(() =>
+      verifySigningPayload(half, { payment: payloadPayment, amount: '0.5' }),
+    ).not.toThrow()
+    expect(() => verifySigningPayload(half, { payment: payloadPayment })).toThrow(
+      /for 500000 base units but you asked for 1000000/,
+    )
+  })
+})
+
+describe('signSigningPayload / signPayment / signRefund with an expectation', () => {
+  it('sign the same bytes as the blind form when the payload passes', () => {
+    const p = testPayload()
+    const blind = signSigningPayload(PRIVATE_KEY, p)
+    expect(signSigningPayload(PRIVATE_KEY, p, payloadExpect)).toEqual(blind)
+    expect(signPayment(PRIVATE_KEY, { signing_payload: p }, payloadExpect)).toEqual(blind)
+    expect(signRefund(PRIVATE_KEY, { signing_payload: p }, payloadExpect)).toEqual(blind)
+  })
+
+  it('derive the signer from the key, so another key is refused', () => {
+    const otherKey = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const
+    expect(() => signSigningPayload(otherKey, testPayload(), payloadExpect)).toThrow(
+      /the authorization is from .* but the signing key is 0x70997970c51812dc3a010c7d01b50e0d17dc79c8/,
+    )
+    const inflated = {
+      signing_payload: testPayload((p) => {
+        p.message.value = '50000000000'
+      }),
+    }
+    expect(() => signPayment(PRIVATE_KEY, inflated, payloadExpect)).toThrow(/refusing to sign/)
+    expect(() => signRefund(PRIVATE_KEY, inflated, payloadExpect)).toThrow(/refusing to sign/)
+  })
+
+  it('keep the missing-payload errors of each wrapper', () => {
+    expect(() => signPayment(PRIVATE_KEY, {}, payloadExpect)).toThrow(/no signing_payload/)
+    expect(() => signRefund(PRIVATE_KEY, {}, payloadExpect)).toThrow(/call refundPrepare/)
+    expect(() => signSigningPayload(PRIVATE_KEY, null, payloadExpect)).toThrow(
+      /signing payload is missing/,
+    )
   })
 })

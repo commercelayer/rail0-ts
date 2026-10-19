@@ -152,13 +152,14 @@ export {
 export type { StablecoinChain, StablecoinInfo, StablecoinSymbol } from './stablecoins.js'
 // ── Stablecoin registry ──────────────────────────────────────────────
 export { chainInfo, eip2612Tokens, eip3009Tokens, stablecoins } from './stablecoins.js'
-// ── Pre-sign verification of a gateway-built transaction ─────────────
-export type { Rail0Operation, TxExpectation } from './tx-verify.js'
+// ── Pre-sign verification of a gateway-built transaction / authorization ─
+export type { Rail0Operation, SigningPayloadExpectation, TxExpectation } from './tx-verify.js'
 export {
   canonicalOperation,
   RAIL0_FUNCTION_SIGNATURES,
   RAIL0_SELECTORS,
   signerAddress,
+  verifySigningPayload,
   verifyUnsignedTransaction,
 } from './tx-verify.js'
 

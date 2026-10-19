@@ -1,7 +1,14 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import type { Address, Bytes32, PaymentConfig, SigningPayload } from './resources/types.js'
-import { signerAddress, type TxExpectation, verifyUnsignedTransaction } from './tx-verify.js'
+import {
+  type SigningPayloadExpectation,
+  signerAddress,
+  stripHex,
+  type TxExpectation,
+  verifySigningPayload,
+  verifyUnsignedTransaction,
+} from './tx-verify.js'
 
 // ================================================================
 //  EIP-712 type strings
@@ -27,8 +34,18 @@ const RECEIVE_TYPEHASH = keccak_256(new TextEncoder().encode(RECEIVE_TYPE))
 //  ABI encoding (fixed-size types: address, uint256, bytes32)
 // ================================================================
 
+/**
+ * Decodes hex through the same normalisation the pre-sign checks use (`stripHex`:
+ * trimmed, either `0x` / `0X` prefix), so the bytes signed are the bytes verified. It
+ * used to strip only a lowercase `0x`: `0X…` calldata passed verification and was then
+ * signed with its "0X" decoded as a leading 0x00 byte. Strict: odd length or a non-hex
+ * character throws instead of decoding to zeros.
+ */
 function hexToBytes(hex: string): Uint8Array {
-  const h = hex.startsWith('0x') ? hex.slice(2) : hex
+  const h = stripHex(hex)
+  if (h.length % 2 !== 0 || !/^[0-9a-f]*$/.test(h)) {
+    throw new Error(`invalid hex string: ${hex.length > 20 ? `${hex.slice(0, 20)}…` : hex}`)
+  }
   const out = new Uint8Array(h.length / 2)
   for (let i = 0; i < h.length; i += 2) out[i >> 1] = Number.parseInt(h.slice(i, i + 2), 16)
   return out
@@ -242,8 +259,8 @@ export function packSignature(sig: Eip3009Signature): string {
 /**
  * Sign a raw EIP-3009 transferWithAuthorization message.
  *
- * For RAIL0 payment flows prefer signAuthorize / signCharge which
- * set `from`, `to`, `validBefore` automatically from the Payment struct.
+ * For RAIL0 payment flows use `signSigningPayload` / `signPayment` / `signRefund`,
+ * which sign the gateway's own payload (and check it first, given an expectation).
  */
 export function signTransferWithAuthorization(
   privateKey: `0x${string}` | Uint8Array,
@@ -261,6 +278,15 @@ export function signTransferWithAuthorization(
 }
 
 /**
+ * @deprecated Rebuilds the digest from the payment record and hardcodes the
+ * TransferWithAuthorization typehash, but every active RAIL0 deployment (v1.4.0) has
+ * the payer sign a ReceiveWithAuthorization — so the signature this returns recovers to
+ * a different address and the gateway answers 422 `signer_mismatch`. Use
+ * `signSigningPayload(privateKey, payment.signing_payload, expectation)` (or
+ * `signPayment(privateKey, payment, expectation)`), which signs the gateway's payload
+ * verbatim under its own `primaryType`, after checking it. Mirrors rail0-go's
+ * deprecated `SignAuthorize`. Will be removed in the next major version.
+ *
  * Sign the EIP-3009 payload required by an authorize call.
  *
  * ```ts
@@ -295,6 +321,12 @@ export function signAuthorize(params: SignPaymentParams): Eip3009Signature {
 }
 
 /**
+ * @deprecated Same defect as `signAuthorize` — the hardcoded TransferWithAuthorization
+ * typehash makes the gateway answer 422 `signer_mismatch` on every active deployment.
+ * Use `signSigningPayload(privateKey, payment.signing_payload, expectation)` (or
+ * `signPayment(privateKey, payment, expectation)`). Will be removed in the next major
+ * version.
+ *
  * Sign the EIP-3009 payload required by a charge call.
  *
  * ```ts
@@ -330,12 +362,12 @@ export function signCharge(params: SignPaymentParams): Eip3009Signature {
 }
 
 /**
- * Sign the EIP-3009 payload returned by `POST /payments`.
+ * Sign the EIP-3009 payload returned by `POST /payments`, after checking it.
  *
  * Reads all required parameters directly from the API response — no manual
  * field extraction needed. This is the recommended signing path for payers.
- * Equivalent to `signSigningPayload(privateKey, payment.signing_payload)`, with an
- * error message that names the payer case.
+ * Equivalent to `signSigningPayload(privateKey, payment.signing_payload, expectation)`,
+ * with an error message that names the payer case.
  *
  * ```ts
  * const resp = await client.payments.create({
@@ -346,7 +378,7 @@ export function signCharge(params: SignPaymentParams): Eip3009Signature {
  *   payer,
  *   payee,
  * })
- * const sig = signPayment(privateKey, resp)
+ * const sig = signPayment(privateKey, resp, { payment: resp, amount: '50.00' })
  * await client.payments.sign(resp.rail0_id, { signature: packSignature(sig) })
  * // The payee then broadcasts it: authorizePrepare → signTransaction → authorize.
  * ```
@@ -354,16 +386,41 @@ export function signCharge(params: SignPaymentParams): Eip3009Signature {
 export function signPayment(
   privateKey: `0x${string}` | Uint8Array,
   payment: WithSigningPayload,
+  expectation: SigningPayloadExpectation,
+): Eip3009Signature
+/**
+ * @deprecated Signs the gateway's authorization BLINDLY: an EIP-3009 authorization is
+ * honoured by the token itself, so a compromised or misconfigured endpoint could have
+ * this key sign away its balance. Pass the `expectation` (`{ payment, amount? }`) so
+ * the payload is checked first — see `verifySigningPayload`. This form will be removed
+ * in the next major version.
+ */
+export function signPayment(
+  privateKey: `0x${string}` | Uint8Array,
+  payment: WithSigningPayload,
+): Eip3009Signature
+export function signPayment(
+  privateKey: `0x${string}` | Uint8Array,
+  payment: WithSigningPayload,
+  expectation?: SigningPayloadExpectation,
 ): Eip3009Signature {
   const payload = payment.signing_payload
   if (!payload) {
     throw new Error('payment has no signing_payload (already signed, or a transient RPC failure)')
   }
-  return signSigningPayload(privateKey, payload)
+  return expectation
+    ? signSigningPayload(privateKey, payload, expectation)
+    : signVerbatim(privateKey, payload)
 }
 
 /**
- * Sign the gateway's EIP-712 `signing_payload` — whatever operation it belongs to.
+ * Sign the gateway's EIP-712 `signing_payload` — whatever operation it belongs to —
+ * after checking it against `expectation` (`verifySigningPayload`): `from` is the key's
+ * own address, the domain's chain and token are the payment's, `to` is the payment's
+ * RAIL0 contract, and `value` is exactly the amount asked for. A mismatch throws
+ * `Error("refusing to sign: …")` naming the field, and nothing is signed. Everything
+ * compared is already in hand, so this adds no gateway call.
+ *
  * The one generic signer, mirroring rail0-go's `SignSigningPayload`: `signPayment`
  * (payer, the payload from `create()`) and `signRefund` (payee, the payload from
  * `refundPrepare` phase-1) are both this call on `.signing_payload`, kept for the
@@ -383,19 +440,49 @@ export function signPayment(
  *
  * ```ts
  * const created = await client.payments.create(req)
- * const sig = signSigningPayload(payerKey, created.signing_payload)
+ * const sig = signSigningPayload(payerKey, created.signing_payload, {
+ *   payment: created,
+ *   amount: req.amount, // the human decimal you sent, scaled by created.decimals
+ * })
  * await client.payments.sign(created.rail0_id, { signature: packSignature(sig) })
  * ```
  */
 export function signSigningPayload(
   privateKey: `0x${string}` | Uint8Array,
   payload: SigningPayload | null | undefined,
+  expectation: SigningPayloadExpectation,
+): Eip3009Signature
+/**
+ * @deprecated Signs the gateway's authorization BLINDLY: an EIP-3009 authorization is
+ * honoured by the token itself, for up to its `value`, so a compromised or misconfigured
+ * endpoint could have this key sign away its balance. Pass the `expectation`
+ * (`{ payment, amount? }`) so the payload is checked first — see
+ * `verifySigningPayload`. This form will be removed in the next major version.
+ */
+export function signSigningPayload(
+  privateKey: `0x${string}` | Uint8Array,
+  payload: SigningPayload | null | undefined,
+): Eip3009Signature
+export function signSigningPayload(
+  privateKey: `0x${string}` | Uint8Array,
+  payload: SigningPayload | null | undefined,
+  expectation?: SigningPayloadExpectation,
 ): Eip3009Signature {
   if (!payload) {
     throw new Error(
       'signing payload is missing (already signed, or the gateway could not build one)',
     )
   }
+  // Before the digest is built: a payload that fails the check leaves no signature.
+  if (expectation) verifySigningPayload(payload, expectation, signerAddress(privateKey))
+  return signVerbatim(privateKey, payload)
+}
+
+/** Signs a present payload under its own `primaryType`, with no expectation check. */
+function signVerbatim(
+  privateKey: `0x${string}` | Uint8Array,
+  payload: SigningPayload,
+): Eip3009Signature {
   let typeHash: Uint8Array
   switch (payload.primaryType) {
     case 'TransferWithAuthorization':
@@ -450,15 +537,19 @@ export function signReceiveWithAuthorization(
 }
 
 /**
- * Sign the refund payload returned by `refundPrepare` phase-1. Reads the
- * ReceiveWithAuthorization payload off the returned transaction and signs it
- * with the payee key; pass the packed result to `refundPrepare` phase-2.
- * Equivalent to `signSigningPayload(privateKey, transaction.signing_payload)`, with
- * an error message that names the refund case.
+ * Sign the refund payload returned by `refundPrepare` phase-1, after checking it.
+ * Reads the ReceiveWithAuthorization payload off the returned transaction and signs it
+ * with the payee key; pass the packed result to `refundPrepare` phase-2. Equivalent to
+ * `signSigningPayload(privateKey, transaction.signing_payload, expectation)`, with an
+ * error message that names the refund case.
+ *
+ * Pass the refund `amount` in the expectation: the payment's own amount is the whole
+ * payment, not the part being refunded.
  *
  * ```ts
+ * const payment = await client.payments.get(id) // chain_id, token, rail0_contract, decimals
  * const phase1 = await client.payments.refundPrepare(id, { amount: '10.00' })
- * const sig = signRefund(payeeKey, phase1)
+ * const sig = signRefund(payeeKey, phase1, { payment, amount: '10.00' })
  * const phase2 = await client.payments.refundPrepare(id, {
  *   amount: '10.00',
  *   signature: packSignature(sig),
@@ -468,12 +559,31 @@ export function signReceiveWithAuthorization(
 export function signRefund(
   privateKey: `0x${string}` | Uint8Array,
   transaction: WithSigningPayload,
+  expectation: SigningPayloadExpectation,
+): Eip3009Signature
+/**
+ * @deprecated Signs the gateway's refund authorization BLINDLY: a ReceiveWithAuthorization
+ * is honoured by the token itself, so a compromised or misconfigured endpoint could
+ * answer with the payee's whole balance as `value` and have it signed. Pass the
+ * `expectation` (`{ payment, amount }`) so the payload is checked first — see
+ * `verifySigningPayload`. This form will be removed in the next major version.
+ */
+export function signRefund(
+  privateKey: `0x${string}` | Uint8Array,
+  transaction: WithSigningPayload,
+): Eip3009Signature
+export function signRefund(
+  privateKey: `0x${string}` | Uint8Array,
+  transaction: WithSigningPayload,
+  expectation?: SigningPayloadExpectation,
 ): Eip3009Signature {
   const payload = transaction.signing_payload
   if (!payload) {
     throw new Error('transaction has no signing_payload (call refundPrepare phase-1 first)')
   }
-  return signSigningPayload(privateKey, payload)
+  return expectation
+    ? signSigningPayload(privateKey, payload, expectation)
+    : signVerbatim(privateKey, payload)
 }
 
 // ================================================================
@@ -567,7 +677,16 @@ export function signTransaction(
     verifyUnsignedTransaction(unsignedTransaction, expectation, signerAddress(privateKey))
   const tx = JSON.parse(unsignedTransaction)
   const int = (v: unknown): Uint8Array => toMinimalBytes(BigInt(String(v ?? 0)))
-  const to = tx.to ? hexToBytes(tx.to) : new Uint8Array()
+  // Never an empty recipient, with or without an expectation (rail0-go refuses it too):
+  // RLP encodes an absent `to` as the empty string, which makes the transaction a
+  // CONTRACT CREATION deploying whatever bytecode is in `data`. No RAIL0 operation is one.
+  const toHex = typeof tx.to === 'string' ? tx.to.trim() : ''
+  if (!/^0x[0-9a-f]{40}$/i.test(toHex)) {
+    throw new Error(
+      `refusing to sign: invalid to address ${JSON.stringify(tx.to ?? null)} — a RAIL0 transaction always has a 20-byte recipient`,
+    )
+  }
+  const to = hexToBytes(toHex)
   const data = tx.data ? hexToBytes(tx.data) : new Uint8Array()
 
   // EIP-1559 signing payload: 0x02 || rlp([chainId, nonce, maxPriorityFee, maxFee, gasLimit, to, value, data, accessList])

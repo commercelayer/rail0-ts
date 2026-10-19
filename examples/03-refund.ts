@@ -36,7 +36,9 @@ try {
 
   // Phase 1 — get the ReceiveWithAuthorization payload for the payee to sign.
   const phase1 = await merchant.payments.refundPrepare(id, { amount: '50.00' })
-  const sig = signRefund(MERCHANT_KEY, phase1)
+  // Checked before the key signs it: the token, chain and RAIL0 contract are the
+  // payment's, and the value is exactly the refund amount typed above.
+  const sig = signRefund(MERCHANT_KEY, phase1, { payment: detail, amount: '50.00' })
 
   // Phase 2 — hand the signature back to get the unsigned on-chain refund tx.
   const phase2 = await merchant.payments.refundPrepare(id, {
