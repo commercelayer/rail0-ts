@@ -50,8 +50,10 @@ try {
   const id = created.rail0_id as string
 
   // 2. Buyer signs the EIP-3009 payload the gateway returned, then stores it.
+  //    The expectation is what the payload is CHECKED against before the key signs it:
+  //    the payment's chain, token and RAIL0 contract, and the amount typed above.
   //    packSignature turns { v, r, s } into the 0x r||s||v hex the gateway wants.
-  const sig = signPayment(BUYER_KEY, created)
+  const sig = signPayment(BUYER_KEY, created, { payment: created, amount: '50.00' })
   await buyer.payments.sign(id, { signature: packSignature(sig) })
 
   // 3. Merchant authorizes: prepare the tx, sign it, submit it (funds → escrow).

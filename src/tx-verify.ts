@@ -1,6 +1,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { toBaseUnits } from './amounts.js'
+import type { SigningPayload } from './resources/types.js'
 
 // ================================================================
 //  Pre-sign verification of a gateway-built unsigned transaction
@@ -35,6 +36,7 @@ export type Rail0Operation =
  * build. `payment` is the record the caller already has (from `create()` or `get()`);
  * `operation` is the prepare it called; `amount` is the human decimal it passed to
  * `capturePrepare` / `refundPrepare`, and is REQUIRED for those two.
+ * `payment.rail0_contract` is REQUIRED too: the transaction's `to` is always checked.
  */
 export interface TxExpectation {
   payment: {
@@ -214,9 +216,20 @@ function checkCalldataPaymentId(data: string, rail0Id: string | null | undefined
   if (got !== want) refuse(`the call acts on payment 0x${got} but you asked for 0x${want}`)
 }
 
-function stripHex(s: string): string {
+/**
+ * Trims, lowercases and drops a `0x` / `0X` prefix. The one hex normalisation of the
+ * package: the signer decodes bytes through it too, so the bytes that get signed are
+ * the bytes these checks looked at (a `0X…` that verified but was then decoded with
+ * its prefix as a byte would sign something else).
+ */
+export function stripHex(s: string): string {
   const lower = s.trim().toLowerCase()
   return lower.startsWith('0x') ? lower.slice(2) : lower
+}
+
+/** A 20-byte hex address, `0x`-prefixed in either case; checksum casing is not enforced. */
+function isAddress(s: string): boolean {
+  return /^0x[0-9a-f]{40}$/i.test(s.trim())
 }
 
 /** The address a private key signs as — the one `from` must name. */
@@ -240,8 +253,10 @@ export function signerAddress(privateKey: `0x${string}` | Uint8Array): string {
  *     transfers the contract performs, so a non-zero value is the gateway asking for ETH;
  *  3. `chain_id` is the payment's chain;
  *  4. `from`, when present, is the signing key's address (`signer`);
- *  5. `to` is the payment's `rail0_contract` — a consistency check (the address comes
- *     from the same gateway), but it catches a response stitched from two payments;
+ *  5. `to` is an address — never missing or empty, which would sign a contract
+ *     creation — and equals the payment's `rail0_contract`, which must be known. A
+ *     consistency check (the address comes from the same gateway), but it catches a
+ *     response stitched from two payments;
  *  6. the 4-byte selector is the RAIL0 function for `operation`, and for capture and
  *     refund the amount word equals `amount` scaled by the payment's `decimals`;
  *  7. the paymentId word is the payment's `rail0_id`.
@@ -286,8 +301,25 @@ export function verifyUnsignedTransaction(
     refuse(`transaction is prepared from ${from} but the signing key is ${signer}`)
   }
 
-  const to = typeof tx.to === 'string' ? tx.to : ''
-  if (payment.rail0_contract && to && !same(to, payment.rail0_contract)) {
+  // FAIL-CLOSED, unlike the checks above: a missing, empty or null `to` is not "nothing
+  // to compare" but a CONTRACT-CREATION transaction — RLP encodes an absent recipient
+  // as the empty string, and the key would sign a deployment of whatever bytecode the
+  // gateway put in `data`. So `to` must be an address, and the payment must name the
+  // contract it is compared against.
+  const to = typeof tx.to === 'string' ? tx.to.trim() : ''
+  if (!isAddress(to)) {
+    refuse(
+      to === ''
+        ? 'transaction has no recipient (`to` is missing or empty), which would deploy a contract'
+        : `transaction recipient ${to} is not an address`,
+    )
+  }
+  if (!payment.rail0_contract) {
+    refuse(
+      "cannot check the transaction's recipient without the payment's rail0_contract (fetch the payment with get() first)",
+    )
+  }
+  if (!same(to, payment.rail0_contract)) {
     refuse(
       `transaction is addressed to ${to} but this payment's RAIL0 contract is ${payment.rail0_contract}`,
     )
@@ -322,4 +354,163 @@ function expectedBaseUnits({ payment, operation, amount }: TxExpectation): strin
   } catch (err) {
     refuse(`amount "${amount}": ${(err as Error).message}`)
   }
+}
+
+// ================================================================
+//  Pre-sign verification of a gateway-built EIP-712 authorization
+// ================================================================
+//
+// The counterpart of verifyUnsignedTransaction for the `signing_payload` the gateway
+// hands out at create() (the payer's TransferWithAuthorization / ReceiveWithAuthorization)
+// and at refundPrepare phase-1 (the payee's ReceiveWithAuthorization). It is the MORE
+// dangerous of the two artifacts: an EIP-3009 authorization is a bearer instrument the
+// TOKEN honours on its own, with no RAIL0 involvement, for up to `message.value`. An
+// endpoint that answered a refund prepare with {from: <payee>, to: <attacker>, value:
+// <the payee's whole balance>} used to get exactly that signed.
+//
+// Ported from the rail0 CLI's verifySigningPayload (cmd/tx_verify.go): same checks,
+// same order, same "refusing to sign: …" wording. Checking does not break the
+// sign-the-payload-verbatim rule: the typehash still comes from the payload's own
+// primaryType and the digest from its message; this only refuses a message whose
+// fields contradict what the caller asked for.
+//
+// What it does NOT establish: `message.to` is compared with the payment record's
+// rail0_contract (the same gateway's word, so not independent), and `message.nonce` is
+// not recomputed — that would need the deployment's VERSION(), which no payment
+// response carries. The bounded residual is an authorization for the RIGHT token, on
+// the RIGHT chain, from the RIGHT signer, for EXACTLY the amount asked for.
+
+/**
+ * What the caller independently knows about the authorization it is about to sign.
+ *
+ * `payment` is the record the caller holds — the `PaymentDetail` from `create()` or
+ * `get()`. Its `chain_id`, `token` and `rail0_contract` are REQUIRED (every payment
+ * detail carries them); a missing one refuses rather than skips the check.
+ *
+ * The value right-hand side is `amount` — the human decimal the caller typed, scaled by
+ * `payment.decimals` — when given, and the payment's own stored base-unit `amount`
+ * otherwise. Pass `amount` for a REFUND: the payment's own amount is the whole payment,
+ * not the part being refunded. For the payer's signature after `create()` either works;
+ * passing what you sent to `create()` holds the gateway to your own input.
+ */
+export interface SigningPayloadExpectation {
+  payment: {
+    chain_id?: number | null
+    /** The payment's token — the EIP-712 domain's `verifyingContract` for EIP-3009. */
+    token?: string | null
+    /** The RAIL0 contract the authorization must pay (`message.to`). */
+    rail0_contract?: string | null
+    /** Stored amount in base units; the expected value when `amount` is omitted. */
+    amount?: string | null
+    /** The token's decimals, used to scale `amount`. */
+    decimals?: number | null
+  }
+  /** Human decimal you asked for (e.g. what you passed to `refundPrepare`). */
+  amount?: string | undefined
+}
+
+/**
+ * Verifies a gateway-built EIP-712 `signing_payload` against what the caller asked for,
+ * BEFORE any key touches it. Throws `Error("refusing to sign: …")` naming the first
+ * field that disagrees; returns the payload otherwise.
+ *
+ * In order (the CLI's):
+ *  1. `message.from` is the signing key's address (`signer`, when given — the checked
+ *     `signSigningPayload` always derives it from the key);
+ *  2. `domain.chainId` is the payment's `chain_id`;
+ *  3. `domain.verifyingContract` is the payment's `token` — what stops an authorization
+ *     minted against another token the signer happens to hold;
+ *  4. `message.to` is the payment's `rail0_contract`;
+ *  5. `message.value` is EXACTLY the expected base units — not a ceiling.
+ *
+ * FAIL-CLOSED: a missing payload, a missing chain/token/contract on the payment, or a
+ * value that cannot be derived locally (no amount, unknown decimals, an amount finer
+ * than the token's decimals) refuses rather than skips. `primaryType` is not checked
+ * here (the signer refuses an unknown one), nor is the validity window — matching the
+ * CLI.
+ */
+export function verifySigningPayload(
+  payload: SigningPayload | null | undefined,
+  expectation: SigningPayloadExpectation,
+  signer?: string,
+): SigningPayload {
+  if (!payload || typeof payload !== 'object') {
+    refuse(
+      'there is no signing payload to check (already signed, or the gateway could not build one)',
+    )
+  }
+  const payment = expectation?.payment
+  if (!payment) refuse('cannot check the authorization without the payment it is for')
+  const { domain, message } = payload
+  if (!domain || !message) refuse('the signing payload has no domain or message')
+
+  // The one comparison whose right-hand side is derived from the private key itself,
+  // so it holds no matter what the endpoint claims.
+  if (signer && !same(String(message.from ?? ''), signer)) {
+    refuse(`the authorization is from ${message.from} but the signing key is ${signer}`)
+  }
+
+  if (!payment.chain_id)
+    refuse("cannot check the authorization's chain without the payment's chain_id")
+  if (Number(domain.chainId) !== payment.chain_id) {
+    refuse(
+      `the authorization is scoped to chain ${domain.chainId} but this payment is on chain ${payment.chain_id}`,
+    )
+  }
+
+  if (!payment.token) refuse("cannot check the authorization's token without the payment's token")
+  if (!same(String(domain.verifyingContract ?? ''), payment.token)) {
+    refuse(
+      `the authorization is against token ${domain.verifyingContract} but this payment's token is ${payment.token}`,
+    )
+  }
+
+  if (!payment.rail0_contract) {
+    refuse(
+      "cannot check the authorization's recipient without the payment's rail0_contract (fetch the payment with get() first)",
+    )
+  }
+  if (!same(String(message.to ?? ''), payment.rail0_contract)) {
+    refuse(
+      `the authorization pays ${message.to} but this payment's RAIL0 contract is ${payment.rail0_contract}`,
+    )
+  }
+
+  const want = expectedPayloadValue(expectation)
+  const got = String(message.value ?? '').trim()
+  // Exact, not a ceiling: the gateway signs for the full amount of the operation, so
+  // anything else is a mismatch rather than a partial authorization.
+  if (!/^\d+$/.test(got) || BigInt(got) !== BigInt(want)) {
+    refuse(`the authorization is for ${message.value} base units but you asked for ${want}`)
+  }
+  return payload
+}
+
+/**
+ * The base units the authorization must carry: the caller's `amount` scaled by the
+ * payment's decimals, or the payment's stored amount. Refuses when neither yields a
+ * base-unit integer — skipping here would drop the one check the guard exists for.
+ */
+function expectedPayloadValue({ payment, amount }: SigningPayloadExpectation): string {
+  if (amount !== undefined) {
+    if (amount === '')
+      refuse("cannot check the authorization's amount without the amount you asked for")
+    if (payment.decimals === undefined || payment.decimals === null) {
+      refuse(
+        "the payment's token decimals are unknown, so the authorization's amount cannot be checked (fetch the payment with get() first)",
+      )
+    }
+    try {
+      return toBaseUnits(amount, payment.decimals)
+    } catch (err) {
+      refuse(`amount "${amount}": ${(err as Error).message}`)
+    }
+  }
+  const stored = String(payment.amount ?? '').trim()
+  if (!/^\d+$/.test(stored)) {
+    refuse(
+      "cannot check the authorization's amount: pass the amount you asked for, or a payment carrying its base-unit amount",
+    )
+  }
+  return stored
 }

@@ -41,7 +41,8 @@ try {
   })
   const id = created.rail0_id as string
 
-  const sig = signPayment(BUYER_KEY, created)
+  // Checked against the payment and the amount typed above before the key signs it.
+  const sig = signPayment(BUYER_KEY, created, { payment: created, amount: '25.00' })
   await buyer.payments.sign(id, { signature: packSignature(sig) })
 
   const payment = await merchant.payments.get(id)

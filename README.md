@@ -50,8 +50,10 @@ const payment = await buyer.payments.create({
   payee: addressFromPrivateKey(MERCHANT_KEY),
 })
 
-// 2. Buyer signs the EIP-3009 payload the gateway returned, then stores it.
-const sig = signPayment(BUYER_KEY, payment) // { v, r, s }
+// 2. Buyer signs the EIP-3009 payload the gateway returned, then stores it. The third
+//    argument is what the payload is CHECKED against before the key signs it (see
+//    "Signing helpers"): the payment's chain, token and RAIL0 contract, and the amount.
+const sig = signPayment(BUYER_KEY, payment, { payment, amount: '50.00' }) // { v, r, s }
 await buyer.payments.sign(payment.rail0_id, { signature: packSignature(sig) })
 
 // 3. Merchant authorizes: prepare → sign the EIP-1559 tx → submit (funds → escrow).
@@ -112,16 +114,57 @@ All client-side, over `@noble` (no ethers/viem).
 
 | Helper | Use |
 |--------|-----|
-| `signSigningPayload(key, payload)` | Sign any gateway `signing_payload` (mirrors rail0-go's `SignSigningPayload`) — the one generic signer |
-| `signPayment(key, paymentDetail)` | Payer signs the EIP-3009 payload from `create()` (authorize or charge) — `signSigningPayload` on `.signing_payload` |
-| `signRefund(key, transaction)` | Payee signs the refund payload from `refundPrepare` phase-1 — `signSigningPayload` on `.signing_payload` |
+| `signSigningPayload(key, payload, { payment, amount? })` | Verify, then sign any gateway `signing_payload` (mirrors rail0-go's `SignSigningPayload`) — the one generic signer. The two-argument form signs blindly and is **deprecated** |
+| `signPayment(key, paymentDetail, { payment, amount? })` | Payer signs the EIP-3009 payload from `create()` (authorize or charge) — `signSigningPayload` on `.signing_payload`. The two-argument form is **deprecated** |
+| `signRefund(key, transaction, { payment, amount })` | Payee signs the refund payload from `refundPrepare` phase-1 — `signSigningPayload` on `.signing_payload`. The two-argument form is **deprecated** |
+| `verifySigningPayload(payload, { payment, amount? }, signer?)` | The authorization pre-sign check on its own (for a signer that is not a local key) |
 | `packSignature(sig)` | Turn a `{ v, r, s }` into the `0x` r‖s‖v hex every `signature` field expects |
 | `signTransaction(unsignedJson, key, { payment, operation, amount? })` | Verify, then sign an unsigned EIP-1559 tx from any prepare step → raw hex for submit. The two-argument form signs blindly and is **deprecated** |
 | `verifyUnsignedTransaction(unsignedJson, { payment, operation, amount? }, signer?)` | The pre-sign check on its own (for a signer that is not a local key — a KMS, a hardware wallet) |
-| `signAuthorize` / `signCharge` | Lower-level EIP-3009 signers from explicit params |
+| `signAuthorize` / `signCharge` | **Deprecated.** They rebuild the digest with the TransferWithAuthorization typehash, but every active deployment (v1.4.0) has the payer sign a ReceiveWithAuthorization, so the gateway answers `422 signer_mismatch`. Use `signPayment` / `signSigningPayload` with an expectation |
 | `signTransferWithAuthorization` / `signReceiveWithAuthorization` | Raw EIP-3009 transfer / receive signers |
 | `buildSiweMessage(params)` | Build the EIP-4361 text for a login or a wallet proof-of-ownership |
 | `addressFromPrivateKey(key)` | The EIP-55 checksummed address of a private key (`checksumAddress` is the deprecated old name — it never formatted an address) |
+
+**What the payload signers verify, and why.** An EIP-3009 authorization is a bearer
+instrument the **token** honours on its own, with no RAIL0 involvement, for up to its
+`value` — so a compromised or misconfigured endpoint that answered a refund prepare
+with `{ from: <you>, to: <attacker>, value: <your whole balance> }` would otherwise get
+exactly that signed. Given the expectation, `signSigningPayload` (and `signPayment` /
+`signRefund`) checks the payload **before** the key touches it, in this order:
+`message.from` is your key's address, `domain.chainId` is the payment's `chain_id`,
+`domain.verifyingContract` is the payment's `token`, `message.to` is the payment's
+`rail0_contract`, and `message.value` is **exactly** the expected base units. The
+expected value is `amount` (the human decimal you typed) scaled by the payment's
+`decimals` when you pass it, and the payment's own base-unit `amount` otherwise — so
+**always pass `amount` for a refund** (the payment's amount is the whole payment, not
+the part refunded). The first mismatch throws `Error("refusing to sign: …")` naming the
+field, and nothing is signed. It fails closed: a missing payload, a payment without
+`chain_id` / `token` / `rail0_contract`, unknown `decimals`, or an amount finer than the
+token allows is refused rather than skipped. Build the expectation from the payment
+record you already hold — no extra request:
+
+```typescript
+// Payer, right after create(): hold the gateway to the amount you sent.
+const created = await buyer.payments.create({ ...req, amount: '50.00' })
+const sig = signSigningPayload(BUYER_KEY, created.signing_payload, {
+  payment: created, // chain_id, token, rail0_contract, decimals
+  amount: '50.00',
+})
+
+// Payee, refund phase-1: the payment from get(), the refund amount you typed.
+const payment = await merchant.payments.get(id)
+const phase1 = await merchant.payments.refundPrepare(id, { amount: '10.00' })
+const refundSig = signRefund(MERCHANT_KEY, phase1, { payment, amount: '10.00' })
+```
+
+What this does not establish: `message.to` is compared with the payment's own
+`rail0_contract` (the same gateway's word), and `message.nonce` — which binds the
+signature to the payment's terms on-chain — is not recomputed, since that needs the
+deployment's `VERSION()`, which no payment response carries. The bounded residual is an
+authorization for the right token, chain and signer, for exactly the amount you asked
+for. `primaryType` and the validity window are not compared (the signer refuses an
+unknown `primaryType` on its own).
 
 `signSigningPayload` takes the payload itself (`null`/`undefined` throws). The two
 named wrappers need only the `signing_payload` field, so they accept any
@@ -137,14 +180,16 @@ otherwise have that key sign anything — an `approve(spender, MAX)` on the toke
 expectation, `signTransaction` checks the transaction **before** the key touches it,
 against data you already hold (no extra request): `value` is zero (every RAIL0
 operation is value-0), `chain_id` is the payment's chain, `from` is your key's address,
-`to` is the payment's `rail0_contract`, the 4-byte selector is the RAIL0 function for
+`to` is an address equal to the payment's `rail0_contract`, the 4-byte selector is the RAIL0 function for
 `operation` (the selectors are derived from the contract's function signatures and
 pinned against its ABI in the test suite), the first calldata word is the payment's
 `rail0_id`, and — for `capture` and `refund` — the amount word equals `amount` scaled by
 the payment's `decimals`. The first mismatch throws `Error("refusing to sign: …")`
 naming the field, and no signature is produced. It fails closed: a capture/refund with
-no `amount`, or a payment with unknown `decimals`, is refused rather than skipped, so
-read the payment with `get()` first. `to` is a consistency check only — the address
+no `amount`, a payment with unknown `decimals`, or a payment without `rail0_contract`
+is refused rather than skipped, so read the payment with `get()` first. A missing,
+empty or `null` `to` is always refused — even by the deprecated two-argument form —
+because the RLP encoding of an empty recipient is a contract-creation transaction. `to` is a consistency check only — the address
 comes from the same gateway — which is why the calldata binding to this payment's id
 and operation is what closes a swapped transaction.
 ## Amounts
@@ -311,7 +356,7 @@ const lapsing = await client.payments.list({ scope: 'all', expiring_within: 24 *
 await client.payments.capturePrepare(id, '50.00', { idempotencyKey: orderId })
 ```
 
-**Refund** is two-phase: `refundPrepare(id, { amount })` returns a `Transaction` carrying a `signing_payload`; sign it with `signRefund`, then `refundPrepare(id, { amount, signature })` returns the unsigned on-chain tx to sign + `refund()`.
+**Refund** is two-phase: `refundPrepare(id, { amount })` returns a `Transaction` carrying a `signing_payload`; sign it with `signRefund(key, phase1, { payment, amount })` (checked against the payment and the refund amount first), then `refundPrepare(id, { amount, signature })` returns the unsigned on-chain tx to sign + `refund()`.
 
 ### `client.wallets` (scoped by account, JWT)
 

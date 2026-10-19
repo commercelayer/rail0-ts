@@ -228,6 +228,21 @@ const errorHints: Record<string, string> = {
     'not permitted for this session — typically the operator grant, a resource owned by another account, or a transaction signed by the wrong wallet',
   idempotency_key_reused:
     'that Idempotency-Key was already used for a payment with different terms — reuse it only to retry the same request, or pick a new key',
+  // Signatures and sign-in proofs (rail0-gateway lib/rail0/error_catalog.rb).
+  invalid_signature:
+    'the signature could not be recovered — it is malformed, truncated or has a bad recovery byte; send the 65-byte r‖s‖v hex packSignature builds',
+  nonce_used: 'that sign-in nonce was already consumed — request a fresh one, each is single-use',
+  siwe_purpose_mismatch:
+    "the signed message's statement is for a different flow — login, wallet registration, account claim and revoke-all each need their own exact statement",
+  transaction_mismatch:
+    'the signed transaction differs from the one this operation prepared (target, calldata, value or chain) — sign the unsigned_transaction prepare returned, unmodified',
+  signing_payload_unavailable:
+    "the payer's authorization payload could not be built because a chain read failed — retry in a moment",
+  // Account limits and the gateway's own infrastructure.
+  webhook_limit_reached:
+    'the account already holds the most webhook subscriptions it may have — delete one, or add topics to an existing subscription',
+  queue_unavailable:
+    "the gateway's job queue could not be reached, so nothing was enqueued — retry in a moment",
 }
 
 /**
