@@ -192,7 +192,7 @@ export interface paths {
         /**
          * Create an onboarding request: a public sign-up, or an operator's invite
          * @description One endpoint and one body for both entrances, discriminated by the Authorization header BEFORE the body is read:
-         *     - **no header**: a public self-service sign-up (origin `signup`, link valid 24 h). Every outcome — a request created, an open one reused, or an email that already has an account (then the mailbox receives "account already exists" instead of a link) — answers the SAME 202 `{status: "check_your_email"}`, so the response reveals nothing about which emails are registered. An address or a name already registered is explicit (409): addresses are public on-chain, and names are shown to payers.
+         *     - **no header**: a public self-service sign-up (origin `signup`, link valid 24 h). Every outcome — a request created, an open one reused, or an email that already has an account (then the mailbox receives "account already exists" instead of a link) — answers the SAME 202 `{status: "check_your_email"}`, so the response reveals nothing about which emails are registered. An address or a name already registered is explicit (409): addresses are public on-chain, and names are shown to payers. They are checked BEFORE the email, so that 409 is the same whatever the email, and the neutral 202 only ever covers an email clash.
          *     - **an admin session** (require_admin!): an operator's invite (origin `operator`, link valid 7 days), audited as onboarding.create (onboarding.send when an open invite with the same email and address is reused), with explicit 409s.
          *     - **any other token**: 401 (invalid, expired, revoked; the codes of every authenticated route) or 403 (valid but without the operator grant, or a deactivated wallet) — never a fallback to the public path.
          *
@@ -618,9 +618,9 @@ export interface paths {
         put?: never;
         /**
          * Create a payment
-         * @description Session required (an account-less token is fine); the `payer` in the body must equal the authenticated address (403 otherwise) — a buyer only drafts payments payable from its own wallet. `payer` and `payee` must be different addresses (a payment to oneself is rejected with 422). Idempotent on the `Idempotency-Key` header, scoped to the caller: when a payment already exists for the key AND the same payer, that record is returned with 200 instead of 201. A key already used by a different account is not shared — it falls through to create and hits the global unique key, returning 409.
+         * @description Session required (an account-less token is fine); the `payer` in the body must equal the authenticated address (403 otherwise) — a buyer only drafts payments payable from its own wallet. `payer` and `payee` must be different addresses (a payment to oneself is rejected with 422). Idempotent on the `Idempotency-Key` header, scoped to the caller: when a payment already exists for the key AND the same payer, that record is returned with 200 instead of 201. Keys are per payer, uniqueness included: a key another payer already used is not shared and does not conflict — this payer's request creates its own payment (201), and never returns or reveals the other one.
          *
-         *     **Idempotency-Key** (optional header) REJECTS a reused key rather than replaying it: the same key with different terms answers 422 `idempotency_key_reused`, not 200 carrying the first payment — silently returning a payment whose terms are not the ones just sent is how a client charges the wrong amount. Same key + same terms replays with 200 (amounts compare converted, so "1.0" and "1.00" match). A key already used by another account answers 409, never that account's payment. Rotate per logical order.
+         *     **Idempotency-Key** (optional header) REJECTS a reused key rather than replaying it: the same key with different terms answers 422 `idempotency_key_reused`, not 200 carrying the first payment — silently returning a payment whose terms are not the ones just sent is how a client charges the wrong amount. Same key + same terms replays with 200 (amounts compare converted, so "1.0" and "1.00" match). A key used by another payer is independent of this payer's: it neither replays nor conflicts. Rotate per logical order.
          */
         post: operations["createPayment"];
         delete?: never;
@@ -1123,7 +1123,7 @@ export interface paths {
         get?: never;
         /**
          * Rotate the shared secret — returns the new secret once
-         * @description Replaces the shared secret and returns the new one once. The replaced key is kept for a grace window (WEBHOOK_SECRET_GRACE, one hour by default): inside it every delivery carries X-Rail0-Signature under the new key AND X-Rail0-Signature-Previous under the old one, so an endpoint verifies with whichever key it has deployed and no delivery in flight at rotation becomes unverifiable. The old key signs only, is never honoured past the window, and a second rotation inside it drops the oldest key.
+         * @description Replaces the shared secret and returns the new one once. The replaced key is kept for a grace window (WEBHOOK_SECRET_GRACE, one hour by default): inside it every delivery carries X-Rail0-Signature under the new key AND X-Rail0-Signature-Previous under the old one, so an endpoint verifies with whichever key it has deployed and no delivery in flight at rotation becomes unverifiable. The old key signs only, is never honoured past the window, and a second rotation inside it drops the oldest key. Two concurrent rotations cannot both succeed: the one that loses the race answers 409.
          */
         put: operations["rotateWebhookSecret"];
         post?: never;
@@ -1242,7 +1242,7 @@ export interface paths {
             path: {
                 /** @description EVM chain id the transaction belongs to. */
                 chain_id: number;
-                /** @description On-chain transaction hash. */
+                /** @description On-chain transaction hash (0x + 64 hex). Anything else is refused 400. */
                 tx_hash: string;
             };
             cookie?: never;
@@ -2936,7 +2936,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": {
+                        /**
+                         * @description Always true on a 200: the cutoff was written.
+                         * @example true
+                         */
+                        revoked_all: boolean;
+                        /**
+                         * Format: date-time
+                         * @description ISO-8601 UTC instant. Every token for the address issued before it is refused (it is one second after the request, so a token minted in the same second is refused too).
+                         */
+                        cutoff_at: string;
+                    };
                 };
             };
             /** @description The proof failed verification (same SIWE codes as POST /auth) or carries the wrong statement (siwe_purpose_mismatch). */
@@ -3058,7 +3069,7 @@ export interface operations {
                 "application/json": {
                     /** @description The account's name (stripped). Unique among accounts. */
                     name: string;
-                    /** @description Contact email, `x@y`; the link is sent here. Stored stripped and lowercase. */
+                    /** @description Contact email: ONE bare address `x@y` (no spaces, commas, semicolons, quotes or angle brackets: the mailer's own rule); the link is sent here. Stored stripped and lowercase. */
                     email: string;
                     /** @description The merchant's wallet (stored lowercase). The claim must be signed by it. */
                     address: string;
@@ -3096,7 +3107,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description validation_failed: a field is missing or malformed (name 1–100 characters, email `x@y`, address 0x + 40 hex). */
+            /** @description validation_failed: a field is missing or malformed (name 1–100 characters, email one bare `x@y` address, address 0x + 40 hex). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4068,6 +4079,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description `queue_unavailable`: the job queue could not be reached, so nothing was enqueued. The row is unchanged; retry in a moment. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     preparePaymentOperation: {
@@ -4176,8 +4196,18 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `transaction_mismatch`: the signed transaction's target, calldata, value or chain differs from the one this operation prepared. Sign the payload prepare returned, unmodified. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     submitPaymentOperationByHash: {
@@ -4359,6 +4389,16 @@ export interface operations {
                     "application/json": components["schemas"]["Transaction"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_the_payer`: only the payment's payer can prepare this; a payee or another session gets this 403 (a stranger gets 404). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
             /** @description `unknown_dispute_reason` when `reason` is supplied, non-zero, and not a DisputeOpenReason code or its bytes32; otherwise the payment-state refusal or `idempotency_key_reused`. */
             422: {
@@ -4405,8 +4445,18 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `transaction_mismatch`: the signed transaction's target, calldata, value or chain differs from the one this operation prepared. Sign the payload prepare returned, unmodified. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     prepareCloseDispute: {
@@ -4446,6 +4496,16 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Transaction"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_the_payer`: only the payment's payer can prepare this; a payee or another session gets this 403 (a stranger gets 404). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             404: components["responses"]["NotFound"];
@@ -4494,8 +4554,18 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `transaction_mismatch`: the signed transaction's target, calldata, value or chain differs from the one this operation prepared. Sign the payload prepare returned, unmodified. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listDisputes: {
@@ -4709,7 +4779,15 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            422: components["responses"]["Validation"];
+            /** @description `validation_failed` (a malformed callback_url or topic), or `webhook_limit_reached`: the account already holds WEBHOOKS_PER_ACCOUNT subscriptions (20 by default; disabled ones count, deleted ones do not). Delete one, or add topics to an existing subscription. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getWebhook: {
@@ -4867,6 +4945,15 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `conflict`: another rotation of this webhook replaced the secret while this request was in flight. No secret is returned; the winning request's secret is the current one. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     resetWebhookCircuit: {
@@ -5022,7 +5109,7 @@ export interface operations {
             path: {
                 /** @description EVM chain id the transaction belongs to. */
                 chain_id: number;
-                /** @description On-chain transaction hash. */
+                /** @description On-chain transaction hash (0x + 64 hex). Anything else is refused 400. */
                 tx_hash: string;
             };
             cookie?: never;
@@ -5040,11 +5127,11 @@ export interface operations {
                      * @enum {string}
                      */
                     event_type?: "authorized" | "charged" | "captured" | "voided" | "released" | "refunded" | "disputed" | "dispute_closed";
-                    /** @description On-chain amount (confirm only). */
+                    /** @description On-chain amount, base units (confirm only). Decimal digits. */
                     amount?: string;
-                    /** @description Live on-chain capturable balance after the event, base units (confirm only; sent by fund-affecting events, omitted by dispute/dispute_closed). The gateway mirrors it — the indexer is the single source. */
+                    /** @description Decimal digits. Live on-chain capturable balance after the event, base units (confirm only; sent by fund-affecting events, omitted by dispute/dispute_closed). The gateway mirrors it — the indexer is the single source. */
                     capturable_amount?: string;
-                    /** @description Live on-chain refundable balance after the event, base units (confirm only; sent by fund-affecting events, omitted by dispute/dispute_closed). The gateway mirrors it — the indexer is the single source. */
+                    /** @description Decimal digits. Live on-chain refundable balance after the event, base units (confirm only; sent by fund-affecting events, omitted by dispute/dispute_closed). The gateway mirrors it — the indexer is the single source. */
                     refundable_amount?: string;
                     /** @description Block the event was mined in (required on confirm). */
                     block_number?: number;
@@ -5080,6 +5167,15 @@ export interface operations {
                         /** @example accepted */
                         status?: string;
                     };
+                };
+            };
+            /** @description A malformed path `tx_hash` (not 0x + 64 hex), or a body field missing or failing its format (`operation`, `payment_id`, the base-units amounts, `sender`, `reason`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             401: components["responses"]["Unauthorized"];
