@@ -61,6 +61,17 @@ describe('describeError', () => {
     expect(describeError(null)).toBeUndefined()
   })
 
+  it("describes the gateway catalogue's signature, sign-in, limit and queue codes", () => {
+    // The gateway's catalogue now names a bad recovery byte as one cause.
+    expect(describeError('invalid_signature')).toContain('recovery byte')
+    expect(describeError('nonce_used')).toContain('single-use')
+    expect(describeError('siwe_purpose_mismatch')).toContain('statement')
+    expect(describeError('transaction_mismatch')).toContain('unmodified')
+    expect(describeError('signing_payload_unavailable')).toContain('retry')
+    expect(describeError('webhook_limit_reached')).toContain('webhook subscriptions')
+    expect(describeError('queue_unavailable')).toContain('nothing was enqueued')
+  })
+
   it('describes the own-wallet and suspended add-wallet codes (gateway #411)', () => {
     expect(describeError('not_your_wallet')).toContain('signed in with')
     expect(describeError('wallet_add_unavailable')).toContain('not available yet')
