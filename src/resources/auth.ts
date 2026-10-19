@@ -312,9 +312,9 @@ export class AuthResource {
    *
    * @param privateKeyHex - 0x-prefixed or raw hex private key (32 bytes)
    * @param domain - host of the API server, e.g. "api.rail0.xyz"
-   * @param chainId - chain id embedded in the SIWE message. Must match the
-   *   gateway's SIWE_CHAIN_ID policy (default 1); override only when the gateway
-   *   is configured with a different login chain.
+   * @param chainId - chain id embedded in the SIWE message (default 1). The gateway
+   *   accepts 1 or the id of any chain it has active (`GET /blockchains`); anything
+   *   else is refused with 422 `siwe_chain_mismatch`.
    */
   async login(privateKeyHex: string, domain: string, chainId = 1): Promise<AuthResponse> {
     const { message, signature } = await this.signProof(
