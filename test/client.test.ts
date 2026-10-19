@@ -326,6 +326,16 @@ describe('Rail0Client', () => {
       }
     })
 
+    it('points siwe_chain_mismatch at chain id 1 or an active chain', () => {
+      // gateway#426 widened SIWE chain-id acceptance to 1 plus every active catalog
+      // chain, so the hint points there instead of "the chain id the client library sends".
+      const hint = new Rail0ApiError(422, { code: 'siwe_chain_mismatch' }).hint
+      expect(hint).toContain('chain id 1')
+      expect(hint).toContain('GET /blockchains')
+      expect(hint).toContain('deactivated')
+      expect(hint).not.toContain('nominal')
+    })
+
     it('carries a hint for each standing, request-shape and lifecycle code', () => {
       // Codes the gateway's error catalogue defines that had no SDK hint, so a caller
       // rendering `hint` got nothing for them. Meanings follow error_catalog.rb.
