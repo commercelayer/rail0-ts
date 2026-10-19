@@ -55,16 +55,26 @@ try {
   await buyer.payments.sign(id, { signature: packSignature(sig) })
 
   // 3. Merchant authorizes: prepare the tx, sign it, submit it (funds → escrow).
+  //    The expectation (the payment, the operation, the amount) is what signTransaction
+  //    checks the gateway's transaction against BEFORE the key touches it.
+  const payment = await merchant.payments.get(id)
   const authPrep = await merchant.payments.authorizePrepare(id)
   const authTx = await merchant.payments.authorize(id, {
-    signed_transaction: signTransaction(authPrep.unsigned_transaction as string, MERCHANT_KEY),
+    signed_transaction: signTransaction(authPrep.unsigned_transaction as string, MERCHANT_KEY, {
+      payment,
+      operation: 'authorize',
+    }),
   })
   console.log('Authorize submitted:', authTx.status)
 
   // 4. Merchant captures once the order is fulfilled (funds escrow → merchant).
   const capPrep = await merchant.payments.capturePrepare(id, '50.00')
   const capTx = await merchant.payments.capture(id, {
-    signed_transaction: signTransaction(capPrep.unsigned_transaction as string, MERCHANT_KEY),
+    signed_transaction: signTransaction(capPrep.unsigned_transaction as string, MERCHANT_KEY, {
+      payment,
+      operation: 'capture',
+      amount: '50.00',
+    }),
   })
   console.log('Capture submitted:', capTx.status)
 

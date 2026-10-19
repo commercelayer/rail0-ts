@@ -44,9 +44,14 @@ try {
     signature: packSignature(sig),
   })
 
-  // Sign + submit the refund transaction.
+  // Sign + submit the refund transaction. The amount is the one typed above, scaled by
+  // the payment's token decimals and compared with the calldata before signing.
   const tx = await merchant.payments.refund(id, {
-    signed_transaction: signTransaction(phase2.unsigned_transaction as string, MERCHANT_KEY),
+    signed_transaction: signTransaction(phase2.unsigned_transaction as string, MERCHANT_KEY, {
+      payment: detail,
+      operation: 'refund',
+      amount: '50.00',
+    }),
   })
   console.log('Refund submitted:', tx.status)
 } catch (err) {

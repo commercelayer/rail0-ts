@@ -20,11 +20,15 @@ const id = '0xdeadbeef00000000000000000000000000000000000000000000000000000004'
 
 try {
   await buyer.auth.login(BUYER_KEY, 'api.rail0.xyz')
+  const payment = await buyer.payments.get(id)
 
   // Open a dispute. `reason` is optional: a code from DISPUTE_OPEN_REASONS (or its bytes32).
   const openPrep = await buyer.payments.disputePrepare(id, 'not_received')
   await buyer.payments.dispute(id, {
-    signed_transaction: signTransaction(openPrep.unsigned_transaction as string, BUYER_KEY),
+    signed_transaction: signTransaction(openPrep.unsigned_transaction as string, BUYER_KEY, {
+      payment,
+      operation: 'dispute',
+    }),
   })
   console.log('Dispute opened')
 
@@ -33,7 +37,10 @@ try {
   // dispute closes with no reason and reads "No reason given".
   const closePrep = await buyer.payments.closeDisputePrepare(id)
   await buyer.payments.closeDispute(id, {
-    signed_transaction: signTransaction(closePrep.unsigned_transaction as string, BUYER_KEY),
+    signed_transaction: signTransaction(closePrep.unsigned_transaction as string, BUYER_KEY, {
+      payment,
+      operation: 'close_dispute',
+    }),
   })
   console.log('Dispute closed')
 
