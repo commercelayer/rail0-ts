@@ -55,15 +55,24 @@ const sig = signPayment(BUYER_KEY, payment) // { v, r, s }
 await buyer.payments.sign(payment.rail0_id, { signature: packSignature(sig) })
 
 // 3. Merchant authorizes: prepare → sign the EIP-1559 tx → submit (funds → escrow).
+//    The third argument is what the gateway's transaction is CHECKED against before
+//    the key signs it (see "Signing helpers"); `payment` is the record read from the gateway.
 const authPrep = await merchant.payments.authorizePrepare(payment.rail0_id)
 await merchant.payments.authorize(payment.rail0_id, {
-  signed_transaction: signTransaction(authPrep.unsigned_transaction!, MERCHANT_KEY),
+  signed_transaction: signTransaction(authPrep.unsigned_transaction!, MERCHANT_KEY, {
+    payment,
+    operation: 'authorize',
+  }),
 })
 
 // 4. Merchant captures once the order is fulfilled.
 const capPrep = await merchant.payments.capturePrepare(payment.rail0_id, '50.00')
 await merchant.payments.capture(payment.rail0_id, {
-  signed_transaction: signTransaction(capPrep.unsigned_transaction!, MERCHANT_KEY),
+  signed_transaction: signTransaction(capPrep.unsigned_transaction!, MERCHANT_KEY, {
+    payment,
+    operation: 'capture',
+    amount: '50.00',
+  }),
 })
 
 // Inspect live state at any point (either participant can read it).
@@ -77,7 +86,7 @@ See [`examples/`](examples) for authorize+capture, charge, refund, dispute, and 
 
 Each on-chain operation is a two-step **prepare → submit**:
 
-1. **Prepare** — `POST /payments/:id/:op/prepare` — returns a `Transaction` whose `unsigned_transaction` you sign (EIP-1559) with `signTransaction`.
+1. **Prepare** — `POST /payments/:id/:op/prepare` — returns a `Transaction` whose `unsigned_transaction` you sign (EIP-1559) with `signTransaction`, passing the payment, the operation and (capture/refund) the amount so the transaction is verified before it is signed.
 2. **Submit** — `POST /payments/:id/:op` with `{ signed_transaction }` — broadcasts it (HTTP 202, async). Poll `get()` until the status settles.
 
 When a wallet like **MetaMask** signs and broadcasts in one step (so you never hold the raw signed tx), report the resulting hash instead: **submit-by-hash** — `POST /payments/:id/:op/submitted` with `{ transaction_hash }` via `submitByHash(id, op, { transaction_hash })` (payee-only for the merchant ops; `release` accepts either participant). A **buyer** does the same for its own operations with `disputeSubmitByHash(id, { transaction_hash })` and `closeDisputeSubmitByHash(id, { transaction_hash })` (payer-only).
@@ -107,7 +116,8 @@ All client-side, over `@noble` (no ethers/viem).
 | `signPayment(key, paymentDetail)` | Payer signs the EIP-3009 payload from `create()` (authorize or charge) — `signSigningPayload` on `.signing_payload` |
 | `signRefund(key, transaction)` | Payee signs the refund payload from `refundPrepare` phase-1 — `signSigningPayload` on `.signing_payload` |
 | `packSignature(sig)` | Turn a `{ v, r, s }` into the `0x` r‖s‖v hex every `signature` field expects |
-| `signTransaction(unsignedJson, key)` | Sign an unsigned EIP-1559 tx from any prepare step → raw hex for submit |
+| `signTransaction(unsignedJson, key, { payment, operation, amount? })` | Verify, then sign an unsigned EIP-1559 tx from any prepare step → raw hex for submit. The two-argument form signs blindly and is **deprecated** |
+| `verifyUnsignedTransaction(unsignedJson, { payment, operation, amount? }, signer?)` | The pre-sign check on its own (for a signer that is not a local key — a KMS, a hardware wallet) |
 | `signAuthorize` / `signCharge` | Lower-level EIP-3009 signers from explicit params |
 | `signTransferWithAuthorization` / `signReceiveWithAuthorization` | Raw EIP-3009 transfer / receive signers |
 | `buildSiweMessage(params)` | Build the EIP-4361 text for a login or a wallet proof-of-ownership |
@@ -120,6 +130,23 @@ holder. An unrecognised `primaryType` **throws** rather than defaulting to the
 transfer typehash: the gateway's payload is signed verbatim, never rebuilt
 client-side.
 
+**What `signTransaction` verifies, and why.** The gateway builds the EIP-1559
+transaction and your key signs it, so a compromised or misconfigured endpoint could
+otherwise have that key sign anything — an `approve(spender, MAX)` on the token, a
+`capture` answered to a `void` prepare, a capture for more than you asked. Given the
+expectation, `signTransaction` checks the transaction **before** the key touches it,
+against data you already hold (no extra request): `value` is zero (every RAIL0
+operation is value-0), `chain_id` is the payment's chain, `from` is your key's address,
+`to` is the payment's `rail0_contract`, the 4-byte selector is the RAIL0 function for
+`operation` (the selectors are derived from the contract's function signatures and
+pinned against its ABI in the test suite), the first calldata word is the payment's
+`rail0_id`, and — for `capture` and `refund` — the amount word equals `amount` scaled by
+the payment's `decimals`. The first mismatch throws `Error("refusing to sign: …")`
+naming the field, and no signature is produced. It fails closed: a capture/refund with
+no `amount`, or a payment with unknown `decimals`, is refused rather than skipped, so
+read the payment with `get()` first. `to` is a consistency check only — the address
+comes from the same gateway — which is why the calldata binding to this payment's id
+and operation is what closes a swapped transaction.
 ## Amounts
 
 Amounts you **send** (`create`, `capturePrepare`, `refundPrepare`) are human

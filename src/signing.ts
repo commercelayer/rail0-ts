@@ -1,6 +1,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import type { Address, Bytes32, PaymentConfig, SigningPayload } from './resources/types.js'
+import { signerAddress, type TxExpectation, verifyUnsignedTransaction } from './tx-verify.js'
 
 // ================================================================
 //  EIP-712 type strings
@@ -521,13 +522,49 @@ function bytesToHex(b: Uint8Array): `0x${string}` {
  * raw signed transaction ready to pass to a submit endpoint. Mirrors rail0-go's
  * SignTransaction: no viem/ethers — RLP is encoded here over @noble primitives.
  *
+ * With an `expectation` the transaction is VERIFIED before the key touches it
+ * (`verifyUnsignedTransaction`): zero value, the payment's chain and RAIL0 contract,
+ * the key's own address as `from`, the RAIL0 function for `operation`, this payment's
+ * id in the calldata and — for capture and refund — the amount you asked for. A
+ * mismatch throws `Error("refusing to sign: …")` naming the field, and nothing is
+ * signed. Everything compared is already in hand, so this adds no gateway call.
+ *
+ * ```ts
+ * const payment = await merchant.payments.get(id)          // chain_id, rail0_contract, rail0_id, decimals
+ * const prep = await merchant.payments.capturePrepare(id, '50.00')
+ * const raw = signTransaction(prep.unsigned_transaction!, MERCHANT_KEY, {
+ *   payment, operation: 'capture', amount: '50.00',
+ * })
+ * ```
+ *
  * Note: fee/value fields are read via JSON.parse, so values above 2^53 lose
  * precision (fine for testnet gas). The gateway emits standard base-unit integers.
  */
 export function signTransaction(
   unsignedTransaction: string,
   privateKey: `0x${string}` | Uint8Array,
+  expectation: TxExpectation,
+): `0x${string}`
+/**
+ * @deprecated Signs the gateway's transaction BLINDLY: a compromised or misconfigured
+ * endpoint could have this key sign an arbitrary transaction. Pass the `expectation`
+ * (the payment, the operation, and the amount for capture/refund) so the transaction
+ * is checked first — see `verifyUnsignedTransaction`. This form will be removed in the
+ * next major version.
+ */
+export function signTransaction(
+  unsignedTransaction: string,
+  privateKey: `0x${string}` | Uint8Array,
+): `0x${string}`
+export function signTransaction(
+  unsignedTransaction: string,
+  privateKey: `0x${string}` | Uint8Array,
+  expectation?: TxExpectation,
 ): `0x${string}` {
+  // Before anything else, and before the key is even decoded: a transaction that
+  // fails the check must leave no signature behind.
+  if (expectation)
+    verifyUnsignedTransaction(unsignedTransaction, expectation, signerAddress(privateKey))
   const tx = JSON.parse(unsignedTransaction)
   const int = (v: unknown): Uint8Array => toMinimalBytes(BigInt(String(v ?? 0)))
   const to = tx.to ? hexToBytes(tx.to) : new Uint8Array()

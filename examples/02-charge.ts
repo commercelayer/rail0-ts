@@ -44,9 +44,13 @@ try {
   const sig = signPayment(BUYER_KEY, created)
   await buyer.payments.sign(id, { signature: packSignature(sig) })
 
+  const payment = await merchant.payments.get(id)
   const prep = await merchant.payments.chargePrepare(id)
   const tx = await merchant.payments.charge(id, {
-    signed_transaction: signTransaction(prep.unsigned_transaction as string, MERCHANT_KEY),
+    signed_transaction: signTransaction(prep.unsigned_transaction as string, MERCHANT_KEY, {
+      payment,
+      operation: 'charge',
+    }),
   })
   console.log('Charge submitted:', tx.status)
 } catch (err) {
