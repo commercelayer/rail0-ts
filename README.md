@@ -117,7 +117,7 @@ All client-side, over `@noble` (no ethers/viem).
 | `signSigningPayload(key, payload, { payment, amount? })` | Verify, then sign any gateway `signing_payload` (mirrors rail0-go's `SignSigningPayload`) — the one generic signer. The two-argument form signs blindly and is **deprecated** |
 | `signPayment(key, paymentDetail, { payment, amount? })` | Payer signs the EIP-3009 payload from `create()` (authorize or charge) — `signSigningPayload` on `.signing_payload`. The two-argument form is **deprecated** |
 | `signRefund(key, transaction, { payment, amount })` | Payee signs the refund payload from `refundPrepare` phase-1 — `signSigningPayload` on `.signing_payload`. The two-argument form is **deprecated** |
-| `verifySigningPayload(payload, { payment, amount? }, signer?)` | The authorization pre-sign check on its own (for a signer that is not a local key) |
+| `verifySigningPayload(payload, { payment, amount? }, signer?)` | The authorization pre-sign check on its own (for a signer that is not a local key — run it before handing the payload to a browser wallet's `eth_signTypedData_v4`) |
 | `packSignature(sig)` | Turn a `{ v, r, s }` into the `0x` r‖s‖v hex every `signature` field expects |
 | `signTransaction(unsignedJson, key, { payment, operation, amount? })` | Verify, then sign an unsigned EIP-1559 tx from any prepare step → raw hex for submit. The two-argument form signs blindly and is **deprecated** |
 | `verifyUnsignedTransaction(unsignedJson, { payment, operation, amount? }, signer?)` | The pre-sign check on its own (for a signer that is not a local key — a KMS, a hardware wallet) |
@@ -131,7 +131,16 @@ instrument the **token** honours on its own, with no RAIL0 involvement, for up t
 `value` — so a compromised or misconfigured endpoint that answered a refund prepare
 with `{ from: <you>, to: <attacker>, value: <your whole balance> }` would otherwise get
 exactly that signed. Given the expectation, `signSigningPayload` (and `signPayment` /
-`signRefund`) checks the payload **before** the key touches it, in this order:
+`signRefund`) checks the payload **before** the key touches it. First the typed-data
+envelope: `primaryType` is `ReceiveWithAuthorization` (authorize/charge on v1.4.0+
+deployments, and every refund) or `TransferWithAuthorization` (authorize/charge on
+v1.1.0–v1.3.x); `types[primaryType]` is **exactly** the EIP-3009 struct — `address from,
+address to, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce`,
+same names, types and order; `types.EIP712Domain`, when present, is exactly `string
+name, string version, uint256 chainId, address verifyingContract`; and `types` defines
+nothing else. A local key rebuilds the digest from fixed typehashes, but a browser
+wallet hashes whatever `types` says, so this is what keeps a wallet from signing a
+struct whose fields were renamed or retyped under the same names. Then, in this order:
 `message.from` is your key's address, `domain.chainId` is the payment's `chain_id`,
 `domain.verifyingContract` is the payment's `token`, `message.to` is the payment's
 `rail0_contract`, and `message.value` is **exactly** the expected base units. The
@@ -163,8 +172,9 @@ What this does not establish: `message.to` is compared with the payment's own
 signature to the payment's terms on-chain — is not recomputed, since that needs the
 deployment's `VERSION()`, which no payment response carries. The bounded residual is an
 authorization for the right token, chain and signer, for exactly the amount you asked
-for. `primaryType` and the validity window are not compared (the signer refuses an
-unknown `primaryType` on its own).
+for. The validity window is not compared. The SDK cannot tell which of the two
+`primaryType`s a given payment needs (that is the deployment's version again), so it
+accepts either and refuses anything else.
 
 `signSigningPayload` takes the payload itself (`null`/`undefined` throws). The two
 named wrappers need only the `signing_payload` field, so they accept any
