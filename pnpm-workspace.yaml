@@ -5,3 +5,12 @@
 # run have no compiler. It comes from the esbuild project itself — approved.
 allowBuilds:
   esbuild: true
+
+# Security floors for transitive dependencies.
+overrides:
+  # GHSA-g7r4-m6w7-qqqr (low): path traversal in esbuild's dev server on Windows, fixed
+  # in 0.28.1. tsup 8 asks for ^0.27 and we never run `esbuild --serve`, so it is not
+  # reachable; floored anyway so the audit stays clean, since the build output is
+  # byte-identical under 0.28.2 (already in the tree via vite/tsx). Drop with tsup 9,
+  # which depends on ^0.28.2 itself.
+  "tsup>esbuild": "0.28.2"
