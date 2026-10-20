@@ -423,11 +423,18 @@ export interface SigningPayloadExpectation {
  *  4. `message.to` is the payment's `rail0_contract`;
  *  5. `message.value` is EXACTLY the expected base units — not a ceiling.
  *
+ * Before those, the typed-data envelope itself (`checkTypedData`): `primaryType` is
+ * one of the two EIP-3009 authorization types, `types[primaryType]` is EXACTLY the
+ * EIP-3009 field list, `types.EIP712Domain` (when present) is exactly the token domain's
+ * field list, and `types` defines nothing else. A key signer rebuilds the digest from
+ * fixed typehashes, but a browser wallet hashes whatever `types` says — so without this
+ * a payload could rename or retype fields under the same names and the wallet would
+ * sign a struct the token never verifies, or one the checks above never read.
+ *
  * FAIL-CLOSED: a missing payload, a missing chain/token/contract on the payment, or a
  * value that cannot be derived locally (no amount, unknown decimals, an amount finer
- * than the token's decimals) refuses rather than skips. `primaryType` is not checked
- * here (the signer refuses an unknown one), nor is the validity window — matching the
- * CLI.
+ * than the token's decimals) refuses rather than skips. The validity window is not
+ * checked — matching the CLI.
  */
 export function verifySigningPayload(
   payload: SigningPayload | null | undefined,
@@ -443,6 +450,7 @@ export function verifySigningPayload(
   if (!payment) refuse('cannot check the authorization without the payment it is for')
   const { domain, message } = payload
   if (!domain || !message) refuse('the signing payload has no domain or message')
+  checkTypedData(payload)
 
   // The one comparison whose right-hand side is derived from the private key itself,
   // so it holds no matter what the endpoint claims.
@@ -484,6 +492,86 @@ export function verifySigningPayload(
     refuse(`the authorization is for ${message.value} base units but you asked for ${want}`)
   }
   return payload
+}
+
+/**
+ * The EIP-3009 authorization types the gateway emits. Which one a payment needs depends
+ * on the RAIL0 deployment's contract version, which no payment response carries:
+ * 1.4.0 and later use ReceiveWithAuthorization for authorize/charge, 1.1.0–1.3.x used
+ * TransferWithAuthorization, and refunds are ReceiveWithAuthorization on every version.
+ * So both are accepted and nothing else is.
+ */
+const EIP3009_PRIMARY_TYPES = ['TransferWithAuthorization', 'ReceiveWithAuthorization']
+
+/** The EIP-3009 struct, shared by both types — names, types AND order are the typehash. */
+const EIP3009_FIELDS: readonly [string, string][] = [
+  ['from', 'address'],
+  ['to', 'address'],
+  ['value', 'uint256'],
+  ['validAfter', 'uint256'],
+  ['validBefore', 'uint256'],
+  ['nonce', 'bytes32'],
+]
+
+/** The token's EIP-712 domain, as the gateway declares it and FiatToken hashes it. */
+const EIP712_DOMAIN_FIELDS: readonly [string, string][] = [
+  ['name', 'string'],
+  ['version', 'string'],
+  ['chainId', 'uint256'],
+  ['verifyingContract', 'address'],
+]
+
+/**
+ * Refuses a typed-data envelope that is not exactly the gateway's EIP-3009 shape: an
+ * unknown `primaryType`, a `types[primaryType]` that differs from the EIP-3009 struct
+ * in any name, type or position, an `EIP712Domain` that differs from the token domain,
+ * or any further type definition.
+ */
+function checkTypedData(payload: SigningPayload): void {
+  const { primaryType, types } = payload
+  if (!EIP3009_PRIMARY_TYPES.includes(primaryType)) {
+    refuse(
+      `the authorization's primaryType ${JSON.stringify(primaryType)} is not an EIP-3009 authorization type (TransferWithAuthorization or ReceiveWithAuthorization)`,
+    )
+  }
+  if (!types || typeof types !== 'object' || Array.isArray(types)) {
+    refuse('the signing payload has no types')
+  }
+  for (const name of Object.keys(types)) {
+    if (name !== primaryType && name !== 'EIP712Domain') {
+      refuse(
+        `the signing payload's types define ${JSON.stringify(name)}, which an EIP-3009 authorization does not use`,
+      )
+    }
+  }
+  checkTypeFields(`types.${primaryType}`, types[primaryType], EIP3009_FIELDS)
+  if (Object.hasOwn(types, 'EIP712Domain')) {
+    checkTypeFields('types.EIP712Domain', types.EIP712Domain, EIP712_DOMAIN_FIELDS)
+  }
+}
+
+function checkTypeFields(label: string, got: unknown, want: readonly [string, string][]): void {
+  const expected = want.map(([n, t]) => `${t} ${n}`).join(',')
+  const fields = Array.isArray(got) ? got : []
+  const actual = fields.map((f) =>
+    f && typeof f === 'object' && !Array.isArray(f)
+      ? `${String((f as Record<string, unknown>).type)} ${String((f as Record<string, unknown>).name)}`
+      : JSON.stringify(f),
+  )
+  const exact =
+    Array.isArray(got) &&
+    got.length === want.length &&
+    got.every((f, i) => {
+      if (!f || typeof f !== 'object' || Array.isArray(f)) return false
+      const keys = Object.keys(f)
+      const rec = f as Record<string, unknown>
+      return keys.length === 2 && rec.name === want[i]?.[0] && rec.type === want[i]?.[1]
+    })
+  if (!exact) {
+    refuse(
+      `${label} is (${Array.isArray(got) ? actual.join(',') : JSON.stringify(got ?? null)}) but must be exactly (${expected})`,
+    )
+  }
 }
 
 /**

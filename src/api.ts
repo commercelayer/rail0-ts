@@ -296,7 +296,7 @@ export interface paths {
                     "application/json": {
                         /** @description Display name. Unique across accounts. */
                         name?: string;
-                        /** @description Contact email. Stored lowercase; unique across accounts case-insensitively. */
+                        /** @description Contact email: ONE bare address `x@y` (no spaces, commas, semicolons, quotes or angle brackets: the mailer's own rule). Stored lowercase; unique across accounts case-insensitively. */
                         email?: string;
                         /** @description Active status (admin only). */
                         active?: boolean;
@@ -1427,7 +1427,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/policy": {
+    "/admin/config": {
         parameters: {
             query?: never;
             header?: never;
@@ -1435,10 +1435,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The effective operator policy of this process (admin)
-         * @description Every window, threshold and limit in config/policy.rb as this process resolved it from the environment, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, fees, rpc, email), each as {value, env, overridden, description}: the variable that sets it (null for a constant), whether that variable is set, and a plain-text explanation of what the entry is for. Read-only: changing a value is a deploy. Nothing secret.
+         * The effective operator configuration of this process (admin)
+         * @description Every window, threshold and limit in config/rail0_config.rb as this process resolved it from the environment, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, fees, rpc, email), each as {value, env, overridden, description}: the variable that sets it (null for a constant), whether that variable is set, and a plain-text explanation of what the entry is for. Read-only: changing a value is a deploy. Nothing secret.
          */
-        get: operations["adminPolicy"];
+        get: operations["adminConfig"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2505,51 +2505,51 @@ export interface components {
                 token?: string;
             };
         };
-        /** @description One reported policy value. */
-        PolicySetting: {
+        /** @description One reported configuration value. */
+        ConfigSetting: {
             /** @description The effective value (number, boolean, string, list or map). */
             value?: unknown;
             /** @description The environment variable that sets it; null for a constant. */
             env?: string | null;
             /** @description Whether that variable is set in this process. */
             overridden?: boolean;
-            /** @description Plain-text explanation of the entry: what it controls, which part of the gateway reads it and the effect of raising or lowering it, and its unit (from config/policy_descriptions.yml). Every entry has one; older gateways omit the field. */
+            /** @description Plain-text explanation of the entry: what it controls, which part of the gateway reads it and the effect of raising or lowering it, and its unit (from config/config_descriptions.yml). Every entry has one; older gateways omit the field. */
             description?: string;
         };
-        /** @description GET /admin/policy: the effective policy, grouped. Every leaf is a PolicySetting. */
-        PolicyReport: {
+        /** @description GET /admin/config: the effective configuration, grouped. Every leaf is a ConfigSetting. */
+        ConfigReport: {
             payments?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             recovery?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             retention?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             webhooks?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             settlement?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             rate_limit?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             siwe?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             fees?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             rpc?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             onboarding?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             email?: {
-                [key: string]: components["schemas"]["PolicySetting"];
+                [key: string]: components["schemas"]["ConfigSetting"];
             };
             /** Format: date-time */
             generated_at?: string;
@@ -2901,7 +2901,7 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or one of the four binding failures `siwe_domain_not_allowed` / `siwe_uri_mismatch` / `siwe_chain_mismatch` / `siwe_proof_expired` (each names the value the caller sent, never the gateway's expected value). An address with no gateway account is NOT a failure — it yields an account-less token (200). */
+            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or one of the four binding failures `siwe_domain_not_allowed` / `siwe_uri_mismatch` / `siwe_chain_mismatch` / `siwe_proof_expired` (each names the value the caller sent, never the gateway's expected value). The message's `chainId` may be SIWE_CHAIN_ID (default 1) or the id of any active chain of this environment's catalog; anything else is `siwe_chain_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (201). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3971,7 +3971,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
-            /** @description Payment not signable or signer mismatch. */
+            /** @description Payment not signable, signer mismatch, or `invalid_signature`: a signature that cannot be recovered, or whose recovery byte `v` is not 27/28 (0/1 are read as 27/28). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5056,6 +5056,15 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `queue_unavailable`: the job queue could not be reached, so nothing was enqueued and no replay will happen. Nothing is written by this endpoint; retry in a moment. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getSyncTransactions: {
@@ -5498,7 +5507,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
-    adminPolicy: {
+    adminConfig: {
         parameters: {
             query?: never;
             header?: never;
@@ -5507,13 +5516,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The effective policy. */
+            /** @description The effective configuration. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PolicyReport"];
+                    "application/json": components["schemas"]["ConfigReport"];
                 };
             };
             401: components["responses"]["Unauthorized"];

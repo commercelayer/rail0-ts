@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { SigningPayload } from '../src/resources/types.js'
 import { signPayment, signRefund, signSigningPayload, signTransaction } from '../src/signing.js'
@@ -352,7 +353,22 @@ const payloadPayment = {
 function testPayload(mutate?: (p: SigningPayload) => void): SigningPayload {
   const p: SigningPayload = {
     primaryType: 'ReceiveWithAuthorization',
-    types: {},
+    types: {
+      EIP712Domain: [
+        { name: 'name', type: 'string' },
+        { name: 'version', type: 'string' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'verifyingContract', type: 'address' },
+      ],
+      ReceiveWithAuthorization: [
+        { name: 'from', type: 'address' },
+        { name: 'to', type: 'address' },
+        { name: 'value', type: 'uint256' },
+        { name: 'validAfter', type: 'uint256' },
+        { name: 'validBefore', type: 'uint256' },
+        { name: 'nonce', type: 'bytes32' },
+      ],
+    },
     domain: { name: 'USD Coin', version: '2', chainId: CHAIN_ID, verifyingContract: PAYLOAD_TOKEN },
     message: {
       from: SIGNER,
@@ -490,6 +506,144 @@ describe('verifySigningPayload', () => {
       /for 500000 base units but you asked for 1000000/,
     )
   })
+})
+
+// The typed-data envelope. A key signer rebuilds the digest from fixed typehashes, but
+// a browser wallet hashes whatever `types` says: these are refused before either runs.
+type Fields = { name: string; type: string }[]
+const fieldsOf = (p: SigningPayload, name: string): Fields => p.types[name] as Fields
+
+describe('verifySigningPayload: the typed-data envelope', () => {
+  it("accepts the gateway's own payload (built by Rail0::Eip3009#typed_data)", () => {
+    const gateway = JSON.parse(
+      readFileSync(new URL('./fixtures/gateway-signing-payload.json', import.meta.url), 'utf8'),
+    ) as SigningPayload
+    expect(verifySigningPayload(gateway, payloadExpect, SIGNER)).toEqual(gateway)
+    expect(() => signSigningPayload(PRIVATE_KEY, gateway, payloadExpect)).not.toThrow()
+  })
+
+  it('accepts TransferWithAuthorization (pre-1.4.0 deployments) and an absent EIP712Domain', () => {
+    const transfer = testPayload((p) => {
+      p.types = {
+        EIP712Domain: p.types.EIP712Domain,
+        TransferWithAuthorization: p.types.ReceiveWithAuthorization,
+      }
+      p.primaryType = 'TransferWithAuthorization'
+    })
+    expect(() => verifySigningPayload(transfer, payloadExpect, SIGNER)).not.toThrow()
+    const noDomain = testPayload((p) => {
+      delete p.types.EIP712Domain
+    })
+    expect(() => verifySigningPayload(noDomain, payloadExpect, SIGNER)).not.toThrow()
+  })
+
+  const tampered: [string, (p: SigningPayload) => void, RegExp][] = [
+    [
+      'an unknown primaryType',
+      (p) => {
+        p.types.Permit = p.types.ReceiveWithAuthorization
+        delete p.types.ReceiveWithAuthorization
+        p.primaryType = 'Permit'
+      },
+      /primaryType "Permit" is not an EIP-3009 authorization type/,
+    ],
+    [
+      'a primaryType with no definition in types',
+      (p) => {
+        p.primaryType = 'TransferWithAuthorization'
+      },
+      /types define "ReceiveWithAuthorization", which an EIP-3009 authorization does not use/,
+    ],
+    [
+      'reordered fields',
+      (p) => {
+        const f = fieldsOf(p, 'ReceiveWithAuthorization')
+        ;[f[0], f[1]] = [f[1] as Fields[0], f[0] as Fields[0]]
+      },
+      /types\.ReceiveWithAuthorization is \(address to,address from,/,
+    ],
+    [
+      'a renamed field',
+      (p) => {
+        ;(fieldsOf(p, 'ReceiveWithAuthorization')[1] as Fields[0]).name = 'recipient'
+      },
+      /types\.ReceiveWithAuthorization is .*address recipient.* but must be exactly \(address from,address to,/,
+    ],
+    [
+      'a changed field type',
+      (p) => {
+        ;(fieldsOf(p, 'ReceiveWithAuthorization')[2] as Fields[0]).type = 'uint128'
+      },
+      /types\.ReceiveWithAuthorization is .*uint128 value/,
+    ],
+    [
+      'an extra field',
+      (p) => {
+        fieldsOf(p, 'ReceiveWithAuthorization').push({ name: 'spender', type: 'address' })
+      },
+      /types\.ReceiveWithAuthorization is .*address spender/,
+    ],
+    [
+      'a missing field',
+      (p) => {
+        fieldsOf(p, 'ReceiveWithAuthorization').pop()
+      },
+      /types\.ReceiveWithAuthorization is /,
+    ],
+    [
+      'an extra key on a field',
+      (p) => {
+        ;(fieldsOf(p, 'ReceiveWithAuthorization')[0] as Record<string, string>).note = 'x'
+      },
+      /types\.ReceiveWithAuthorization is /,
+    ],
+    [
+      'an extra type definition',
+      (p) => {
+        p.types.Transfer = [{ name: 'to', type: 'address' }]
+      },
+      /types define "Transfer", which an EIP-3009 authorization does not use/,
+    ],
+    [
+      'a wrong EIP712Domain',
+      (p) => {
+        fieldsOf(p, 'EIP712Domain').push({ name: 'salt', type: 'bytes32' })
+      },
+      /types\.EIP712Domain is .*bytes32 salt.* but must be exactly \(string name,string version,uint256 chainId,address verifyingContract\)/,
+    ],
+    [
+      'an EIP712Domain without version',
+      (p) => {
+        fieldsOf(p, 'EIP712Domain').splice(1, 1)
+      },
+      /types\.EIP712Domain is \(string name,uint256 chainId,address verifyingContract\)/,
+    ],
+    [
+      'no types at all',
+      (p) => {
+        ;(p as { types: unknown }).types = undefined
+      },
+      /the signing payload has no types/,
+    ],
+    [
+      'empty types',
+      (p) => {
+        p.types = {}
+      },
+      /types\.ReceiveWithAuthorization is \(null\)/,
+    ],
+  ]
+  for (const [name, mutate, want] of tampered) {
+    it(`refuses: ${name}`, () => {
+      expect(() => verifySigningPayload(testPayload(mutate), payloadExpect, SIGNER)).toThrow(want)
+      expect(() => verifySigningPayload(testPayload(mutate), payloadExpect, SIGNER)).toThrow(
+        /^refusing to sign: /,
+      )
+      expect(() => signSigningPayload(PRIVATE_KEY, testPayload(mutate), payloadExpect)).toThrow(
+        /refusing to sign/,
+      )
+    })
+  }
 })
 
 describe('signSigningPayload / signPayment / signRefund with an expectation', () => {
