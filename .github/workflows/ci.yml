@@ -50,6 +50,15 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Packs the package and checks that every resolver (node10, node16 from CJS and
+      # from ESM, bundler) finds types matching the JS it loads. The `exports` map once
+      # served ESM `index.d.ts` to `require` consumers ("masquerading as ESM"), so CJS
+      # projects on `moduleResolution: node16` failed to type-check, and nothing here
+      # noticed. Exits non-zero on any problem. Fetched on demand, not a devDependency.
+      # Pinned because 0.18.2 crashes on this package and still exits 0.
+      - name: Check package types (attw)
+        run: pnpm dlx @arethetypeswrong/cli@0.18.5 --pack .
+
 # NOTE — src/api.ts is generated from rail0-gateway/docs/openapi.json, a PRIVATE
 # sibling repo, so staleness cannot be gated from here (and a fork PR would have no
 # secrets for it anyway). After a gateway spec change run `pnpm generate` and commit
