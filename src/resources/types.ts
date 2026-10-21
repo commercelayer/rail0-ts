@@ -423,7 +423,7 @@ export interface Account {
 }
 /**
  * A wallet as the merchant-facing routes return it — the gateway's Restricted view, an
- * explicit allow-list of these four fields. It never carries `account_id` or the
+ * explicit allow-list of these five fields. It never carries `account_id` or the
  * bookkeeping timestamps; they were typed here once and could only ever read undefined.
  */
 export interface Wallet {
@@ -431,6 +431,14 @@ export interface Wallet {
   address?: string
   label?: string | null
   active?: boolean
+  /**
+   * Who switched the wallet off: `owner` (a session signed in with this wallet) or
+   * `operator` (an operator session). Null while active, and on a switch-off that
+   * predates the record, which the gateway reads as the operator's. It says who may
+   * switch the wallet back on: the owner's own session lifts an `owner` switch-off,
+   * while an `operator` one is refused to it with 403 `wallet_deactivated_by_operator`.
+   */
+  deactivated_by?: 'owner' | 'operator' | null
 }
 export interface WalletTokenHolding {
   /**
