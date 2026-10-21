@@ -342,6 +342,7 @@ describe('Rail0Client', () => {
       for (const code of [
         'account_deactivated',
         'wallet_deactivated',
+        'wallet_deactivated_by_operator',
         'not_your_account',
         'payer_must_be_caller',
         'release_submitter_not_a_party',
@@ -361,6 +362,14 @@ describe('Rail0Client', () => {
       // or a merchant is told to wait for an operator before refunding.
       expect(new Rail0ApiError(403, { code: 'account_deactivated' }).hint).toMatch(
         /void, release and refund/,
+      )
+      // gateway#439: the owner's own session switches its wallet back on; only an
+      // operator's switch-off needs an operator.
+      expect(new Rail0ApiError(403, { code: 'wallet_deactivated' }).hint).toMatch(
+        /switch it back on/,
+      )
+      expect(new Rail0ApiError(403, { code: 'wallet_deactivated_by_operator' }).hint).toMatch(
+        /ask an operator to reactivate it/,
       )
     })
 

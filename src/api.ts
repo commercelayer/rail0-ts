@@ -407,14 +407,14 @@ export interface paths {
         post?: never;
         /**
          * Deactivate a wallet (soft delete)
-         * @description Owner or admin. An owner session may change ONLY the wallet it signed in with (the session's address): another wallet of the same account is refused 403 `not_your_wallet`. An admin may switch off any wallet. Only ever deactivates (payments name the address, so the row stays; there is no removal). Last-active-wallet guard: the account's only active wallet is refused with 422 last_active_wallet.
+         * @description Owner or admin. An owner session may change ONLY the wallet it signed in with (the session's address): another wallet of the same account is refused 403 `not_your_wallet`. An admin may switch off any wallet. Only ever deactivates (payments name the address, so the row stays; there is no removal). Last-active-wallet guard: the account's only active wallet is refused with 422 last_active_wallet. Records who switched it off (`deactivated_by`), which decides who may switch it back on (see PATCH): an operator's switch-off only an operator lifts, and an operator switching off a wallet its owner already switched off takes the switch-off over.
          */
         delete: operations["deactivateWallet"];
         options?: never;
         head?: never;
         /**
          * Update a wallet label or active status
-         * @description Owner or admin. An owner session may change ONLY the wallet it signed in with (the session's address): another wallet of the same account is refused 403 `not_your_wallet`. An admin may change any wallet, including the guarded switch-off. Last-active-wallet guard: `active: false` on the account's only active wallet is refused with 422 last_active_wallet.
+         * @description Owner or admin. An owner session may change ONLY the wallet it signed in with (the session's address): another wallet of the same account is refused 403 `not_your_wallet`. An admin may change any wallet, including the guarded switch-off. Last-active-wallet guard: `active: false` on the account's only active wallet is refused with 422 last_active_wallet. Every switch-off records who did it (`deactivated_by`: `owner` when the session is signed in with this wallet, `operator` when an admin session acts on it). Switching back on (`active: true` on an inactive wallet): an admin may always; the owner's session may switch its OWN wallet back on — this is the one write a deactivated session may make, anything else from it is 403 `wallet_deactivated` — unless an operator switched it off, or the switch-off predates the record (`deactivated_by` null), which is refused 403 `wallet_deactivated_by_operator`: an operator's switch-off revokes the key, so only an operator lifts it. Residual limit: a wallet its owner switched off can be switched back on by whoever holds its key; a definitive revocation must come from an operator.
          */
         patch: operations["updateWallet"];
         trace?: never;
@@ -763,7 +763,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare an operation's unsigned transaction
-         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Session required (bearerAuth) for every operation. The payee operations additionally require the caller to be the payee; `release` is not payee-gated (it is payer-or-payee on-chain and the payer has no gateway account, so its acting party is authorized on-chain — the signed tx + the contract's NotPayerOrPayee gate) but its prepare is still restricted to a payment participant. `amount` is required for `capture` and `refund`. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2). `release` is also the one operation with an INVERTED time window: it returns the *uncaptured remainder* of an authorization, which the contract keeps available to the merchant until the authorization expires, so release opens only AFTER `authorization_expiry` and answers 422 `authorization_not_expired` before then (the refusal carries the timestamp). The operation whose card-processing analogue is “cancel the hold early” is `void`, not release — and void requires the authorization to be fully intact, so any capture rules it out permanently.
+         * @description Builds the unsigned transaction and stores it on a new `pending` transaction. Session required (bearerAuth) for every operation. The payee operations additionally require the caller to be the payee; `release` is not payee-gated (it is payer-or-payee on-chain and the payer has no gateway account, so its acting party is authorized on-chain — the signed tx + the contract's NotPayerOrPayee gate) but its prepare is still restricted to a payment participant. Each operation reads only its own body fields: `amount` for `capture` and `refund` (required for both), `signature` for `refund`, `from` for `release`; `authorize`, `charge` and `void` take none. A field another operation reads is ignored, never an error. `refund` is two-phase: with no `signature` it returns `{ signing_payload }` (phase 1, no transaction row created); with `signature` it creates the pending transaction (phase 2). `release` is also the one operation with an INVERTED time window: it returns the *uncaptured remainder* of an authorization, which the contract keeps available to the merchant until the authorization expires, so release opens only AFTER `authorization_expiry` and answers 422 `authorization_not_expired` before then (the refusal carries the timestamp). The operation whose card-processing analogue is “cancel the hold early” is `void`, not release — and void requires the authorization to be fully intact, so any capture rules it out permanently.
          */
         post: operations["preparePaymentOperation"];
         delete?: never;
@@ -1069,7 +1069,7 @@ export interface paths {
         delete: operations["deleteWebhook"];
         options?: never;
         head?: never;
-        /** Update a webhook (name, callback_url, topic) */
+        /** Update a webhook (name, callback_url, topics) */
         patch: operations["updateWebhook"];
         trace?: never;
     };
@@ -1123,7 +1123,7 @@ export interface paths {
         get?: never;
         /**
          * Rotate the shared secret — returns the new secret once
-         * @description Replaces the shared secret and returns the new one once. The replaced key is kept for a grace window (WEBHOOK_SECRET_GRACE, one hour by default): inside it every delivery carries X-Rail0-Signature under the new key AND X-Rail0-Signature-Previous under the old one, so an endpoint verifies with whichever key it has deployed and no delivery in flight at rotation becomes unverifiable. The old key signs only, is never honoured past the window, and a second rotation inside it drops the oldest key. Two concurrent rotations cannot both succeed: the one that loses the race answers 409.
+         * @description Replaces the shared secret and returns the new one once. The replaced key is kept for a grace window (one hour): inside it every delivery carries X-Rail0-Signature under the new key AND X-Rail0-Signature-Previous under the old one, so an endpoint verifies with whichever key it has deployed and no delivery in flight at rotation becomes unverifiable. The old key signs only, is never honoured past the window, and a second rotation inside it drops the oldest key. Two concurrent rotations cannot both succeed: the one that loses the race answers 409.
          */
         put: operations["rotateWebhookSecret"];
         post?: never;
@@ -1207,26 +1207,6 @@ export interface paths {
          * @description HMAC-protected, indexer-facing.
          */
         get: operations["getSyncTransactions"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sync/blockchains": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Start blocks and confirmations per chain (currently unused by the indexer)
-         * @description HMAC-protected, indexer-facing. Currently unused: under Envio the indexer's chain and contract list must be static in its config.yaml at codegen/boot, so rail0-indexer generates it offline from the gateway's config/seeds.yml (bin/sync-indexer-config.ts). Kept as a possible future hook, e.g. for the resync floor computed here.
-         */
-        get: operations["getSyncBlockchains"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1376,7 +1356,7 @@ export interface paths {
         };
         /**
          * Transactions across every account, or only the stuck ones (admin)
-         * @description The cross-account transaction list, and with `stuck` only the wedged rows: `unbroadcast` (signed, never sent, past two BROADCAST_REDRIVE_AFTER cycles — the rows behind /admin/health's broadcasts check), `unconfirmed` (broadcast past SUBMITTED_TX_TTL with no indexer confirm — the indexer_intake check) or `any`. Same predicates as the health figures, so count and page agree. Each row carries `redrivable` and its `payment` summary; never signed_transaction. Oldest first; paginated.
+         * @description The cross-account transaction list, and with `stuck` only the wedged rows: `unbroadcast` (signed, never sent, past two broadcast re-drive cycles of 600 s — the rows behind /admin/health's broadcasts check), `unconfirmed` (broadcast past SUBMITTED_TX_TTL with no indexer confirm — the indexer_intake check) or `any`. Same predicates as the health figures, so count and page agree. Each row carries `redrivable` and its `payment` summary; never signed_transaction. Oldest first; paginated.
          */
         get: operations["listAdminTransactions"];
         put?: never;
@@ -1436,7 +1416,7 @@ export interface paths {
         };
         /**
          * The effective operator configuration of this process (admin)
-         * @description Every window, threshold and limit in config/rail0_config.rb as this process resolved it from the environment, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, fees, rpc, email), each as {value, env, overridden, description}: the variable that sets it (null for a constant), whether that variable is set, and a plain-text explanation of what the entry is for. Read-only: changing a value is a deploy. Nothing secret.
+         * @description Every window, threshold and limit in config/rail0_config.rb as this process resolved it, grouped (payments, recovery, retention, webhooks, settlement, rate_limit, siwe, session, fees, rpc, onboarding, email), each as {value, env, overridden, description}: the variable that sets it (null for a constant), whether that variable is set, and a plain-text explanation of what the entry is for. Most entries are constants (env null); the rest read the environment. Read-only: changing a value is a deploy. Nothing secret.
          */
         get: operations["adminConfig"];
         put?: never;
@@ -2069,6 +2049,11 @@ export interface components {
             address?: string;
             label?: string | null;
             active?: boolean;
+            /**
+             * @description Who switched the wallet off: `owner` (a session signed in with this wallet) or `operator` (an admin session). Null while active, and on a switch-off that predates the record — treated as `operator`. A wallet an operator switched off can be switched back on only by an operator (403 `wallet_deactivated_by_operator`). Always null on GET /payment_methods, which serves active wallets only.
+             * @enum {string|null}
+             */
+            deactivated_by?: "owner" | "operator" | null;
         };
         /** @description A wallet's token holding as nested under its wallet (GET /accounts/:id/wallets): the token plus this wallet's per-token flags, without re-nesting the wallet. */
         WalletTokenHolding: {
@@ -2088,6 +2073,11 @@ export interface components {
             address?: string;
             label?: string | null;
             active?: boolean;
+            /**
+             * @description Who switched the wallet off: `owner` (a session signed in with this wallet) or `operator` (an admin session). Null while active, and on a switch-off that predates the record — treated as `operator`. A wallet an operator switched off can be switched back on only by an operator (403 `wallet_deactivated_by_operator`). Always null on GET /payment_methods, which serves active wallets only.
+             * @enum {string|null}
+             */
+            deactivated_by?: "owner" | "operator" | null;
             tokens?: components["schemas"]["WalletTokenHolding"][];
         };
         /** @description Base persisted payment fields, plus the `chain_id` of the payment's deployment, its token's `decimals`, and whether a transaction is `in_flight`. */
@@ -2536,7 +2526,12 @@ export interface components {
             rate_limit?: {
                 [key: string]: components["schemas"]["ConfigSetting"];
             };
+            /** @description domains (SIWE_DOMAIN), accepted_chain_ids (1 plus the ids of the active catalog chains: the chainId values a login may carry) and nonce_ttl. */
             siwe?: {
+                [key: string]: components["schemas"]["ConfigSetting"];
+            };
+            /** @description environment (RAIL0_ENVIRONMENT, default RACK_ENV: the scope every issued token is bound to), jwt_ttl and jwt_audience: the session token's lifetime (a constant) and audience (`rail0-gateway:<environment>`). */
+            session?: {
                 [key: string]: components["schemas"]["ConfigSetting"];
             };
             fees?: {
@@ -2668,26 +2663,6 @@ export interface components {
             chain_id?: number;
             /** @description Address (lowercase) of the RAIL0 deployment the payment is bound to, archived versions included. The sweeper accepts a receipt's event only when this contract emitted it. */
             contract_address?: string;
-        };
-        /** @description Per-chain indexer config. */
-        SyncBlockchain: {
-            chain_id?: number;
-            start_block?: number;
-            /** @description Fallback burial depth, used where the chain serves no finality tag. */
-            required_confirmations?: number;
-            /**
-             * @description Which block the chain calls settled; the indexer gates every notify on it.
-             * @enum {string}
-             */
-            finality_tag?: "safe" | "finalized" | "depth";
-            /** @description Block explorer base URL; null when the chain has none. */
-            explorer_url?: string | null;
-            /** @description "testnet" or "mainnet"; selects which chains a deployment indexes. */
-            network_type?: string;
-            /** @description Ordered list of public RPC endpoints tried in turn (serial fallback). */
-            rpc_urls?: string[];
-            /** @description Active RAIL0 contract addresses on the chain (all watched versions). */
-            contracts?: string[];
         };
         /**
          * @description Reason a payer may open a dispute with (POST /payments/{id}/dispute/prepare). On-chain the reason is a bytes32, derived from the code as keccak256("rail0.dispute.<code>") (see `x-enum-bytes32`).
@@ -2901,7 +2876,7 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or one of the four binding failures `siwe_domain_not_allowed` / `siwe_uri_mismatch` / `siwe_chain_mismatch` / `siwe_proof_expired` (each names the value the caller sent, never the gateway's expected value). The message's `chainId` may be SIWE_CHAIN_ID (default 1) or the id of any active chain of this environment's catalog; anything else is `siwe_chain_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (201). */
+            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or one of the four binding failures `siwe_domain_not_allowed` / `siwe_uri_mismatch` / `siwe_chain_mismatch` / `siwe_proof_expired` (each names the value the caller sent, never the gateway's expected value). The message's `chainId` may be 1, or the id of any active chain of this environment's catalog; anything else is `siwe_chain_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (201). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2971,7 +2946,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The token from the emailed link (`<claim page>#<token>`): base64url(JSON payload) "." base64url(HMAC-SHA256(RAIL0_ONBOARDING_SECRET, payload segment)), both unpadded. Payload keys: v (2), onboarding_id, lv (the link version), address (lowercase), email (lowercase), name, exp (unix seconds). Minted only by the gateway; a client may decode the payload to show it, never mint one. */
+                    /** @description The token from the emailed link (`<claim page>#<token>`): base64url(JSON payload) "." base64url(HMAC-SHA256(RAIL0_ONBOARDING_SECRET, payload segment)), both unpadded. Payload keys: v (3), env (the minting gateway's environment, RAIL0_ENVIRONMENT or by default RACK_ENV; a token from another environment is onboarding_link_invalid), onboarding_id, lv (the link version), address (lowercase), email (lowercase), name, exp (unix seconds). Minted only by the gateway; a client may decode the payload to show it, never mint one. */
                     token: string;
                     /** @description EIP-4361 SIWE message signed by the request's wallet. Its statement must be exactly "Claim this RAIL0 merchant account with this wallet" — a login or wallet-add proof is refused with 422 siwe_purpose_mismatch. */
                     message: string;
@@ -3470,7 +3445,15 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
+            /** @description not_your_wallet (another wallet of the session's account), wallet_deactivated (a deactivated session doing anything but switching its own wallet back on), wallet_deactivated_by_operator (the owner switching back on a wallet an operator switched off, or one whose switch-off predates the record), or account_deactivated. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
             /** @description last_active_wallet: the wallet is the account's last active one. */
             422: {
@@ -4107,11 +4090,11 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description Amount (required for capture/refund). */
+                    /** @description `capture` and `refund` only (required there): the amount as a human decimal. Ignored by the other operations. */
                     amount?: string;
-                    /** @description Payee's EIP-3009 refund signature (refund phase-2 only; 0x + 130 hex). */
+                    /** @description `refund` only: the payee's EIP-3009 refund signature (phase 2; 0x + 130 hex). Ignored by the other operations. */
                     signature?: string;
-                    /** @description Release submitter: the payment's payer or payee (422 release_submitter_not_a_party otherwise). The transaction is built with its nonce. Defaults to the caller. */
+                    /** @description `release` only: the submitter, the payment's payer or payee (422 release_submitter_not_a_party otherwise). The transaction is built with its nonce. Defaults to the caller. Ignored by the other operations. */
                     from?: string;
                 };
             };
@@ -4758,13 +4741,8 @@ export interface operations {
                     name: string;
                     /** @description HTTPS destination URL. */
                     callback_url: string;
-                    /** @description Event topics for this subscription — one secret and one circuit breaker for all of them. Repeated values are collapsed. Exactly one of `topics` or `topic` must be sent. */
-                    topics?: components["schemas"]["WebhookTopic"][];
-                    /**
-                     * @deprecated
-                     * @description Deprecated alias for a single-element `topics`.
-                     */
-                    topic?: components["schemas"]["WebhookTopic"];
+                    /** @description Event topics for this subscription — one secret and one circuit breaker for all of them. Repeated values are collapsed. */
+                    topics: components["schemas"]["WebhookTopic"][];
                 };
             };
         };
@@ -4779,7 +4757,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description `validation_failed` (a malformed callback_url or topic), or `webhook_limit_reached`: the account already holds WEBHOOKS_PER_ACCOUNT subscriptions (20 by default; disabled ones count, deleted ones do not). Delete one, or add topics to an existing subscription. */
+            /** @description `validation_failed` (a malformed callback_url or topic), or `webhook_limit_reached`: the account already holds 20 subscriptions (WEBHOOKS_PER_ACCOUNT; disabled ones count, deleted ones do not). Delete one, or add topics to an existing subscription. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4852,11 +4830,6 @@ export interface operations {
                     callback_url?: string;
                     /** @description REPLACES the whole set, so this is also how a topic is removed. The shared secret is untouched. */
                     topics?: components["schemas"]["WebhookTopic"][];
-                    /**
-                     * @deprecated
-                     * @description Deprecated alias for a single-element `topics`.
-                     */
-                    topic?: components["schemas"]["WebhookTopic"];
                 };
             };
         };
@@ -5085,27 +5058,6 @@ export interface operations {
                     "application/json": {
                         transactions?: components["schemas"]["SyncTransaction"][];
                     };
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-        };
-    };
-    getSyncBlockchains: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Per-chain indexer config. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncBlockchain"][];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -5792,7 +5744,7 @@ export interface operations {
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Only this kind of action. */
-                action?: "account.create" | "account.update" | "account.activate" | "account.deactivate" | "onboarding.create" | "onboarding.update" | "onboarding.send" | "onboarding.delete" | "wallet.add" | "wallet.update" | "wallet.deactivate" | "administrator.grant" | "administrator.revoke" | "webhook.reset_circuit" | "transaction.redrive" | "catalog.reload" | "sync_errors.clear";
+                action?: "account.create" | "account.update" | "account.activate" | "account.deactivate" | "onboarding.create" | "onboarding.update" | "onboarding.send" | "onboarding.delete" | "wallet.add" | "wallet.update" | "wallet.deactivate" | "wallet.reactivate" | "administrator.grant" | "administrator.revoke" | "webhook.reset_circuit" | "transaction.redrive" | "catalog.reload" | "sync_errors.clear";
                 /** @description Only actions by this admin account. */
                 actor_account_id?: string;
                 /** @description Only actions that landed on this account. */

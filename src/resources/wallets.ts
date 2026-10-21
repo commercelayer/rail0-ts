@@ -79,6 +79,12 @@ export class WalletsResource {
    * operator may change any). `active: false` on the account's only active wallet
    * is refused with 422 `last_active_wallet`: login resolves the account from a
    * wallet, so an account with none could neither act nor add one back.
+   *
+   * `active: true` is the one write a deactivated wallet's own session may make:
+   * it switches the wallet back on when its owner switched it off. A wallet an
+   * operator switched off (`deactivated_by: 'operator'`, or null on an older
+   * switch-off) is refused 403 `wallet_deactivated_by_operator`: only an operator
+   * lifts it.
    */
   update(account_id: string, id: string, params: UpdateWalletRequest): Promise<Wallet> {
     return this.http.patch(path`/accounts/${account_id}/wallets/${id}`, params)

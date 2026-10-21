@@ -148,16 +148,22 @@ const errorHints: Record<string, string> = {
   release_submitter_not_a_party:
     "a release can be sent only by the payment's payer or payee — omit `from` to build it for yourself",
   // standing: the session's wallet or account was switched off by its holder or an operator
+  // gateway#439: a deactivated session may switch its OWN wallet back on (PATCH
+  // active=true) when its owner switched it off; an operator's switch-off is the
+  // operator's to lift (wallet_deactivated_by_operator).
   wallet_deactivated:
-    "this wallet is deactivated and read-only — reactivate it, or sign in with another of the account's wallets",
+    "this wallet is deactivated and read-only — if you switched it off, its own session can switch it back on (wallets.update(accountId, id, { active: true })), or sign in with another of the account's wallets",
+  wallet_deactivated_by_operator:
+    'an operator deactivated this wallet, so only an operator can reactivate it — ask an operator to reactivate it',
   account_deactivated:
     'this merchant account is deactivated — it can still read, void, release and refund, but not create, authorize, charge or capture; ask an operator to reactivate it',
   // last-one guards: login resolves the account FROM a wallet, so an account left with no
   // active wallet could neither act nor add one back; the operator grant has the same floor.
   // Adding a wallet is suspended and a session changes only its own wallet, so the other
-  // wallet has to be reactivated by an operator.
+  // wallet comes back on from its own session (if its owner switched it off) or from an
+  // operator (gateway#439).
   last_active_wallet:
-    "this is the account's only active wallet — another wallet must be active before this one can be switched off (adding a wallet is not available yet; an operator can reactivate one)",
+    "this is the account's only active wallet — another wallet must be active before this one can be switched off: sign in with one you switched off and reactivate it, or ask an operator (adding a wallet is not available yet)",
   last_admin:
     'the change would leave no active operator — grant the operator role to another active account first',
   // contract reverts (surfaced as contract_revert, or on a failed transaction)
