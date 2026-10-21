@@ -2073,6 +2073,11 @@ export interface components {
             address?: string;
             label?: string | null;
             active?: boolean;
+            /**
+             * @description Who switched the wallet off: `owner` (a session signed in with this wallet) or `operator` (an admin session). Null while active, and on a switch-off that predates the record — treated as `operator`. A wallet an operator switched off can be switched back on only by an operator (403 `wallet_deactivated_by_operator`). Always null on GET /payment_methods, which serves active wallets only.
+             * @enum {string|null}
+             */
+            deactivated_by?: "owner" | "operator" | null;
             tokens?: components["schemas"]["WalletTokenHolding"][];
         };
         /** @description Base persisted payment fields, plus the `chain_id` of the payment's deployment, its token's `decimals`, and whether a transaction is `in_flight`. */
