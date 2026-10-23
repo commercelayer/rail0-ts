@@ -13,6 +13,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  # release.yml calls this as its gate, on the exact commit it is about to publish.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit to check (default: the commit of the triggering event)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -22,6 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }} # empty outside workflow_call: the event's own commit
 
       # Version from package.json's packageManager field, so CI and local installs
       # resolve the lockfile identically.
@@ -58,6 +67,11 @@ jobs:
       # Pinned because 0.18.2 crashes on this package and still exits 0.
       - name: Check package types (attw)
         run: pnpm dlx @arethetypeswrong/cli@0.18.5 --pack .
+
+      # bin/release-prepare opens every release pull request; its test drives it against
+      # a throwaway repository (no network, no GitHub), refusals and one full run included.
+      - name: bin/release-prepare
+        run: bin/release-prepare-test
 
 # NOTE — src/api.ts is generated from rail0-gateway/docs/openapi.json, a PRIVATE
 # sibling repo, so staleness cannot be gated from here (and a fork PR would have no
