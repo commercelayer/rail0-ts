@@ -56,7 +56,7 @@
     "format": "biome format --write src gen examples test",
     "release": "pnpm update && pnpm format && pnpm lint:fix && pnpm typecheck && pnpm test && pnpm build",
     "prepublishOnly": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "publish:npm": "pnpm publish"
+    "release:prepare": "bin/release-prepare"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

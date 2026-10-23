@@ -730,27 +730,36 @@ pnpm lint        # biome over src, gen, examples, test
 pnpm generate
 ```
 
-### Publishing
+### Releasing
 
-Releases publish from GitHub Actions (`.github/workflows/release.yml`) through npm
-**Trusted Publishing**: npm trusts that workflow in this repo, so there is no registry
-token to store or rotate and no 2FA prompt, and each tarball carries npm provenance.
+A release is an approved pull request: merging it is what publishes.
 
-1. Merge a PR that bumps `version` in `package.json`.
-2. Publish a GitHub release on `main` tagged `v<version>` (e.g. `v1.2.0`).
+1. `bin/release-prepare` (or `pnpm release:prepare`), on an up-to-date, clean `main`. It
+   asks for patch / minor / major (or takes `X.Y.Z`), bumps `package.json`, writes the
+   release notes from the pull requests merged since the last tag, and opens
+   `chore(release): vX.Y.Z`. `--dry-run` prints all of it and writes nothing.
+2. Review the pull request (edit the notes in its body if needed), approve and merge it.
+3. `.github/workflows/release.yml` runs on that push to `main`: CI again on the release
+   commit, `npm publish` with provenance, then the tag `vX.Y.Z` and the GitHub release
+   (notes from the pull request), then a Slack message.
 
-The workflow checks the tag against `package.json`, runs lint, typecheck, test and build,
-and publishes. A version already on npm is skipped, so a re-run (Actions → release → Run
-workflow, choosing the tag) is always safe.
+A merge that does not change the version releases nothing. If a run stops halfway, Actions
+→ release → Run workflow (on `main`) resumes it: what is already on npm or already tagged
+is skipped. Publishing from a laptop is not supported — there is no `publish:npm` script,
+and no registry token exists anywhere: npm **Trusted Publishing** trusts only
+`release.yml` in this repo.
 
-One-time setup, by a maintainer of the package on npmjs.com: package → Settings → Trusted
-Publisher → GitHub Actions, organization `commercelayer`, repository `rail0-ts`, workflow
-`release.yml`.
+One-time settings (repository admins):
 
-Publishing by hand still works as a fallback (`pnpm publish:npm` from a clean `main`,
-after `npm login`): `prepublishOnly` runs the same gate, and npm asks for a second factor
-on every publish when the account has 2FA. Nothing in this repo holds a registry token —
-never commit one.
+- environment `release` (Settings → Environments), deployment limited to `main`;
+- on npmjs.com, the package's Trusted Publisher (organization `commercelayer`, repository
+  `rail0-ts`, workflow `release.yml`) bound to environment `release` — only once the new
+  `release.yml` is on `main`;
+- a tag ruleset on `v*`: block updates and deletions, restrict creation to GitHub Actions
+  and admins;
+- branch protection on `main`: required `ci` check, "Include administrators";
+- the Slack channel: `release.yml` posts through the `PIPELINE_SLACK_CHANNEL_WEBHOOK_URL`
+  secret, named in one place (the `announce` job).
 
 ## Project structure
 
