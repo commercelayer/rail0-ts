@@ -28,6 +28,8 @@
       "trailingCommas": "all"
     }
   },
+  "markdown": { "formatter": { "enabled": false } },
+  "yaml": { "formatter": { "enabled": false } },
   "files": {
     "includes": ["**", "!**/dist", "!**/node_modules", "!**/*.d.ts", "!**/src/api.ts"]
   },
