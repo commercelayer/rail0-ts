@@ -487,6 +487,39 @@ describe('resource alignment', () => {
       expect(JSON.parse(String(init.body))).toEqual({ priority_tip: false })
     })
 
+    // The payment windows: seconds, or null to go back to the default — null must reach
+    // the wire as null, not be dropped, and the profile's rules must decode.
+    it('update sends the payment windows, null included, and decodes payment_windows', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        ok({
+          id: ACCOUNT_ID,
+          name: 'Merchant',
+          email: 'merchant@rail0.test',
+          priority_tip: true,
+          authorization_ttl: 172_800,
+          refund_ttl: 2_592_000,
+          payment_windows: {
+            authorization_ttl: { custom: true, default: 604_800, min: 3_600, max: 2_592_000 },
+            refund_ttl: { custom: false, default: 2_592_000, max: 15_552_000 },
+            min_refund_window: 86_400,
+          },
+        }),
+      )
+
+      const account = await client.accounts.update(ACCOUNT_ID, {
+        authorization_ttl: 172_800,
+        refund_ttl: null,
+      })
+
+      expect(account.authorization_ttl).toBe(172_800)
+      expect(account.payment_windows?.authorization_ttl.custom).toBe(true)
+      const [, init] = spy.mock.calls[0] as [string, RequestInit]
+      expect(JSON.parse(String(init.body))).toEqual({
+        authorization_ttl: 172_800,
+        refund_ttl: null,
+      })
+    })
+
     it('update surfaces a taken email as a 409 with its code', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(

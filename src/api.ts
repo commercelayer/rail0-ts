@@ -280,7 +280,7 @@ export interface paths {
         head?: never;
         /**
          * Update an account: own profile; an admin may also set active
-         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise). An admin may also rename ANY account (audited as account.update), but not change another account's email (403 forbidden): the contact email is its owner's, and corrections before the account exists are made on the onboarding request (PATCH /admin/onboardings/{id}). The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself.
+         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise). An admin may also change ANY account's name and email (audited as account.update, with the replaced values in detail.previous). The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. The owner or an admin may set the account's payment windows (authorization_ttl, refund_ttl; null = the gateway default): they apply to payments created afterwards, whose expiries are signed, and an operator's change is audited like name and email. Out of bounds, or a pair closer than the contract's one-day gap, is a 422 invalid_payment_windows. An admin cannot deactivate their own account (422 self_deactivate). Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin.
          */
         patch: {
             parameters: {
@@ -302,6 +302,16 @@ export interface paths {
                         active?: boolean;
                         /** @description Tip the network's suggested priority fee on the merchant's own transactions (default true); false uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy). Owner or admin. */
                         priority_tip?: boolean;
+                        /**
+                         * @description Authorization (capture) window of the account's NEW payments, in seconds; null puts it back on the gateway default (AUTHORIZATION_TTL). Between AUTHORIZATION_TTL_MIN and AUTHORIZATION_TTL_MAX (see payment_windows). Owner or admin.
+                         * @example 172800
+                         */
+                        authorization_ttl?: number | null;
+                        /**
+                         * @description Refund and dispute window of the account's NEW payments, in seconds; null puts it back on the gateway default (REFUND_TTL). At most REFUND_TTL_MAX, and the effective pair must keep refund_ttl - authorization_ttl >= min_refund_window (a single window is checked against the default the other follows). Owner or admin.
+                         * @example 5184000
+                         */
+                        refund_ttl?: number | null;
                     };
                 };
             };
@@ -351,7 +361,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description last_admin: the change would leave zero active admins. */
+                /** @description invalid_payment_windows: a window outside its bounds, or a refund window not at least min_refund_window past the authorization window; self_deactivate: an admin deactivating their own account; last_admin: the change would leave zero active admins. */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1259,7 +1269,7 @@ export interface paths {
         post: operations["grantAdministrator"];
         /**
          * Revoke the operator role (admin; refused for the last active admin)
-         * @description Admin only. Deletes the account's administrators row. Read from the row per request everywhere, so the revocation bites on the target's very next request — no token tail. Last-admin guard: revoking the grant that would leave zero operative admins (grants on active accounts) is refused with 422 last_admin — including revoking yourself as the last one.
+         * @description Admin only. Deletes the account's administrators row. Read from the row per request everywhere, so the revocation bites on the target's very next request — no token tail. An admin cannot revoke their own grant (422 self_revoke). Last-admin guard: revoking the grant that would leave zero operative admins (grants on active accounts) is refused with 422 last_admin.
          */
         delete: operations["revokeAdministrator"];
         options?: never;
@@ -2289,7 +2299,7 @@ export interface components {
          * @enum {string}
          */
         WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.authorization_expiring" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
-        /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, priority_tip, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
+        /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, priority_tip, payment windows, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
         Account: {
             /** Format: uuid */
             id?: string;
@@ -2297,10 +2307,42 @@ export interface components {
             email?: string | null;
             /** @description Whether the merchant's own transactions tip the network's suggested priority fee (true, the default) or the chain's minimum tip (false: 0 on most chains, 25 gwei on Polygon PoS/Amoy). The buyer's dispute/close_dispute never read it. */
             priority_tip?: boolean;
+            /**
+             * @description Seconds an authorization of the account's new payments stays capturable after the payment is created: the account's own value, or the gateway default (AUTHORIZATION_TTL).
+             * @example 604800
+             */
+            authorization_ttl?: number;
+            /**
+             * @description Seconds the account's new payments stay refundable, and open to a dispute, after they are created: the account's own value, or the gateway default (REFUND_TTL).
+             * @example 2592000
+             */
+            refund_ttl?: number;
+            payment_windows?: components["schemas"]["PaymentWindows"];
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description How the account's windows are set and what a new value must meet: per window, whether it is the account's own (custom) or the default, the default, and the bounds. The refund window has no floor of its own: the pair must keep refund_ttl - authorization_ttl >= min_refund_window. */
+        PaymentWindows: {
+            authorization_ttl?: {
+                custom?: boolean;
+                /** @example 604800 */
+                default?: number;
+                /** @example 3600 */
+                min?: number;
+                /** @example 2592000 */
+                max?: number;
+            };
+            refund_ttl?: {
+                custom?: boolean;
+                /** @example 2592000 */
+                default?: number;
+                /** @example 15552000 */
+                max?: number;
+            };
+            /** @example 86400 */
+            min_refund_window?: number;
         };
         /** @description The whole account record, as an operator reads it (Full entity: GET /accounts, and GET/PATCH /accounts/{account_id} for an admin session): every column plus `admin` and the derived `status`. */
         AccountFull: {
@@ -2313,6 +2355,17 @@ export interface components {
             active?: boolean;
             /** @description The merchant's fee setting (see Account.priority_tip). */
             priority_tip?: boolean;
+            /**
+             * @description Seconds an authorization of the account's new payments stays capturable after the payment is created: the account's own value, or the gateway default (AUTHORIZATION_TTL).
+             * @example 604800
+             */
+            authorization_ttl?: number;
+            /**
+             * @description Seconds the account's new payments stay refundable, and open to a dispute, after they are created: the account's own value, or the gateway default (REFUND_TTL).
+             * @example 2592000
+             */
+            refund_ttl?: number;
+            payment_windows?: components["schemas"]["PaymentWindows"];
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -3747,6 +3800,8 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
+                /** @description Cursor paging: the `x-next-cursor` (or the Link `next`'s `after`) of the previous page. Walks the collection by `-created_at` without a total count, at a constant cost per page; `page` and any `sort` other than `-created_at` are rejected with 422 `invalid_cursor` beside it. The last page carries no `x-next-cursor` and no `next` link. */
+                after?: string;
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Lifecycle state(s): one value, a comma-separated list (`status=authorized,expired`) or the repeated `status[]=` form; matches any of them. An unknown value is 400 `validation_failed` naming it. Deliberately a HAPPY-PATH label, not a ledger: a partial operation does NOT move it, so a payment captured 100 and refunded 40 still reads `captured`, and a full refund that leaves uncaptured escrow does too. `capturable_amount` / `refundable_amount` are the authoritative residuals — reconcile on those, not on this. `partially_refunded` is retained for historical rows only and is no longer produced. */
@@ -5229,7 +5284,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description last_admin: the revoke would leave zero active admins. */
+            /** @description self_revoke: an admin revoking their own grant; last_admin: the revoke would leave zero active admins. */
             422: {
                 headers: {
                     [name: string]: unknown;

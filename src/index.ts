@@ -104,6 +104,7 @@ export type {
   // Enums
   PaymentMode,
   PaymentStatus,
+  PaymentWindows,
   PrepareRequest,
   Session,
   SigningPayload,

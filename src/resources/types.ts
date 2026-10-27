@@ -220,6 +220,19 @@ export interface UpdateAccountRequest {
    * minimum tip, true back to the suggested priority fee. Owner or admin.
    */
   priority_tip?: boolean
+  /**
+   * The account's own authorization (capture) window for its NEW payments, in seconds;
+   * null puts it back on the gateway default. Within `payment_windows.authorization_ttl`'s
+   * min/max. Owner or admin; existing payments keep their signed deadlines.
+   */
+  authorization_ttl?: number | null
+  /**
+   * The account's own refund and dispute window for its NEW payments, in seconds; null
+   * puts it back on the gateway default. At most `payment_windows.refund_ttl.max`, and
+   * the effective pair must keep `refund_ttl - authorization_ttl >= min_refund_window`
+   * (422 `invalid_payment_windows` otherwise).
+   */
+  refund_ttl?: number | null
 }
 export interface UpdateWalletRequest {
   label?: string
@@ -418,8 +431,28 @@ export interface Account {
    * dispute/close_dispute never read it.
    */
   priority_tip: boolean
+  /**
+   * Seconds an authorization of the account's new payments stays capturable: the
+   * account's own window, or the gateway default. Optional only for an older gateway.
+   */
+  authorization_ttl?: number
+  /** Seconds the account's new payments stay refundable and disputable: its own, or the default. */
+  refund_ttl?: number
+  /** Whether each window is the account's own, the defaults, and the bounds a new value must fit. */
+  payment_windows?: PaymentWindows
   created_at?: string
   updated_at?: string
+}
+/**
+ * How an account's payment windows are set (Account.payment_windows): per window, whether
+ * it is the account's own (`custom`) or the gateway default, the default, and the bounds.
+ * The refund window has no floor of its own: the pair must keep
+ * `refund_ttl - authorization_ttl >= min_refund_window` (the contract's one-day gap).
+ */
+export interface PaymentWindows {
+  authorization_ttl: { custom: boolean; default: number; min: number; max: number }
+  refund_ttl: { custom: boolean; default: number; max: number }
+  min_refund_window: number
 }
 /**
  * A wallet as the merchant-facing routes return it — the gateway's Restricted view, an

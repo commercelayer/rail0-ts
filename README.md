@@ -590,7 +590,7 @@ const mine  = await client.analytics.summary({ payee: '0xYourWalletAddress' })
 
 ### `client.accounts` (merchant, JWT)
 
-`get(accountId)` → `Account` — the profile (`id`, `name`, `email`, `priority_tip`, timestamps) · `update(accountId, { name?, email?, priority_tip? })` → `Account`.
+`get(accountId)` → `Account` — the profile (`id`, `name`, `email`, `priority_tip`, `authorization_ttl`, `refund_ttl`, `payment_windows`, timestamps) · `update(accountId, { name?, email?, priority_tip?, authorization_ttl?, refund_ttl? })` → `Account`.
 
 Behind SIWE and behind an ownership guard: the gateway requires a JWT whose account matches
 the path — or an active **admin** session, which may read and repair any account. A
@@ -598,7 +598,7 @@ merchant therefore only ever reaches its own. An id that is not an account answe
 the same shape a non-admin gets for another account's id, so the pair cannot be used to
 tell whether an account exists.
 
-`update` changes the account's own `name`, `email` and/or `priority_tip`: at least one is
+`update` changes the account's own `name`, `email`, `priority_tip` and/or payment windows: at least one is
 required (`400` otherwise), and name and email are unique across accounts (`409` when
 taken). It is a write, so the session's standing matters — a deactivated session wallet
 answers `403 wallet_deactivated` and a deactivated account `403 account_deactivated`. The
@@ -609,11 +609,23 @@ capture, void, release, refund): `true`, the default, tips the network's suggest
 fee; `false` uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy) —
 cheaper, slower to confirm under load. The buyer's dispute/close-dispute never read it.
 
+**Payment windows** — `authorization_ttl` (how long an authorization can be captured) and
+`refund_ttl` (how long a payment can be refunded or disputed), in seconds — are the deadlines
+the account's **new** payments are created with: the account's own value, or the gateway
+default. `update` sets one with a number of seconds, or puts it back on the default with
+`null`. `payment_windows` (`PaymentWindows`) says which are the account's own and gives the
+bounds: authorization between `min` and `max`, refund at most `max`, and the refund window
+at least `min_refund_window` (one day) past the authorization — `422
+invalid_payment_windows` otherwise. A payment's deadlines are signed into it, so a change
+moves only the payments created afterwards.
+
 ```ts
 const me = await client.accounts.get(session.accountId)
 console.log(me.name, me.email, me.priority_tip)
 await client.accounts.update(session.accountId, { email: 'ops@merchant.example' })
 await client.accounts.update(session.accountId, { priority_tip: false })
+// Two-day capture window, refund window back on the gateway default.
+await client.accounts.update(session.accountId, { authorization_ttl: 2 * 86_400, refund_ttl: null })
 ```
 
 The account's wallets are on `client.wallets` (a collection under the same path), and
