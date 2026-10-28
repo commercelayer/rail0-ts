@@ -32,7 +32,7 @@ describe('expectedWebhookSignature', () => {
     expect(expectedWebhookSignature(BODY, NOW, SECRET)).toBe(sign(BODY, NOW))
   })
 
-  it('signs the timestamp exactly as it arrived, not a normalised copy', () => {
+  it('signs the timestamp exactly as it arrived, not a normalized copy', () => {
     // The gateway keys the digest with the header string; a number/string round trip
     // must not change it.
     expect(expectedWebhookSignature(BODY, '1800000000', SECRET)).toBe(sign(BODY, 1_800_000_000))
