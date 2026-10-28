@@ -520,6 +520,52 @@ describe('resource alignment', () => {
       })
     })
 
+    it('webhooks.test posts to the test route and returns the delivery result', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        ok({
+          delivered: false,
+          response_code: '401',
+          response_message: 'bad signature',
+          error_reason: null,
+          duration_ms: 12,
+        }),
+      )
+
+      const result = await client.webhooks.test('wh-1')
+
+      expect(result.delivered).toBe(false)
+      expect(result.response_code).toBe('401')
+      const [url, init] = spy.mock.calls[0] as [string, RequestInit]
+      expect(String(url)).toMatch(/\/webhooks\/wh-1\/test$/)
+      expect(init.method).toBe('POST')
+    })
+
+    it('payments.update sends the note and the reference alone, null included', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        ok({
+          id: 'p1',
+          reference: 'ORD-2',
+          reference_origin: null,
+          merchant_note: 'agreed by email',
+        }),
+      )
+
+      const payment = await client.payments.update('p1', {
+        merchant_note: 'agreed by email',
+        reference: 'ORD-2',
+        reference_origin: null,
+      })
+
+      expect(payment.reference).toBe('ORD-2')
+      expect(payment.merchant_note).toBe('agreed by email')
+      const [, init] = spy.mock.calls[0] as [string, RequestInit]
+      expect(JSON.parse(String(init.body))).toEqual({
+        merchant_note: 'agreed by email',
+        reference: 'ORD-2',
+        reference_origin: null,
+      })
+    })
+
     it('update surfaces a taken email as a 409 with its code', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(

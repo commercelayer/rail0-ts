@@ -660,8 +660,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Update a payment's description
-         * @description Participant-only (payer or payee): 401 without a token, 404 for a non-participant, 403 `wallet_deactivated` from a retired wallet. Allowed in every status, closed ones included. The description is gateway-side only — in nothing signed or hashed on chain — so this moves no money and dispatches no webhook. A changed value bumps `updated_at`; writing the same value back is a no-op.
+         * Update a payment's description and/or the payee's internal note
+         * @description Participant-only (payer or payee): 401 without a token, 404 for a non-participant, 403 `wallet_deactivated` from a retired wallet. Allowed in every status, closed ones included. At least one field. The description is gateway-side only — in nothing signed or hashed on chain — so this moves no money and dispatches no webhook. A changed description bumps `updated_at`; writing the same value back is a no-op. `reference` / `reference_origin` (the payment's identifier in the merchant's own system, and which system) are the payee's to correct: 403 `not_the_payee` for the payer; a changed one moves `updated_at`. `merchant_note` is the payee's internal note: only the payee may write it (403 `not_the_payee` for the payer), only the payee (and an operator) reads it, and writing it does not move `updated_at`.
          */
         patch: operations["updatePayment"];
         trace?: never;
@@ -1156,6 +1156,28 @@ export interface paths {
         /** Reset the circuit breaker and re-enable the webhook */
         put: operations["resetWebhookCircuit"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a test event to the webhook's callback and report the response
+         * @description Delivers one event with topic `webhooks.test`, `test: true` and no payment (`payment` and `transaction` null) to the callback, now, and answers with what the endpoint did. Same delivery as a real event: the vetted, pinned addresses (SSRF guard), the timestamped `X-Rail0-Signature` (dual-signed inside a rotation grace window) and the delivery deadline. Synchronous and single-attempt, and NOT recorded: no event_callbacks row, no circuit-breaker accounting, so a failing test cannot trip the breaker and a passing one does not reset it. Works on a disabled webhook too. Owner only (404 for another account's webhook); a write, so a deactivated wallet or account gets 403.
+         */
+        post: operations["testWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2136,6 +2158,12 @@ export interface components {
             /** @description Human-readable form of last_error_code. */
             last_error_message?: string | null;
             description?: string | null;
+            /** @description This payment's identifier in the merchant's own system; set at create, correctable by the payee. */
+            reference?: string | null;
+            /** @description The system the reference comes from, a lowercase slug (e.g. commercelayer). */
+            reference_origin?: string | null;
+            /** @description The payee's internal note (PATCH /payments/{id}). Present only when the session is the payment's PAYEE, and on the operator's Full view; absent for the payer. */
+            merchant_note?: string | null;
             metadata?: {
                 [key: string]: unknown;
             } | null;
@@ -2180,6 +2208,19 @@ export interface components {
         };
         DisputeDetail: components["schemas"]["Dispute"] & {
             payment?: components["schemas"]["Payment"];
+        };
+        /** @description What the callback did with a test event (POST /webhooks/{id}/test). */
+        WebhookTestResult: {
+            /** @description The endpoint answered 2xx. */
+            delivered?: boolean;
+            /** @description The HTTP status it answered; null when no response came (see error_reason). */
+            response_code?: string | null;
+            /** @description Up to 1000 printable characters of its response body. */
+            response_message?: string | null;
+            /** @description Why no response came: a refused address, a TLS or connection error, the deadline. */
+            error_reason?: string | null;
+            /** @description How long the attempt took. */
+            duration_ms?: number;
         };
         PaymentDetail: components["schemas"]["Payment"] & {
             /** @description Deployed rail0 contract address. */
@@ -2295,7 +2336,7 @@ export interface components {
             updated_at?: string;
         };
         /**
-         * @description Payment event a subscription can receive. Every delivery POSTs the same JSON body — `{id, emitted_at, topic, payment: {id, rail0_id, status, mode, amount, payer, payee, token, chain_id, capturable_amount, authorization_expiry, last_error_code, last_error_message, metadata}, transaction}` — with `transaction` null for events that involve none (`payments.created`, `payments.signed`, `payments.authorization_expiring`, `payments.expired`). The payment fields are read at delivery time. `payments.authorization_expiring` is the advance notice of `payments.expired`: sent once per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds (default 86400) before `authorization_expiry`, for a payment that is still capturable (`authorized`, `partially_captured` or `partially_refunded`) with `capturable_amount` above zero. A payment whose authorization window is shorter than the notice is warned once, as soon as it qualifies. The time left is `authorization_expiry` minus `emitted_at`; capture before then or the escrow returns to the payer via release. `payments.expired` follows if the authorization lapses uncaptured.
+         * @description Payment event a subscription can receive. Every delivery POSTs the same JSON body — `{id, emitted_at, topic, payment: {id, rail0_id, status, mode, amount, payer, payee, token, chain_id, capturable_amount, authorization_expiry, last_error_code, last_error_message, metadata, reference, reference_origin}, transaction}` — with `transaction` null for events that involve none (`payments.created`, `payments.signed`, `payments.authorization_expiring`, `payments.expired`). The payment fields are read at delivery time. `payments.authorization_expiring` is the advance notice of `payments.expired`: sent once per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds (default 86400) before `authorization_expiry`, for a payment that is still capturable (`authorized`, `partially_captured` or `partially_refunded`) with `capturable_amount` above zero. A payment whose authorization window is shorter than the notice is warned once, as soon as it qualifies. The time left is `authorization_expiry` minus `emitted_at`; capture before then or the escrow returns to the payer via release. `payments.expired` follows if the authorization lapses uncaptured.
          * @enum {string}
          */
         WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.authorization_expiring" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
@@ -3812,6 +3853,10 @@ export interface operations {
                 token?: string;
                 /** @description Filter by the logical on-chain payment id (0x…). */
                 rail0_id?: string;
+                /** @description Filter by the reference (exact match). */
+                reference?: string;
+                /** @description Filter by the system the reference comes from. */
+                reference_origin?: string;
                 /** @description Filter by the payment's chain (resolved via its contract). */
                 chain_id?: number;
                 /** @description Filter by whether an open dispute exists. */
@@ -3885,6 +3930,10 @@ export interface operations {
                     payee: string;
                     /** @description Free-text note (what is being paid for, a reconciliation reference). Gateway-side only: in nothing signed on chain, editable afterwards via PATCH /payments/{id}, and not an idempotency term. */
                     description?: string;
+                    /** @description This payment's identifier in the merchant's own system (e.g. an order, invoice or cart id there). Stripped; not unique — several payments may carry one reference. Readable by both parties, carried in webhooks, filterable with ?reference=. An idempotency term. */
+                    reference?: string;
+                    /** @description The system the reference comes from, a lowercase slug (stored lowercased), e.g. commercelayer, shopify, pos. Needs a reference. */
+                    reference_origin?: string;
                     metadata?: {
                         [key: string]: unknown;
                     };
@@ -3960,7 +4009,13 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @description New description; null or an empty string clears it. */
-                    description: string | null;
+                    description?: string | null;
+                    /** @description The payee's internal note, never shown to the payer; payee only. Null or an empty string clears it. */
+                    merchant_note?: string | null;
+                    /** @description Correct the reference; payee only (403 not_the_payee for the payer). Null or an empty string clears it, and its origin with it unless reference_origin is sent too. Moves updated_at. */
+                    reference?: string | null;
+                    /** @description The system the reference comes from (a lowercase slug); payee only. Needs a reference. */
+                    reference_origin?: string | null;
                 };
             };
         };
@@ -5002,6 +5057,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    testWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The delivery result — 200 whether or not the endpoint accepted it; read `delivered`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookTestResult"];
                 };
             };
             403: components["responses"]["Forbidden"];
