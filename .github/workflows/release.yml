@@ -1,8 +1,9 @@
 # Release @commercelayer/rail0-sdk when an approved release pull request merges.
 #
 # Releasing is three steps:
-#   1. bin/release-prepare (or `pnpm release:prepare`) opens "chore(release): vX.Y.Z",
-#      which bumps package.json and carries the release notes in its body;
+#   1. bin/release-prepare (or `pnpm release:prepare`) bumps package.json and writes the
+#      release notes into a pull request's body: a release-only "chore(release): vX.Y.Z"
+#      when run on main, or the open pull request of the branch it is run on;
 #   2. a reviewer approves it and it is merged;
 #   3. this workflow, on that push to main: plan → gate (ci.yml on the release commit)
 #      → publish to npm → tag vX.Y.Z + GitHub release → Slack.
@@ -240,8 +241,12 @@ jobs:
         id: notes
         run: |
           set -euo pipefail
+          # The pull request the release commit came in with — a release-only one
+          # ("chore(release): vX.Y.Z", opened on main) or a feature one whose branch
+          # carried the bump (bin/release-prepare on a branch): the notes are between the
+          # same markers in either.
           number="$(gh api "repos/$GITHUB_REPOSITORY/commits/$COMMIT/pulls" \
-            --jq '[.[] | select(.merged_at != null and (.title | startswith("chore(release)")) and (.title | contains(env.TAG)))][0].number // empty' || true)"
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0].number // empty' || true)"
           if [ -z "$number" ]; then
             number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state merged --search "\"chore(release): $TAG\" in:title" \
               --json number,title --jq '[.[] | select(.title | contains(env.TAG))][0].number // empty' || true)"

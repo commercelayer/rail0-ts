@@ -104,6 +104,7 @@ export type {
   // Enums
   PaymentMode,
   PaymentStatus,
+  PaymentWindows,
   PrepareRequest,
   Session,
   SigningPayload,
@@ -123,6 +124,7 @@ export type {
   WalletTokenHolding,
   WalletWithTokens,
   Webhook,
+  WebhookTestResult,
   WebhookTopic,
   WebhookWithSecret,
 } from './resources/types.js'

@@ -313,7 +313,7 @@ other.setAuthToken(token) // a second client on the same session
 
 ### `client.payments`
 
-`create(params, idempotencyKey?)` → `PaymentDetail` (from the **buyer's** session: `payer` must be the signed-in address, `403 payer_must_be_caller` otherwise; pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `update(id, { description })` → `PaymentDetail` (`PATCH /payments/:id`; participant-only — payer or payee, `404` for anyone else; allowed in any status; the `description` key is required, `null` or `""` clears it, over 255 characters is a `422`; gateway-side only, so it moves no money and fires no webhook) · `list(params?)` → `PaginatedResponse<Payment>` (JWT; `operation` narrows to payments carrying a transaction of that operation, `dispute`/`close_dispute` included; `status` takes one `PaymentStatus` or an array matching any of them) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` (`status` likewise takes one `TransactionStatus` or an array) · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
+`create(params, idempotencyKey?)` → `PaymentDetail` (from the **buyer's** session: `payer` must be the signed-in address, `403 payer_must_be_caller` otherwise; pass `idempotencyKey` to make the create replay-safe — the key is bound to the request, so reusing it with different terms is a `422 idempotency_key_reused`, not a silent replay of the first payment) · `get(id)` → `PaymentDetail` (status + live `capturable_amount`/`refundable_amount` + `transactions`) · `update(id, { description?, merchant_note?, reference?, reference_origin? })` → `PaymentDetail` (`PATCH /payments/:id`; participant-only — payer or payee, `404` for anyone else; allowed in any status; at least one field, `null` or `""` clears one; `description` either party, ≤255 characters; `merchant_note` is the **payee's** internal note, ≤2000 characters, never shown to the payer and not in webhooks; `reference` / `reference_origin` — the payment's identifier in the merchant's own system and which system — are the payee's to correct; the payer gets `403 not_the_payee` for those three; gateway-side only, so it moves no money and fires no webhook) · `list(params?)` → `PaginatedResponse<Payment>` (JWT; `reference` / `reference_origin` find the payments carrying a reference; `operation` narrows to payments carrying a transaction of that operation, `dispute`/`close_dispute` included; `status` takes one `PaymentStatus` or an array matching any of them) · `transactions(id, params?)` → `PaginatedResponse<Transaction>` (`status` likewise takes one `TransactionStatus` or an array) · `redrive(id, transactionId)` → `Transaction` · `sign(id, { signature })` → `PaymentDetail` · `disputes(id, params?)` → `PaginatedResponse<Dispute>`.
 
 Prepare/submit pairs (each prepare → `Transaction`, each submit → `Transaction`):
 `authorizePrepare`/`authorize`, `chargePrepare`/`charge`, `capturePrepare(id, amount)`/`capture`, `voidPrepare`/`void`, `releasePrepare(id, from?)`/`release`, `refundPrepare(id, body)`/`refund`, `disputePrepare(id, reason?)`/`dispute`, `closeDisputePrepare(id, reason?)`/`closeDispute` (optional dictionary `reason` — see [Dispute reasons](#dispute-reasons)). A generic `prepare(id, op, body?, opts?)` / `submit(id, op, params)` is also available, plus `submitByHash(id, op, { transaction_hash })` to record an already-broadcast tx by hash (MetaMask; payee-only, `release` either participant) and the payer-only `disputeSubmitByHash(id, { transaction_hash })` / `closeDisputeSubmitByHash(id, { transaction_hash })`.
@@ -416,7 +416,7 @@ for (const w of methods) for (const h of w.tokens ?? []) {
 
 ### `client.webhooks` (JWT)
 
-`list(params?)` · `create({ name, callback_url, topics })` — one subscription covers a set of events, with one secret and one circuit breaker; two subscriptions on the same URL must not overlap (409) → `WebhookWithSecret` (secret shown once) · `get(id)` · `update(id, params)` · `enable(id)` · `disable(id)` · `rotateSecret(id)` → `WebhookWithSecret` · `resetCircuit(id)` · `eventCallbacks(id, params?)` → `PaginatedResponse<EventCallback>` (filter by `status`, `topic`, `payment_id`, `response_code`, `since`, `until`) · `redeliver(id, callbackId)` → `{ status: 'queued' }` · `delete(id)`. `list` filters by `topic` (a `WebhookTopic`: the subscriptions that include it), `active` and `circuit_state`.
+`list(params?)` · `create({ name, callback_url, topics })` — one subscription covers a set of events, with one secret and one circuit breaker; two subscriptions on the same URL must not overlap (409) → `WebhookWithSecret` (secret shown once) · `get(id)` · `update(id, params)` · `enable(id)` · `disable(id)` · `rotateSecret(id)` → `WebhookWithSecret` · `resetCircuit(id)` · `test(id)` → `WebhookTestResult` (sends a signed `webhooks.test` event with no payment to the callback now and reports `delivered`, `response_code`, `response_message`, `error_reason`, `duration_ms`; not logged, not counted by the circuit breaker, works on a disabled webhook) · `eventCallbacks(id, params?)` → `PaginatedResponse<EventCallback>` (filter by `status`, `topic`, `payment_id`, `response_code`, `since`, `until`) · `redeliver(id, callbackId)` → `{ status: 'queued' }` · `delete(id)`. `list` filters by `topic` (a `WebhookTopic`: the subscriptions that include it), `active` and `circuit_state`.
 
 Topics (`WebhookTopic`): `payments.created`, `payments.signed`, `payments.authorized`,
 `payments.charged`, `payments.captured`, `payments.voided`, `payments.released`,
@@ -590,7 +590,7 @@ const mine  = await client.analytics.summary({ payee: '0xYourWalletAddress' })
 
 ### `client.accounts` (merchant, JWT)
 
-`get(accountId)` → `Account` — the profile (`id`, `name`, `email`, `priority_tip`, timestamps) · `update(accountId, { name?, email?, priority_tip? })` → `Account`.
+`get(accountId)` → `Account` — the profile (`id`, `name`, `email`, `priority_tip`, `authorization_ttl`, `refund_ttl`, `payment_windows`, timestamps) · `update(accountId, { name?, email?, priority_tip?, authorization_ttl?, refund_ttl? })` → `Account`.
 
 Behind SIWE and behind an ownership guard: the gateway requires a JWT whose account matches
 the path — or an active **admin** session, which may read and repair any account. A
@@ -598,7 +598,7 @@ merchant therefore only ever reaches its own. An id that is not an account answe
 the same shape a non-admin gets for another account's id, so the pair cannot be used to
 tell whether an account exists.
 
-`update` changes the account's own `name`, `email` and/or `priority_tip`: at least one is
+`update` changes the account's own `name`, `email`, `priority_tip` and/or payment windows: at least one is
 required (`400` otherwise), and name and email are unique across accounts (`409` when
 taken). It is a write, so the session's standing matters — a deactivated session wallet
 answers `403 wallet_deactivated` and a deactivated account `403 account_deactivated`. The
@@ -609,11 +609,23 @@ capture, void, release, refund): `true`, the default, tips the network's suggest
 fee; `false` uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy) —
 cheaper, slower to confirm under load. The buyer's dispute/close-dispute never read it.
 
+**Payment windows** — `authorization_ttl` (how long an authorization can be captured) and
+`refund_ttl` (how long a payment can be refunded or disputed), in seconds — are the deadlines
+the account's **new** payments are created with: the account's own value, or the gateway
+default. `update` sets one with a number of seconds, or puts it back on the default with
+`null`. `payment_windows` (`PaymentWindows`) says which are the account's own and gives the
+bounds: authorization between `min` and `max`, refund at most `max`, and the refund window
+at least `min_refund_window` (one day) past the authorization — `422
+invalid_payment_windows` otherwise. A payment's deadlines are signed into it, so a change
+moves only the payments created afterwards.
+
 ```ts
 const me = await client.accounts.get(session.accountId)
 console.log(me.name, me.email, me.priority_tip)
 await client.accounts.update(session.accountId, { email: 'ops@merchant.example' })
 await client.accounts.update(session.accountId, { priority_tip: false })
+// Two-day capture window, refund window back on the gateway default.
+await client.accounts.update(session.accountId, { authorization_ttl: 2 * 86_400, refund_ttl: null })
 ```
 
 The account's wallets are on `client.wallets` (a collection under the same path), and
@@ -742,6 +754,15 @@ A release is an approved pull request: merging it is what publishes.
    It then bumps `package.json`, writes the
    release notes from the pull requests merged since the last tag, and opens
    `chore(release): vX.Y.Z`. `--dry-run` prints all of it and writes nothing.
+
+   **Or on a feature branch**, to release a change in the same review: run it on a clean
+   branch that is pushed, contains `origin/main` and has an open pull request into `main`.
+   The bump is committed and pushed on that branch (`chore(release): vX.Y.Z`), the pull
+   request's own title counts toward the version and gets a line in the notes, and the
+   notes go into its description between `<!-- release:start -->` markers — the text above
+   them is kept. Re-run it after new commits or a merge of `main`: it refreshes the version
+   and the notes instead of bumping twice. One approval then covers the change and its
+   release.
 2. Review the pull request (edit the notes in its body if needed), approve and merge it.
    The approval must come from a reviewer **other than the pull request's author**, on its
    final commit: release.yml checks it before publishing anything and stops otherwise —

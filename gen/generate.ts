@@ -211,15 +211,30 @@ export interface CreatePaymentRequest {
   payee: Address
   description?: string
   metadata?: Record<string, unknown>
+  /**
+   * This payment's identifier in the merchant's own system (e.g. an order, invoice or cart
+   * id there), at most 128 characters. Not unique. Both parties read it; it is carried in
+   * webhooks, filterable with \`list({ reference })\`, and an idempotency term.
+   */
+  reference?: string
+  /** The system the reference comes from: a lowercase slug (a-z, 0-9, . _ -), e.g. \`commercelayer\`. Needs a reference. */
+  reference_origin?: string
 }
 /**
- * Body of PATCH /payments/:id. The description is the only editable field.
+ * Body of PATCH /payments/:id. At least one field (400 otherwise); \`null\` (or \`""\`) clears
+ * one. Off-chain only: nothing here is signed, so no money moves.
  *
- * The key is REQUIRED by the gateway — there is no "omit to leave unchanged"; send
- * \`null\` (or \`""\`) to clear it. At most 255 characters (422 over).
+ * - \`description\`: either party, at most 255 characters.
+ * - \`merchant_note\`: the PAYEE's internal note, at most 2000 characters — never shown to
+ *   the payer, not in webhooks (403 \`not_the_payee\` for the payer).
+ * - \`reference\` / \`reference_origin\`: the payee corrects the payment's identifier in its
+ *   own system (403 \`not_the_payee\` for the payer); clearing the reference clears its origin.
  */
 export interface UpdatePaymentRequest {
-  description: string | null
+  description?: string | null
+  merchant_note?: string | null
+  reference?: string | null
+  reference_origin?: string | null
 }
 export interface PayerSignatureRequest {
   signature: string
@@ -277,6 +292,19 @@ export interface UpdateAccountRequest {
    * minimum tip, true back to the suggested priority fee. Owner or admin.
    */
   priority_tip?: boolean
+  /**
+   * The account's own authorization (capture) window for its NEW payments, in seconds;
+   * null puts it back on the gateway default. Within \`payment_windows.authorization_ttl\`'s
+   * min/max. Owner or admin; existing payments keep their signed deadlines.
+   */
+  authorization_ttl?: number | null
+  /**
+   * The account's own refund and dispute window for its NEW payments, in seconds; null
+   * puts it back on the gateway default. At most \`payment_windows.refund_ttl.max\`, and
+   * the effective pair must keep \`refund_ttl - authorization_ttl >= min_refund_window\`
+   * (422 \`invalid_payment_windows\` otherwise).
+   */
+  refund_ttl?: number | null
 }
 export interface UpdateWalletRequest {
   label?: string
@@ -310,6 +338,18 @@ export interface UpdateWebhookRequest {
   callback_url?: string
   /** REPLACES the set — so this is also how a topic is removed. The secret is untouched. */
   topics?: WebhookTopic[]
+}
+/**
+ * What a webhook's callback did with a test event (\`webhooks.test(id)\`): \`delivered\` is
+ * the verdict (a 2xx); \`response_code\` / \`response_message\` are the endpoint's answer, and
+ * \`error_reason\` says why there was none (a refused address, TLS, a timeout).
+ */
+export interface WebhookTestResult {
+  delivered: boolean
+  response_code: string | null
+  response_message: string | null
+  error_reason: string | null
+  duration_ms: number
 }
 
 // ── Domain models (gateway vocabulary) ───────────────────────────────
@@ -366,6 +406,15 @@ export interface Payment {
   last_error_message?: string | null
   description?: string | null
   metadata?: Record<string, unknown> | null
+  /** This payment's identifier in the merchant's own system; set at create, correctable by the payee. */
+  reference?: string | null
+  /** The system the reference comes from, a lowercase slug (e.g. \`commercelayer\`). */
+  reference_origin?: string | null
+  /**
+   * The payee's internal note. Present only when the session is the payment's PAYEE (and on
+   * the operator's full view): a payer's read never carries the key.
+   */
+  merchant_note?: string | null
   signed_at?: string | null
   created_at: string
   updated_at?: string
@@ -475,8 +524,28 @@ export interface Account {
    * dispute/close_dispute never read it.
    */
   priority_tip: boolean
+  /**
+   * Seconds an authorization of the account's new payments stays capturable: the
+   * account's own window, or the gateway default. Optional only for an older gateway.
+   */
+  authorization_ttl?: number
+  /** Seconds the account's new payments stay refundable and disputable: its own, or the default. */
+  refund_ttl?: number
+  /** Whether each window is the account's own, the defaults, and the bounds a new value must fit. */
+  payment_windows?: PaymentWindows
   created_at?: string
   updated_at?: string
+}
+/**
+ * How an account's payment windows are set (Account.payment_windows): per window, whether
+ * it is the account's own (\`custom\`) or the gateway default, the default, and the bounds.
+ * The refund window has no floor of its own: the pair must keep
+ * \`refund_ttl - authorization_ttl >= min_refund_window\` (the contract's one-day gap).
+ */
+export interface PaymentWindows {
+  authorization_ttl: { custom: boolean; default: number; min: number; max: number }
+  refund_ttl: { custom: boolean; default: number; max: number }
+  min_refund_window: number
 }
 /**
  * A wallet as the merchant-facing routes return it — the gateway's Restricted view, an
@@ -871,6 +940,10 @@ export interface ListPaymentsParams {
   /** Only payments created at/before this ISO-8601 timestamp. */
   created_to?: string
   rail0_id?: string
+  /** Only payments with this reference (exact match, the payment's id in the merchant's system). */
+  reference?: string
+  /** Only payments whose reference comes from this system (case-insensitive). */
+  reference_origin?: string
   /**
    * Only payments carrying at least one transaction with this operation. The RECORD
    * vocabulary, as on \`transactions()\`: a payment whose only transaction is a dispute
@@ -1418,6 +1491,7 @@ import type {
   PaginatedResponse,
   UpdateWebhookRequest,
   Webhook,
+  WebhookTestResult,
   WebhookTopic,
   WebhookWithSecret,
 } from './types.js'
@@ -1500,6 +1574,17 @@ export class WebhooksResource {
   /** Reset the delivery circuit breaker and re-enable the webhook. */
   resetCircuit(id: string): Promise<Webhook> {
     return this.http.put(path\`/webhooks/\${id}/reset_circuit\`)
+  }
+
+  /**
+   * Send a test event to the webhook's callback now and report what it did. The event has
+   * topic \`webhooks.test\`, \`test: true\` and no payment, and is signed and delivered like a
+   * real one (same SSRF guard and headers). Synchronous, one attempt, not logged in
+   * \`eventCallbacks\` and not counted by the circuit breaker; works on a disabled webhook.
+   * Resolves whether or not the endpoint accepted it — read \`delivered\`.
+   */
+  test(id: string): Promise<WebhookTestResult> {
+    return this.http.post(path\`/webhooks/\${id}/test\`, {})
   }
 
   /** List delivery attempts for a webhook. */

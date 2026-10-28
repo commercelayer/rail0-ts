@@ -280,7 +280,7 @@ export interface paths {
         head?: never;
         /**
          * Update an account: own profile; an admin may also set active
-         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise). An admin may also rename ANY account (audited as account.update), but not change another account's email (403 forbidden): the contact email is its owner's, and corrections before the account exists are made on the onboarding request (PATCH /admin/onboardings/{id}). The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin — including doing it to yourself.
+         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise). An admin may also change ANY account's name and email (audited as account.update, with the replaced values in detail.previous). The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. The owner or an admin may set the account's payment windows (authorization_ttl, refund_ttl; null = the gateway default): they apply to payments created afterwards, whose expiries are signed, and an operator's change is audited like name and email. Out of bounds, or a pair closer than the contract's one-day gap, is a 422 invalid_payment_windows. An admin cannot deactivate their own account (422 self_deactivate). Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin.
          */
         patch: {
             parameters: {
@@ -302,6 +302,16 @@ export interface paths {
                         active?: boolean;
                         /** @description Tip the network's suggested priority fee on the merchant's own transactions (default true); false uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy). Owner or admin. */
                         priority_tip?: boolean;
+                        /**
+                         * @description Authorization (capture) window of the account's NEW payments, in seconds; null puts it back on the gateway default (AUTHORIZATION_TTL). Between AUTHORIZATION_TTL_MIN and AUTHORIZATION_TTL_MAX (see payment_windows). Owner or admin.
+                         * @example 172800
+                         */
+                        authorization_ttl?: number | null;
+                        /**
+                         * @description Refund and dispute window of the account's NEW payments, in seconds; null puts it back on the gateway default (REFUND_TTL). At most REFUND_TTL_MAX, and the effective pair must keep refund_ttl - authorization_ttl >= min_refund_window (a single window is checked against the default the other follows). Owner or admin.
+                         * @example 5184000
+                         */
+                        refund_ttl?: number | null;
                     };
                 };
             };
@@ -351,7 +361,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description last_admin: the change would leave zero active admins. */
+                /** @description invalid_payment_windows: a window outside its bounds, or a refund window not at least min_refund_window past the authorization window; self_deactivate: an admin deactivating their own account; last_admin: the change would leave zero active admins. */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -650,8 +660,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Update a payment's description
-         * @description Participant-only (payer or payee): 401 without a token, 404 for a non-participant, 403 `wallet_deactivated` from a retired wallet. Allowed in every status, closed ones included. The description is gateway-side only — in nothing signed or hashed on chain — so this moves no money and dispatches no webhook. A changed value bumps `updated_at`; writing the same value back is a no-op.
+         * Update a payment's description and/or the payee's internal note
+         * @description Participant-only (payer or payee): 401 without a token, 404 for a non-participant, 403 `wallet_deactivated` from a retired wallet. Allowed in every status, closed ones included. At least one field. The description is gateway-side only — in nothing signed or hashed on chain — so this moves no money and dispatches no webhook. A changed description bumps `updated_at`; writing the same value back is a no-op. `reference` / `reference_origin` (the payment's identifier in the merchant's own system, and which system) are the payee's to correct: 403 `not_the_payee` for the payer; a changed one moves `updated_at`. `merchant_note` is the payee's internal note: only the payee may write it (403 `not_the_payee` for the payer), only the payee (and an operator) reads it, and writing it does not move `updated_at`.
          */
         patch: operations["updatePayment"];
         trace?: never;
@@ -1152,6 +1162,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/webhooks/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a test event to the webhook's callback and report the response
+         * @description Delivers one event with topic `webhooks.test`, `test: true` and no payment (`payment` and `transaction` null) to the callback, now, and answers with what the endpoint did. Same delivery as a real event: the vetted, pinned addresses (SSRF guard), the timestamped `X-Rail0-Signature` (dual-signed inside a rotation grace window) and the delivery deadline. Synchronous and single-attempt, and NOT recorded: no event_callbacks row, no circuit-breaker accounting, so a failing test cannot trip the breaker and a passing one does not reset it. Works on a disabled webhook too. Owner only (404 for another account's webhook); a write, so a deactivated wallet or account gets 403.
+         */
+        post: operations["testWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/webhooks/{id}/event_callbacks": {
         parameters: {
             query?: never;
@@ -1259,7 +1291,7 @@ export interface paths {
         post: operations["grantAdministrator"];
         /**
          * Revoke the operator role (admin; refused for the last active admin)
-         * @description Admin only. Deletes the account's administrators row. Read from the row per request everywhere, so the revocation bites on the target's very next request — no token tail. Last-admin guard: revoking the grant that would leave zero operative admins (grants on active accounts) is refused with 422 last_admin — including revoking yourself as the last one.
+         * @description Admin only. Deletes the account's administrators row. Read from the row per request everywhere, so the revocation bites on the target's very next request — no token tail. An admin cannot revoke their own grant (422 self_revoke). Last-admin guard: revoking the grant that would leave zero operative admins (grants on active accounts) is refused with 422 last_admin.
          */
         delete: operations["revokeAdministrator"];
         options?: never;
@@ -2126,6 +2158,12 @@ export interface components {
             /** @description Human-readable form of last_error_code. */
             last_error_message?: string | null;
             description?: string | null;
+            /** @description This payment's identifier in the merchant's own system; set at create, correctable by the payee. */
+            reference?: string | null;
+            /** @description The system the reference comes from, a lowercase slug (e.g. commercelayer). */
+            reference_origin?: string | null;
+            /** @description The payee's internal note (PATCH /payments/{id}). Present only when the session is the payment's PAYEE, and on the operator's Full view; absent for the payer. */
+            merchant_note?: string | null;
             metadata?: {
                 [key: string]: unknown;
             } | null;
@@ -2170,6 +2208,19 @@ export interface components {
         };
         DisputeDetail: components["schemas"]["Dispute"] & {
             payment?: components["schemas"]["Payment"];
+        };
+        /** @description What the callback did with a test event (POST /webhooks/{id}/test). */
+        WebhookTestResult: {
+            /** @description The endpoint answered 2xx. */
+            delivered?: boolean;
+            /** @description The HTTP status it answered; null when no response came (see error_reason). */
+            response_code?: string | null;
+            /** @description Up to 1000 printable characters of its response body. */
+            response_message?: string | null;
+            /** @description Why no response came: a refused address, a TLS or connection error, the deadline. */
+            error_reason?: string | null;
+            /** @description How long the attempt took. */
+            duration_ms?: number;
         };
         PaymentDetail: components["schemas"]["Payment"] & {
             /** @description Deployed rail0 contract address. */
@@ -2285,11 +2336,11 @@ export interface components {
             updated_at?: string;
         };
         /**
-         * @description Payment event a subscription can receive. Every delivery POSTs the same JSON body — `{id, emitted_at, topic, payment: {id, rail0_id, status, mode, amount, payer, payee, token, chain_id, capturable_amount, authorization_expiry, last_error_code, last_error_message, metadata}, transaction}` — with `transaction` null for events that involve none (`payments.created`, `payments.signed`, `payments.authorization_expiring`, `payments.expired`). The payment fields are read at delivery time. `payments.authorization_expiring` is the advance notice of `payments.expired`: sent once per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds (default 86400) before `authorization_expiry`, for a payment that is still capturable (`authorized`, `partially_captured` or `partially_refunded`) with `capturable_amount` above zero. A payment whose authorization window is shorter than the notice is warned once, as soon as it qualifies. The time left is `authorization_expiry` minus `emitted_at`; capture before then or the escrow returns to the payer via release. `payments.expired` follows if the authorization lapses uncaptured.
+         * @description Payment event a subscription can receive. Every delivery POSTs the same JSON body — `{id, emitted_at, topic, payment: {id, rail0_id, status, mode, amount, payer, payee, token, chain_id, capturable_amount, authorization_expiry, last_error_code, last_error_message, metadata, reference, reference_origin}, transaction}` — with `transaction` null for events that involve none (`payments.created`, `payments.signed`, `payments.authorization_expiring`, `payments.expired`). The payment fields are read at delivery time. `payments.authorization_expiring` is the advance notice of `payments.expired`: sent once per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds (default 86400) before `authorization_expiry`, for a payment that is still capturable (`authorized`, `partially_captured` or `partially_refunded`) with `capturable_amount` above zero. A payment whose authorization window is shorter than the notice is warned once, as soon as it qualifies. The time left is `authorization_expiry` minus `emitted_at`; capture before then or the escrow returns to the payer via release. `payments.expired` follows if the authorization lapses uncaptured.
          * @enum {string}
          */
         WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.authorization_expiring" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
-        /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, priority_tip, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
+        /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, priority_tip, payment windows, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
         Account: {
             /** Format: uuid */
             id?: string;
@@ -2297,10 +2348,42 @@ export interface components {
             email?: string | null;
             /** @description Whether the merchant's own transactions tip the network's suggested priority fee (true, the default) or the chain's minimum tip (false: 0 on most chains, 25 gwei on Polygon PoS/Amoy). The buyer's dispute/close_dispute never read it. */
             priority_tip?: boolean;
+            /**
+             * @description Seconds an authorization of the account's new payments stays capturable after the payment is created: the account's own value, or the gateway default (AUTHORIZATION_TTL).
+             * @example 604800
+             */
+            authorization_ttl?: number;
+            /**
+             * @description Seconds the account's new payments stay refundable, and open to a dispute, after they are created: the account's own value, or the gateway default (REFUND_TTL).
+             * @example 2592000
+             */
+            refund_ttl?: number;
+            payment_windows?: components["schemas"]["PaymentWindows"];
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description How the account's windows are set and what a new value must meet: per window, whether it is the account's own (custom) or the default, the default, and the bounds. The refund window has no floor of its own: the pair must keep refund_ttl - authorization_ttl >= min_refund_window. */
+        PaymentWindows: {
+            authorization_ttl?: {
+                custom?: boolean;
+                /** @example 604800 */
+                default?: number;
+                /** @example 3600 */
+                min?: number;
+                /** @example 2592000 */
+                max?: number;
+            };
+            refund_ttl?: {
+                custom?: boolean;
+                /** @example 2592000 */
+                default?: number;
+                /** @example 15552000 */
+                max?: number;
+            };
+            /** @example 86400 */
+            min_refund_window?: number;
         };
         /** @description The whole account record, as an operator reads it (Full entity: GET /accounts, and GET/PATCH /accounts/{account_id} for an admin session): every column plus `admin` and the derived `status`. */
         AccountFull: {
@@ -2313,6 +2396,17 @@ export interface components {
             active?: boolean;
             /** @description The merchant's fee setting (see Account.priority_tip). */
             priority_tip?: boolean;
+            /**
+             * @description Seconds an authorization of the account's new payments stays capturable after the payment is created: the account's own value, or the gateway default (AUTHORIZATION_TTL).
+             * @example 604800
+             */
+            authorization_ttl?: number;
+            /**
+             * @description Seconds the account's new payments stay refundable, and open to a dispute, after they are created: the account's own value, or the gateway default (REFUND_TTL).
+             * @example 2592000
+             */
+            refund_ttl?: number;
+            payment_windows?: components["schemas"]["PaymentWindows"];
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -3747,6 +3841,8 @@ export interface operations {
                 page?: components["parameters"]["Page"];
                 /** @description Items per page (capped at 100). */
                 per_page?: components["parameters"]["PerPage"];
+                /** @description Cursor paging: the `x-next-cursor` (or the Link `next`'s `after`) of the previous page. Walks the collection by `-created_at` without a total count, at a constant cost per page; `page` and any `sort` other than `-created_at` are rejected with 422 `invalid_cursor` beside it. The last page carries no `x-next-cursor` and no `next` link. */
+                after?: string;
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Lifecycle state(s): one value, a comma-separated list (`status=authorized,expired`) or the repeated `status[]=` form; matches any of them. An unknown value is 400 `validation_failed` naming it. Deliberately a HAPPY-PATH label, not a ledger: a partial operation does NOT move it, so a payment captured 100 and refunded 40 still reads `captured`, and a full refund that leaves uncaptured escrow does too. `capturable_amount` / `refundable_amount` are the authoritative residuals — reconcile on those, not on this. `partially_refunded` is retained for historical rows only and is no longer produced. */
@@ -3757,6 +3853,10 @@ export interface operations {
                 token?: string;
                 /** @description Filter by the logical on-chain payment id (0x…). */
                 rail0_id?: string;
+                /** @description Filter by the reference (exact match). */
+                reference?: string;
+                /** @description Filter by the system the reference comes from. */
+                reference_origin?: string;
                 /** @description Filter by the payment's chain (resolved via its contract). */
                 chain_id?: number;
                 /** @description Filter by whether an open dispute exists. */
@@ -3830,6 +3930,10 @@ export interface operations {
                     payee: string;
                     /** @description Free-text note (what is being paid for, a reconciliation reference). Gateway-side only: in nothing signed on chain, editable afterwards via PATCH /payments/{id}, and not an idempotency term. */
                     description?: string;
+                    /** @description This payment's identifier in the merchant's own system (e.g. an order, invoice or cart id there). Stripped; not unique — several payments may carry one reference. Readable by both parties, carried in webhooks, filterable with ?reference=. An idempotency term. */
+                    reference?: string;
+                    /** @description The system the reference comes from, a lowercase slug (stored lowercased), e.g. commercelayer, shopify, pos. Needs a reference. */
+                    reference_origin?: string;
                     metadata?: {
                         [key: string]: unknown;
                     };
@@ -3905,7 +4009,13 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @description New description; null or an empty string clears it. */
-                    description: string | null;
+                    description?: string | null;
+                    /** @description The payee's internal note, never shown to the payer; payee only. Null or an empty string clears it. */
+                    merchant_note?: string | null;
+                    /** @description Correct the reference; payee only (403 not_the_payee for the payer). Null or an empty string clears it, and its origin with it unless reference_origin is sent too. Moves updated_at. */
+                    reference?: string | null;
+                    /** @description The system the reference comes from (a lowercase slug); payee only. Needs a reference. */
+                    reference_origin?: string | null;
                 };
             };
         };
@@ -4953,6 +5063,30 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    testWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The delivery result — 200 whether or not the endpoint accepted it; read `delivered`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookTestResult"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listWebhookEventCallbacks: {
         parameters: {
             query?: {
@@ -5229,7 +5363,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description last_admin: the revoke would leave zero active admins. */
+            /** @description self_revoke: an admin revoking their own grant; last_admin: the revoke would leave zero active admins. */
             422: {
                 headers: {
                     [name: string]: unknown;

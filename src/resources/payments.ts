@@ -50,6 +50,10 @@ export interface ListPaymentsParams {
   /** Only payments created at/before this ISO-8601 timestamp. */
   created_to?: string
   rail0_id?: string
+  /** Only payments with this reference (exact match, the payment's id in the merchant's system). */
+  reference?: string
+  /** Only payments whose reference comes from this system (case-insensitive). */
+  reference_origin?: string
   /**
    * Only payments carrying at least one transaction with this operation. The RECORD
    * vocabulary, as on `transactions()`: a payment whose only transaction is a dispute

@@ -7,6 +7,7 @@ import type {
   PaginatedResponse,
   UpdateWebhookRequest,
   Webhook,
+  WebhookTestResult,
   WebhookTopic,
   WebhookWithSecret,
 } from './types.js'
@@ -89,6 +90,17 @@ export class WebhooksResource {
   /** Reset the delivery circuit breaker and re-enable the webhook. */
   resetCircuit(id: string): Promise<Webhook> {
     return this.http.put(path`/webhooks/${id}/reset_circuit`)
+  }
+
+  /**
+   * Send a test event to the webhook's callback now and report what it did. The event has
+   * topic `webhooks.test`, `test: true` and no payment, and is signed and delivered like a
+   * real one (same SSRF guard and headers). Synchronous, one attempt, not logged in
+   * `eventCallbacks` and not counted by the circuit breaker; works on a disabled webhook.
+   * Resolves whether or not the endpoint accepted it — read `delivered`.
+   */
+  test(id: string): Promise<WebhookTestResult> {
+    return this.http.post(path`/webhooks/${id}/test`, {})
   }
 
   /** List delivery attempts for a webhook. */
