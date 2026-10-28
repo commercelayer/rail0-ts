@@ -300,18 +300,21 @@ jobs:
           webhook-type: incoming-webhook
           payload: |
             {
-            "text": "rail0 SDK for TypeScript ${{ needs.plan.outputs.version }} released (@commercelayer/rail0-sdk on npm)",
+            "text": "New release for rail0 SDK for TypeScript (${{ needs.plan.outputs.tag }})",
             "blocks": [
-              {
-              "type": "header",
-              "text": { "type": "plain_text", "text": ":package: rail0 SDK for TypeScript ${{ needs.plan.outputs.version }} released", "emoji": true }
-              },
               {
               "type": "section",
               "text": {
                 "type": "mrkdwn",
-                "text": "`@commercelayer/rail0-sdk` on <https://www.npmjs.com/package/@commercelayer/rail0-sdk/v/${{ needs.plan.outputs.version }}|npm> · <${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.plan.outputs.tag }}|release notes>"
+                "text": ":package: New release for <https://www.npmjs.com/package/@commercelayer/rail0-sdk/v/${{ needs.plan.outputs.version }}|rail0 SDK for TypeScript>\n<${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.plan.outputs.tag }}|release notes>"
               }
+              },
+              {
+              "type": "section",
+              "fields": [
+                { "type": "mrkdwn", "text": "*Project:*\n@commercelayer/rail0-sdk" },
+                { "type": "mrkdwn", "text": "*Version:*\n${{ needs.plan.outputs.tag }}" }
+              ]
               },
               {
               "type": "context",
