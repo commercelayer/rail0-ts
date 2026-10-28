@@ -56,17 +56,17 @@
     "format": "biome format --write src gen examples test",
     "release": "pnpm update && pnpm format && pnpm lint:fix && pnpm typecheck && pnpm test && pnpm build",
     "prepublishOnly": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "publish:npm": "pnpm publish"
+    "release:prepare": "bin/release-prepare"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
-    "@types/node": "^26.6.4",
+    "@biomejs/biome": "^2.6.2",
+    "@types/node": "^26.6.5",
     "openapi-typescript": "^7.13.0",
     "tsup": "^9.0.0",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "vite": "^8.3.3",
-    "vitest": "^5.0.3"
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   },
   "publishConfig": {
     "access": "public"
