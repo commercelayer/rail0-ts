@@ -312,7 +312,7 @@ describe('signTransaction with an expectation', () => {
   })
 
   // S3: the signer stripped only a lowercase 0x, so `0X…` calldata passed the checks
-  // (which normalise either prefix) and was signed with "0X" decoded as a 0x00 byte.
+  // (which normalize either prefix) and was signed with "0X" decoded as a 0x00 byte.
   it('signs 0X-prefixed hex as the same bytes the checks verified', () => {
     const data = calldataFor('void')
     const upper = unsigned({

@@ -35,7 +35,7 @@ const RECEIVE_TYPEHASH = keccak_256(new TextEncoder().encode(RECEIVE_TYPE))
 // ================================================================
 
 /**
- * Decodes hex through the same normalisation the pre-sign checks use (`stripHex`:
+ * Decodes hex through the same normalization the pre-sign checks use (`stripHex`:
  * trimmed, either `0x` / `0X` prefix), so the bytes signed are the bytes verified. It
  * used to strip only a lowercase `0x`: `0X…` calldata passed verification and was then
  * signed with its "0X" decoded as a leading 0x00 byte. Strict: odd length or a non-hex
