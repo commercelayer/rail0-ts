@@ -217,7 +217,7 @@ function checkCalldataPaymentId(data: string, rail0Id: string | null | undefined
 }
 
 /**
- * Trims, lowercases and drops a `0x` / `0X` prefix. The one hex normalisation of the
+ * Trims, lowercases and drops a `0x` / `0X` prefix. The one hex normalization of the
  * package: the signer decodes bytes through it too, so the bytes that get signed are
  * the bytes these checks looked at (a `0X…` that verified but was then decoded with
  * its prefix as a byte would sign something else).

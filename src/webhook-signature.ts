@@ -95,7 +95,7 @@ export function verifyWebhookSignature(options: VerifyWebhookOptions): boolean {
   if (Math.abs(now - seconds) > tolerance) return false
 
   // The timestamp is hashed exactly as it arrived on the wire: the gateway keyed the
-  // digest with that same string, so a normalised copy would not match.
+  // digest with that same string, so a normalized copy would not match.
   const expected = expectedWebhookSignature(body, String(timestamp), secret)
   return timingSafeEqualHex(String(signature).trim(), expected)
 }
