@@ -1,85 +1,322 @@
-# Publish @commercelayer/rail0-sdk to npm when a GitHub release is published.
+# Release @commercelayer/rail0-sdk when an approved release pull request merges.
 #
-# Trusted Publishing (OIDC): npm trusts THIS workflow file in THIS repo, so no registry
-# token exists anywhere — not in the repo's secrets, not on a laptop — and no 2FA prompt
-# interrupts a release. npm attaches provenance to the tarball (which commit, which
-# workflow built it) on its own. It works only after a maintainer registers the trusted
-# publisher on npmjs.com: package → Settings → Trusted Publisher → GitHub Actions, with
-# organization `commercelayer`, repository `rail0-ts`, workflow `release.yml`.
+# Releasing is three steps:
+#   1. bin/release-prepare (or `pnpm release:prepare`) opens "chore(release): vX.Y.Z",
+#      which bumps package.json and carries the release notes in its body;
+#   2. a reviewer approves it and it is merged;
+#   3. this workflow, on that push to main: plan → gate (ci.yml on the release commit)
+#      → publish to npm → tag vX.Y.Z + GitHub release → Slack.
 #
-# Releasing:
-#   1. merge a PR that bumps `version` in package.json (e.g. 1.2.0);
-#   2. publish a GitHub release whose tag is that version with a `v` (v1.2.0), on main.
-# The tag must match package.json, or the run fails before anything is published.
+# Why on merge, not on a published GitHub release: a release used to be a second, manual
+# and unreviewed act (draft a release, type a tag) after the version PR merged, and
+# nothing stopped a tag on the wrong commit. Now the reviewed pull request IS the
+# release, and the tag is created only by this workflow, only after npm accepted the
+# package. A push that does not change the version is a no-op (plan stops).
 #
-# `release` runs the workflow as it exists IN THE TAGGED COMMIT — a tag on a commit that
-# predates this file publishes nothing. workflow_dispatch re-runs it for a tag (choose
-# the tag as the ref), e.g. after fixing the npm-side configuration.
+# Order: publish FIRST, tag after. A failed publish leaves no tag, so the release is
+# simply retried; a failed tag/release step after a successful publish is resumed by
+# "Run workflow" (workflow_dispatch, main only): plan sees the version on npm without
+# its tag and does only what is missing.
+#
+# The release commit is the one that SET the version (the release PR's merge), found from
+# history, not the head of main: a resume after other merges still ships exactly the
+# reviewed commit.
+#
+# Trusted Publishing (OIDC): npm trusts THIS file (release.yml) in THIS repo — keep the
+# name. No registry token exists anywhere. One-time setup on npmjs.com: package →
+# Settings → Trusted Publisher → GitHub Actions, organization `commercelayer`, repository
+# `rail0-ts`, workflow `release.yml`, environment `release` (bind the environment only
+# AFTER this workflow is on main: the old one ran without it).
 name: release
 
 on:
-  release:
-    types: [published]
-  workflow_dispatch:
+  push:
+    branches: [main]
+  workflow_dispatch: # resume a release that stopped halfway; refused off main
 
 permissions:
   contents: read
-  id-token: write # the OIDC token npm exchanges for a one-off publish credential
 
+# One release at a time, never cancelled halfway.
 concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  PACKAGE: "@commercelayer/rail0-sdk"
+
 jobs:
-  publish:
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      commit: ${{ steps.plan.outputs.commit }}
+    steps:
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::releases run from main only (got ${GITHUB_REF})"
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # history (the commit that set the version) and tags
+
+      - name: What to release
+        id: plan
+        run: |
+          set -euo pipefail
+          version_at() { git show "$1:package.json" 2>/dev/null | jq -r '.version // empty' 2>/dev/null || true; }
+
+          version="$(version_at HEAD)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::package.json version '$version' is not X.Y.Z"
+            exit 1
+          fi
+          tag="v$version"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+          published=false
+          [ "$(npm view "$PACKAGE@$version" version 2>/dev/null || true)" = "$version" ] && published=true
+          tagged=false
+          git rev-parse -q --verify "refs/tags/$tag" >/dev/null && tagged=true
+
+          if [ "$published" = true ] && [ "$tagged" = true ]; then
+            echo "::notice::$PACKAGE $version is on npm and tagged $tag: nothing to release"
+            echo "release=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The commit that set this version: the newest first-parent commit of main whose
+          # version differs from its parent's.
+          commit=""
+          for c in $(git log --first-parent --format=%H -- package.json); do
+            if [ "$(version_at "$c")" = "$version" ] && [ "$(version_at "$c^1")" != "$version" ]; then
+              commit="$c"
+              break
+            fi
+          done
+          if [ -z "$commit" ]; then
+            echo "::error::cannot find the commit that set version $version"
+            exit 1
+          fi
+
+          if [ "$tagged" = true ]; then
+            tag_commit="$(git rev-list -n 1 "$tag")"
+            if [ "$tag_commit" != "$commit" ]; then
+              echo "::error::tag $tag is on $tag_commit, but $version was set by $commit"
+              exit 1
+            fi
+          else
+            latest="$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+            if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "${latest#v}" "$version" | sort -V | tail -n 1)" != "$version" ]; then
+              echo "::error::$version is older than the latest tag $latest"
+              exit 1
+            fi
+          fi
+
+          echo "release=true" >>"$GITHUB_OUTPUT"
+          echo "commit=$commit" >>"$GITHUB_OUTPUT"
+          if [ "$published" = true ]; then echo "publish=false" >>"$GITHUB_OUTPUT"; else echo "publish=true" >>"$GITHUB_OUTPUT"; fi
+          {
+            echo "### Releasing $PACKAGE $version"
+            echo "- commit: \`$commit\`"
+            echo "- on npm already: $published"
+            echo "- tagged already: $tagged"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  # No release without a second person. The commit that set the version must have reached
+  # main through a merged pull request that a reviewer OTHER THAN ITS AUTHOR approved, on
+  # the pull request's final commit (an approval followed by a new push, a dismissal or a
+  # change request does not count). Branch protection already asks for a review, but an
+  # admin can bypass it, a bare push to main has no review at all, and a "Run workflow"
+  # resume runs long after the merge: this job is the check that cannot be skipped, on the
+  # exact commit about to ship. Bots never count as the reviewer.
+  approval:
+    name: Approved by a third-party reviewer
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Release pull request approved by someone other than its author
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/commits/$COMMIT/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main") | .number | tostring] | join(" ")')"
+          if [ -z "$prs" ]; then
+            echo "::error::$COMMIT did not reach main through a merged pull request: a release needs an approved release PR"
+            exit 1
+          fi
+          for pr in $prs; do
+            author="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .user.login)"
+            head="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha)"
+            # Reviews come oldest first: the last non-comment state per reviewer is theirs.
+            approvers="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews" \
+              --jq '.[] | [.user.login, .state, .commit_id] | @tsv' |
+              awk -F'\t' -v author="$author" -v head="$head" '
+                $1 ~ /\[bot\]$/ || $2 == "COMMENTED" || $2 == "PENDING" { next }
+                { last[$1] = $2; at[$1] = $3 }
+                END { for (u in last) if (u != author && last[u] == "APPROVED" && at[u] == head) print u }')"
+            if [ -n "$approvers" ]; then
+              approvers="$(echo $approvers)"
+              echo "::notice::#$pr by $author, approved by $approvers"
+              echo "- approved: #$pr (author $author) by $approvers" >>"$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          echo "::error::the release PR (#${prs// /, #}) has no approval from a reviewer other than its author on its final commit: nothing is published"
+          exit 1
+
+  gate:
+    name: CI on the release commit
+    needs: [plan, approval]
+    if: needs.plan.outputs.release == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.plan.outputs.commit }}
+
+  publish:
+    name: Publish, tag, release
+    needs: [plan, approval, gate]
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://www.npmjs.com/package/@commercelayer/rail0-sdk/v/${{ needs.plan.outputs.version }}
+    permissions:
+      contents: write # the tag and the GitHub release
+      id-token: write # the OIDC token npm exchanges for a one-off publish credential
+      pull-requests: read # the release notes, from the release PR's body
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
 
       - uses: pnpm/action-setup@v4
+        if: needs.plan.outputs.publish == 'true'
 
       - uses: actions/setup-node@v4
+        if: needs.plan.outputs.publish == 'true'
         with:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
       # Trusted Publishing needs a recent npm CLI (11.5.1+); Node 22 ships an older one.
-      - run: npm install -g npm@latest
+      - if: needs.plan.outputs.publish == 'true'
+        run: npm install -g npm@latest
 
-      - run: pnpm install --frozen-lockfile
+      - if: needs.plan.outputs.publish == 'true'
+        run: pnpm install --frozen-lockfile
 
-      # The tag names the version being released; package.json is what actually gets
-      # published. A mismatch means the release points at the wrong commit.
-      - name: Check the tag matches package.json
-        id: version
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          tag="${GITHUB_REF_NAME}"
-          if [ "$tag" != "v$version" ]; then
-            echo "::error::ref '$tag' does not match package.json version $version (expected v$version)"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # The gate already linted, type-checked, tested and built this commit; dist/ is
+      # built again here because jobs do not share a workspace.
+      - name: Build
+        if: needs.plan.outputs.publish == 'true'
+        run: pnpm build
 
-      # Idempotent: a version already on the registry (published by hand, or by an
-      # earlier run) is reported and skipped, so a re-run never fails on "cannot
-      # publish over an existing version".
-      - name: Skip a version already published
-        id: published
-        run: |
-          if npm view "@commercelayer/rail0-sdk@${{ steps.version.outputs.version }}" version >/dev/null 2>&1; then
-            echo "::notice::@commercelayer/rail0-sdk@${{ steps.version.outputs.version }} is already on npm — nothing to publish"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # The same gate as prepublishOnly and CI: lint, typecheck, test, build.
-      - name: Lint, type-check, test, build
-        if: steps.published.outputs.skip != 'true'
-        run: pnpm lint && pnpm typecheck && pnpm test && pnpm build
-
-      # npm, not pnpm: npm's CLI is what performs the OIDC exchange. --ignore-scripts
-      # because the gate above already ran what prepublishOnly would run again.
-      - name: Publish
-        if: steps.published.outputs.skip != 'true'
+      # npm, not pnpm: npm's CLI performs the OIDC exchange and attaches provenance.
+      # --ignore-scripts: prepublishOnly would re-run the gate the previous job ran.
+      - name: Publish to npm
+        if: needs.plan.outputs.publish == 'true'
         run: npm publish --ignore-scripts
+
+      - name: Release notes from the release pull request
+        id: notes
+        run: |
+          set -euo pipefail
+          number="$(gh api "repos/$GITHUB_REPOSITORY/commits/$COMMIT/pulls" \
+            --jq '[.[] | select(.merged_at != null and (.title | startswith("chore(release)")) and (.title | contains(env.TAG)))][0].number // empty' || true)"
+          if [ -z "$number" ]; then
+            number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state merged --search "\"chore(release): $TAG\" in:title" \
+              --json number,title --jq '[.[] | select(.title | contains(env.TAG))][0].number // empty' || true)"
+          fi
+          if [ -z "$number" ]; then
+            echo "::notice::no merged release pull request for $TAG found: GitHub generates the notes"
+            exit 0
+          fi
+          gh pr view "$number" --repo "$GITHUB_REPOSITORY" --json body --jq .body >"$RUNNER_TEMP/pr-body.md"
+          awk '/<!-- release-notes:end -->/ { inside = 0 } inside { print } /<!-- release-notes:start -->/ { inside = 1 }' \
+            "$RUNNER_TEMP/pr-body.md" >"$RUNNER_TEMP/notes.md"
+          [ -s "$RUNNER_TEMP/notes.md" ] || cp "$RUNNER_TEMP/pr-body.md" "$RUNNER_TEMP/notes.md"
+          printf '\nRelease pull request: #%s\n' "$number" >>"$RUNNER_TEMP/notes.md"
+          echo "file=$RUNNER_TEMP/notes.md" >>"$GITHUB_OUTPUT"
+
+      # `gh release create --target` creates the tag on the release commit and the
+      # release in one call. Skipped when the release already exists (a resume).
+      - name: Tag and GitHub release
+        env:
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::GitHub release $TAG already exists"
+            exit 0
+          fi
+          if [ -n "${NOTES_FILE:-}" ]; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$COMMIT" --title "$TAG" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$COMMIT" --title "$TAG" --generate-notes
+          fi
+
+  announce:
+    name: Slack message
+    needs: [plan, publish]
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      # The channel: swap the secret here (one place) to post somewhere else.
+      SLACK_WEBHOOK_URL: ${{ secrets.PIPELINE_SLACK_CHANNEL_WEBHOOK_URL }}
+      SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+    steps:
+      - name: No Slack webhook
+        if: env.SLACK_WEBHOOK_URL == ''
+        run: echo "::warning::the Slack webhook secret is not available to this repository; no message posted"
+
+      - name: Post to a Slack channel
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v4
+        with:
+          webhook-type: incoming-webhook
+          payload: |
+            {
+            "text": "New release @commercelayer/rail0-sdk v${{ needs.plan.outputs.version }}.",
+            "blocks": [
+              {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "New release for <https://www.npmjs.com/package/@commercelayer/rail0-sdk/v/${{ needs.plan.outputs.version }}|`@commercelayer/rail0-sdk`>\n*<${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.plan.outputs.tag }}|release notes>*"
+              }
+              },
+              {
+              "type": "section",
+              "fields": [
+                { "type": "mrkdwn", "text": "*Package:*\n@commercelayer/rail0-sdk" },
+                { "type": "mrkdwn", "text": "*Version:*\n${{ needs.plan.outputs.version }}" }
+              ]
+              },
+              {
+              "type": "context",
+              "elements": [
+                { "type": "image", "image_url": "${{ github.event.sender.avatar_url }}", "alt_text": "${{ github.event.sender.login }}" },
+                { "type": "mrkdwn", "text": "*${{ github.event.sender.login }}* has triggered this release." }
+              ]
+              }
+            ]
+            }
