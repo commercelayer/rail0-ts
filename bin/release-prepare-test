@@ -50,6 +50,7 @@ case "$1 ${2:-}" in
       *number,state,baseRefName*) printf '%s\n' "$FAKE_PR" ;;
       *"--json title"*) printf '%s\n' "$FAKE_PR_TITLE" ;;
       *"--json body"*) printf '%s\n' "$FAKE_PR_BODY" ;;
+      *"--json url"*) echo "https://github.com/example/repo/pull/42" ;;
       *) exit 1 ;;
     esac ;;
   "pr edit")
@@ -153,7 +154,8 @@ git push --quiet origin --delete "chore/release-$major"
 
 # A real run, against the stubbed gh.
 out="$(run)"
-expect_contains "real run opens the PR" "$out" "opened https://github.com/example/repo/pull/99"
+expect_contains "real run opens the PR" "$out" "opened the release pull request"
+expect_contains "and ends with its URL" "$(printf '%s\n' "$out" | tail -n 1)" "https://github.com/example/repo/pull/99"
 [ "$(git symbolic-ref --short HEAD)" = main ] && pass "back on main" || fail "not back on main"
 if git ls-remote --exit-code --heads origin "chore/release-$major" >/dev/null; then
   pass "release branch pushed"
@@ -237,6 +239,7 @@ git merge --quiet --no-edit origin/main && git push --quiet origin feature
 
 out="$(run)"
 expect_contains "branch: real run updates the pull request" "$out" "pull request #42 now releases v$bminor"
+expect_contains "branch: and ends with its URL" "$(printf '%s\n' "$out" | tail -n 1)" "https://github.com/example/repo/pull/42"
 [ "$(git symbolic-ref --short HEAD)" = feature ] && pass "branch: stays on the branch" || fail "branch: left the branch"
 git fetch --quiet origin feature
 subject="$(git log -1 --format=%s origin/feature)"

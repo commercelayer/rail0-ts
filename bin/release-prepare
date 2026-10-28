@@ -55,6 +55,17 @@ if [ -t 2 ]; then red=$'\033[31m' yellow=$'\033[33m' reset=$'\033[0m'; else red=
 die()  { printf '%serror:%s %s\n' "$red" "$reset" "$*" >&2; exit 1; }
 warn() { printf '%swarning:%s %s\n' "$yellow" "$reset" "$*" >&2; }
 info() { printf '==> %s\n' "$*"; }
+# The pull request's URL on a line of its own, last thing printed: a terminal that knows
+# OSC 8 makes it a hyperlink, and every terminal shows (and most auto-link) the URL text.
+print_pr_url() {
+  [ -n "$1" ] || return 0
+  echo
+  if [ -t 1 ]; then
+    printf '    \033]8;;%s\033\\%s\033]8;;\033\\\n' "$1" "$1"
+  else
+    printf '    %s\n' "$1"
+  fi
+}
 
 usage() {
   cat <<EOF
@@ -504,9 +515,11 @@ if [ "$mode" = branch ]; then
     die "pushed the bump, but gh pr edit failed: paste the release notes into #$pr_number by hand"
   fi
   rm -f "$notes_file"
+  pr_url="$(gh pr view "$pr_number" --json url --jq .url 2>/dev/null || true)"
   echo
   info "pull request #$pr_number now releases $tag on merge"
   info "get it approved and merge it: the release workflow publishes $tag, tags it and posts to Slack."
+  print_pr_url "$pr_url"
   exit 0
 fi
 
@@ -558,6 +571,7 @@ rm -f "$notes_file"
 git switch --quiet main
 
 echo
-info "opened $url"
+info "opened the release pull request"
 info "review it (edit the notes in the PR body if needed), get it approved and merge it:"
 info "the release workflow publishes $tag, tags it and posts to Slack."
+print_pr_url "$url"
