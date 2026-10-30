@@ -63,7 +63,8 @@ export class PayoutDestinationsResource {
    * Register a destination for the session's own wallet (201, `unverified`).
    *
    * `confirm_details: true` is required — the merchant's statement of
-   * `PAYOUT_DETAILS_CONFIRMATION.text`; never set it on their behalf. Refused: the zero
+   * `PAYOUT_DETAILS_CONFIRMATION.text`; never set it on their behalf. `min_amount` is
+   * required as well (`"0"` when the venue has none; 422 `minimum_required`). Refused: the zero
    * address, the wallet itself, and every contract the gateway knows on the chain (422
    * `payout_destination_*`); the same address/token/chain twice on a wallet (409
    * `payout_destination_exists`).
@@ -78,8 +79,8 @@ export class PayoutDestinationsResource {
 
   /**
    * Update the label, reserve, minimum or `active` flag. Changing `min_amount` needs
-   * `confirm_details: true` (422 `confirmation_required` otherwise, nothing written);
-   * raising it above the latest proof's amount takes the verification away. `active:
+   * `confirm_details: true` (422 `confirmation_required` otherwise, nothing written) and
+   * may not be blank — `"0"` removes the minimum (422 `minimum_required`); raising it above the latest proof's amount takes the verification away. `active:
    * false` cancels an unsigned pending payout to it, and is refused 409
    * `payout_already_signed` while a signed one is pending.
    */

@@ -545,7 +545,9 @@ text, exported as `PAYOUT_DETAILS_CONFIRMATION.text`:
 > the venue's minimum, may be permanently lost and cannot be recovered by rail0.
 
 Show it, and set the flag only once the merchant has made that check — the SDK never sets
-it for you.
+it for you. `min_amount` is **required** too, with no default (422 `minimum_required` when
+left out or blank): the venue's deposit minimum from its deposit page, `"0"` when the venue
+has none — a minimum nobody looked up is how a deposit gets lost.
 
 ```ts
 import { PAYOUT_DETAILS_CONFIRMATION } from '@commercelayer/rail0-sdk'
@@ -556,7 +558,7 @@ const destination = await merchant.payoutDestinations.create({
   token: USDC,
   address: '0x…',                    // issued by the venue FOR THIS CHAIN
   kind: 'exchange',                  // exchange | circle_mint | self_custody | provider
-  min_amount: '11000000',            // the venue's deposit minimum, base units (optional)
+  min_amount: '11000000',            // REQUIRED: the venue's deposit minimum, base units ("0" = none)
   confirm_details: true,             // the merchant confirmed PAYOUT_DETAILS_CONFIRMATION.text
 })                                   // → status 'unverified'
 ```
@@ -613,11 +615,14 @@ decide, so cap it with `maxAmount`). `decimals` must come from your own records,
 gateway: a reported scale could inflate the amount. `prepareAndSubmit` also refuses a
 payout prepared for another destination or purpose.
 
-**Minimum and reserve.** `min_amount` is the venue's deposit minimum (base units; `null`
+**Minimum and reserve.** `min_amount` is the venue's deposit minimum (base units; `"0"`
 = none): a payout below it is refused at prepare and again at submit with
 `payout_below_minimum` — a deposit under a venue's minimum may never be credited.
 Changing it is `update(id, { min_amount, confirm_details: true })` (the type requires the
-confirmation whenever `min_amount` is present; `''` removes it); raising it above the
+confirmation whenever `min_amount` is present; `"0"` removes it, `''` is refused with 422
+`minimum_required`). A destination registered before the minimum was required may hold
+none (`min_amount: null`): it sends nothing — prepare and submit answer 422
+`payout_destination_minimum_unset` — until `update` sets it. Raising the minimum above the
 latest proof's amount takes the verification away, so send a new proof at the new
 minimum. `reserve_amount` is what an `"all"` payout leaves in the wallet — `null` means
 `suggested_reserve`, the refundable balance of the wallet's payments still inside their

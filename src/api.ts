@@ -3283,6 +3283,8 @@ export interface components {
             /** Format: uuid */
             account_id?: string;
             error_reason?: string | null;
+            /** @description Hash of the block recorded with `block_number`, checked against the canonical chain before the payout is settled. */
+            block_hash?: string | null;
             account?: components["schemas"]["AccountSummary"];
         };
         PayoutDestinationOperator: components["schemas"]["PayoutDestination"] & {
@@ -3353,7 +3355,10 @@ export interface components {
             amount_formatted?: string;
             /** @enum {string} */
             purpose?: "proof" | "payout";
-            /** @enum {string} */
+            /**
+             * @description `pending` (prepared, awaiting the signature) → `submitted` (hash known; still `submitted` once mined, until its block is final) → `confirmed` | `failed`. Both outcomes are decided only once the receipt's block is at or below the chain's finality bound (its `finality_tag` block, or head − `required_confirmations` for `depth` or a node that serves no tag) and still canonical; `payouts.confirmed` / `payouts.failed` fire then.
+             * @enum {string}
+             */
             status?: "pending" | "submitted" | "confirmed" | "failed";
             /** @description JSON of the EIP-1559 transaction to sign (`to` = the token, `data` = transfer(address,uint256)). Check it against the decoded fields beside it before signing. */
             unsigned_transaction?: string | null;
@@ -3362,7 +3367,13 @@ export interface components {
             /** @description Keccak of the signed transaction, stored with it on submit (so a signed `pending` row has it too), or the hash the wallet reported. */
             transaction_hash?: string | null;
             sender?: string | null;
+            /** @description The receipt's block. Set when the gateway first sees the receipt (the payout stays `submitted` until that block is final) moved to the new block if a reorg re-includes the transaction elsewhere, and cleared only while no block holds it. */
             block_number?: number | null;
+            /**
+             * Format: date-time
+             * @description When the gateway first saw the receipt (its own clock, not the block's timestamp). Non-null on a `submitted` payout: mined, waiting for finality.
+             */
+            mined_at?: string | null;
             gas_used?: string | null;
             /** @description When failed: `reverted` (mined, status 0), `foreign_transfer` (mined, but the receipt has no Transfer of this amount of this token from the wallet to this destination), `dropped` (not mined, and the wallet's confirmed nonce has passed the signed transaction's), `submission_timeout` (a reported hash no node has ever known, past SUBMITTED_TX_TTL), `cancelled` (unsigned, cancelled by the merchant with POST /payouts/{id}/cancel or by disabling its destination). `submission_timeout` and `dropped` are not final: POST /payouts/{id}/submitted with a late hash puts the payout back to `submitted`. */
             error_code?: string | null;
@@ -7176,7 +7187,7 @@ export interface operations {
                     kind?: "exchange" | "circle_mint" | "self_custody" | "provider";
                     /** @description Base units to keep in the wallet on a full-balance payout (digits only, below 2^120; 422 `invalid_amount` otherwise); omit for the suggestion. */
                     reserve_amount?: string;
-                    /** @description The venue's deposit minimum in base units (digits only, below 2^120; 422 `invalid_amount` otherwise); omit for none. A payout below it is refused (`payout_below_minimum`) and the proof transfer is raised to it. */
+                    /** @description REQUIRED (422 `minimum_required` when left out or blank): the venue's deposit minimum in base units, from its deposit page, `"0"` when the venue has none (digits only, below 2^120; 422 `invalid_amount` otherwise). A payout below it is refused (`payout_below_minimum`) and the proof transfer is raised to it. */
                     min_amount?: string;
                     /** @description Must be `true` (else 422 `confirmation_required`): the merchant confirms the text of version `details_v1` — "I have checked the address, network, token and minimum deposit on the venue's deposit page and confirm they are correct. Funds sent to a wrong address or network, or below the venue's minimum, may be permanently lost and cannot be recovered by rail0." Recorded in the `destination.created` event as `changes.confirmed_details` {version, by, at}. */
                     confirm_details: boolean;
@@ -7215,7 +7226,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `unknown_chain`, `unknown_token`, `payout_destination_zero_address`, `payout_destination_own_wallet`, `payout_destination_is_contract` (any RAIL0 deployment on the chain, archived included, or any catalogued token there), `invalid_amount` (`reserve_amount` or `min_amount` is not base units below 2^120), `confirmation_required` (`confirm_details` is not `true`). */
+            /** @description `unknown_chain`, `unknown_token`, `payout_destination_zero_address`, `payout_destination_own_wallet`, `payout_destination_is_contract` (any RAIL0 deployment on the chain, archived included, or any catalogued token there), `invalid_amount` (`reserve_amount` or `min_amount` is not base units below 2^120), `confirmation_required` (`confirm_details` is not `true`), `minimum_required` (`min_amount` left out or blank: send `"0"` when the venue has none). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7270,7 +7281,7 @@ export interface operations {
                     label?: string;
                     /** @description Base units (digits only, below 2^120; 422 `invalid_amount` otherwise); an empty string restores the suggestion. */
                     reserve_amount?: string;
-                    /** @description The venue's deposit minimum, base units (digits only, below 2^120; 422 `invalid_amount` otherwise); an empty string removes it. Changing it requires `confirm_details: true`. Raising it above the amount of the destination's latest proof takes its verification away (`status` back to `unverified`, `verified_at` null; a disabled one re-enables unverified): the merchant proves the address again with a new proof, prepared at the new minimum. The change is recorded in `destination.min_amount_changed`, with `status` and `verified_by` beside `min_amount`. */
+                    /** @description The venue's deposit minimum, base units (digits only, below 2^120; 422 `invalid_amount` otherwise); `"0"` when the venue has none. Never blank (422 `minimum_required`). Changing it requires `confirm_details: true`. Raising it above the amount of the destination's latest proof takes its verification away (`status` back to `unverified`, `verified_at` null; a disabled one re-enables unverified): the merchant proves the address again with a new proof, prepared at the new minimum. The change is recorded in `destination.min_amount_changed`, with `status` and `verified_by` beside `min_amount`. */
                     min_amount?: string;
                     /** @description Required `true` when the request CHANGES `min_amount` (the same value again needs nothing; label, reserve and active never do): the merchant confirms the `details_v1` text (see POST /payout_destinations). Recorded in the `destination.min_amount_changed` event as `changes.confirmed_details` {version, by, at}. */
                     confirm_details?: boolean;
@@ -7311,7 +7322,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `invalid_amount`: `reserve_amount` or `min_amount` is not base units below 2^120; `confirmation_required`: the request changes `min_amount` without `confirm_details: true` (nothing is written). */
+            /** @description `invalid_amount`: `reserve_amount` or `min_amount` is not base units below 2^120; `minimum_required`: `min_amount` sent blank (`"0"` is how to say the venue has none); `confirmation_required`: the request changes `min_amount` without `confirm_details: true` (nothing is written). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7520,7 +7531,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `payout_destination_disabled`, `payout_destination_unverified`, `payout_below_minimum` (the detail names the minimum, and for `all` what is available), `insufficient_balance` (names what is available after the reserve; also a proof above the balance), `payout_limit_reached`, `unknown_chain`, `unknown_token`. */
+            /** @description `payout_destination_disabled`, `payout_destination_minimum_unset` (a destination registered before the minimum was required, with none stated: set it with PATCH first), `payout_destination_unverified`, `payout_below_minimum` (the detail names the minimum, and for `all` what is available), `insufficient_balance` (names what is available after the reserve; also a proof above the balance), `payout_limit_reached`, `unknown_chain`, `unknown_token`. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7664,7 +7675,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `payout_not_pending`, `transaction_mismatch` (also when the payout was re-prepared meanwhile), `payout_destination_disabled`; `payout_below_minimum`: the destination's `min_amount` was raised above this payout after it was prepared; `payout_destination_unverified`: the destination lost its verification after prepare (a minimum raised above its proof). These last two store nothing: the payout stays `pending` and unsigned — prepare it again, or cancel it. A resend of bytes already stored is not judged again. */
+            /** @description `payout_not_pending`, `transaction_mismatch` (also when the payout was re-prepared meanwhile), `payout_destination_disabled`; `payout_below_minimum`: the destination's `min_amount` was raised above this payout after it was prepared; `payout_destination_unverified`: the destination lost its verification after prepare (a minimum raised above its proof); `payout_destination_minimum_unset`: the destination has no minimum stated. These last two store nothing: the payout stays `pending` and unsigned — prepare it again, or cancel it. A resend of bytes already stored is not judged again. */
             422: {
                 headers: {
                     [name: string]: unknown;
