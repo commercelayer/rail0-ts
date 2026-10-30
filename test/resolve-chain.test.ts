@@ -46,3 +46,14 @@ describe('resolveChain', () => {
     expect(() => resolveChain(testnet, '  ')).toThrow(/empty chain reference/)
   })
 })
+
+describe('Blockchain type', () => {
+  it('carries slug and public_rpc_urls as required fields', () => {
+    // Compile-time: the gateway marks both required, so the public alias does too.
+    const slug: Blockchain['slug'] = 'arc'
+    const rpcs: Blockchain['public_rpc_urls'] = ['https://rpc.example']
+    // @ts-expect-error slug is not optional
+    const noSlug: Blockchain['slug'] = undefined
+    expect([slug, rpcs, noSlug]).toHaveLength(3)
+  })
+})
