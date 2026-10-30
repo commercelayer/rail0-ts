@@ -545,9 +545,11 @@ text, exported as `PAYOUT_DETAILS_CONFIRMATION.text`:
 > the venue's minimum, may be permanently lost and cannot be recovered by rail0.
 
 Show it, and set the flag only once the merchant has made that check — the SDK never sets
-it for you. `min_amount` is **required** too, with no default (422 `minimum_required` when
-left out or blank): the venue's deposit minimum from its deposit page, `"0"` when the venue
-has none — a minimum nobody looked up is how a deposit gets lost.
+it for you. The minimum is **required** too, never defaulted: exactly one of `min_amount`
+(the venue's figure from its deposit page, base units) or `no_minimum: true` (the venue has
+none). The type refuses neither and both, and so does a local check before the request
+(the gateway: 422 `minimum_required` / `minimum_conflict`) — a minimum nobody looked up is
+how a deposit gets lost.
 
 ```ts
 import { PAYOUT_DETAILS_CONFIRMATION } from '@commercelayer/rail0-sdk'
@@ -558,7 +560,8 @@ const destination = await merchant.payoutDestinations.create({
   token: USDC,
   address: '0x…',                    // issued by the venue FOR THIS CHAIN
   kind: 'exchange',                  // exchange | circle_mint | self_custody | provider
-  min_amount: '11000000',            // REQUIRED: the venue's deposit minimum, base units ("0" = none)
+  min_amount: '11000000',            // the venue's deposit minimum, base units —
+                                     // or no_minimum: true when the venue has none
   confirm_details: true,             // the merchant confirmed PAYOUT_DETAILS_CONFIRMATION.text
 })                                   // → status 'unverified'
 ```
@@ -615,16 +618,16 @@ decide, so cap it with `maxAmount`). `decimals` must come from your own records,
 gateway: a reported scale could inflate the amount. `prepareAndSubmit` also refuses a
 payout prepared for another destination or purpose.
 
-**Minimum and reserve.** `min_amount` is the venue's deposit minimum (base units; `"0"`
-= none): a payout below it is refused at prepare and again at submit with
+**Minimum and reserve.** `min_amount` is the venue's deposit minimum (base units): a
+payout below it is refused at prepare and again at submit with
 `payout_below_minimum` — a deposit under a venue's minimum may never be credited.
 Changing it is `update(id, { min_amount, confirm_details: true })` (the type requires the
-confirmation whenever `min_amount` is present; `"0"` removes it, `''` is refused with 422
-`minimum_required`). A destination registered before the minimum was required may hold
-none (`min_amount: null`): it sends nothing — prepare and submit answer 422
-`payout_destination_minimum_unset` — until `update` sets it. Raising the minimum above the
-latest proof's amount takes the verification away, so send a new proof at the new
-minimum. `reserve_amount` is what an `"all"` payout leaves in the wallet — `null` means
+confirmation whenever `min_amount` or `no_minimum` is present); `update(id, { no_minimum:
+true, confirm_details: true })` removes it, and a blank `''` is refused locally. A null
+`min_amount` reads with `no_minimum`: `true` = the merchant stated the venue has none,
+`false` = never stated (a destination registered before it was asked; not blocked).
+Raising the minimum above the latest proof's amount takes the verification away, so
+send a new proof at the new minimum. `reserve_amount` is what an `"all"` payout leaves in the wallet — `null` means
 `suggested_reserve`, the refundable balance of the wallet's payments still inside their
 refund window, because a refund pulls from the payee wallet.
 
@@ -637,7 +640,7 @@ back with `submitByHash` and the late or replacement hash.
 
 `payoutDestinations`: `list(params?)` → `PaginatedResponse<PayoutDestination>` (filter
 `wallet_id`, `status`) · `create(params)` · `get(id)` · `update(id, params)` (`label`,
-`reserve_amount`, `min_amount` + `confirm_details`, `active` — `false` disables, any wallet
+`reserve_amount`, `min_amount` or `no_minimum` + `confirm_details`, `active` — `false` disables, any wallet
 of the account may) · `confirm(id)` · `events(id, params?)` → `PaginatedResponse<PayoutEvent>`
 (the destination's audit trail and its payouts', newest first).
 

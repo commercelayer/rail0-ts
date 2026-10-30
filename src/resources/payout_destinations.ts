@@ -12,13 +12,37 @@ import type {
 
 /**
  * The statement `confirm_details: true` records (POST /payout_destinations, and a PATCH that
- * changes `min_amount`): show `text` to the merchant and send the flag only once they
+ * changes the minimum): show `text` to the merchant and send the flag only once they
  * have made the check. A new wording gets a new `version` on the gateway.
  */
 export const PAYOUT_DETAILS_CONFIRMATION = {
   version: 'details_v1',
   text: "I have checked the address, network, token and minimum deposit on the venue's deposit page and confirm they are correct. Funds sent to a wrong address or network, or below the venue's minimum, may be permanently lost and cannot be recovered by rail0.",
 } as const
+
+/**
+ * The local half of the minimum rule, for callers the type cannot hold (plain JS, `as`
+ * casts): a blank `min_amount` is never sent, nor one beside `no_minimum: true`, and a
+ * registration must state one of them — the SDK never picks for the merchant. Throws before
+ * any request; the gateway enforces the same (`minimum_required`, `minimum_conflict`).
+ */
+function checkMinimum(
+  params: { min_amount?: string | undefined; no_minimum?: boolean | undefined },
+  create: boolean,
+): void {
+  const figure = params.min_amount
+  if (figure !== undefined && figure.trim() === '') {
+    throw new Error('min_amount may not be blank — send no_minimum: true when the venue has none')
+  }
+  if (figure !== undefined && params.no_minimum === true) {
+    throw new Error('send either min_amount or no_minimum: true, not both')
+  }
+  if (create && figure === undefined && params.no_minimum !== true) {
+    throw new Error(
+      "state the venue's deposit minimum: min_amount (base units) or no_minimum: true when it has none",
+    )
+  }
+}
 
 export interface ListPayoutDestinationsParams {
   /** Restrict to one wallet (uuid). */
@@ -63,13 +87,15 @@ export class PayoutDestinationsResource {
    * Register a destination for the session's own wallet (201, `unverified`).
    *
    * `confirm_details: true` is required — the merchant's statement of
-   * `PAYOUT_DETAILS_CONFIRMATION.text`; never set it on their behalf. `min_amount` is
-   * required as well (`"0"` when the venue has none; 422 `minimum_required`). Refused: the zero
+   * `PAYOUT_DETAILS_CONFIRMATION.text`; never set it on their behalf. Exactly one of
+   * `min_amount` or `no_minimum: true` is required as well (checked locally before the
+   * request; 422 `minimum_required` / `minimum_conflict` from the gateway). Refused: the zero
    * address, the wallet itself, and every contract the gateway knows on the chain (422
    * `payout_destination_*`); the same address/token/chain twice on a wallet (409
    * `payout_destination_exists`).
    */
-  create(params: CreatePayoutDestinationRequest): Promise<PayoutDestination> {
+  async create(params: CreatePayoutDestinationRequest): Promise<PayoutDestination> {
+    checkMinimum(params, true)
     return this.http.post('/payout_destinations', params)
   }
 
@@ -80,11 +106,13 @@ export class PayoutDestinationsResource {
   /**
    * Update the label, reserve, minimum or `active` flag. Changing `min_amount` needs
    * `confirm_details: true` (422 `confirmation_required` otherwise, nothing written) and
-   * may not be blank — `"0"` removes the minimum (422 `minimum_required`); raising it above the latest proof's amount takes the verification away. `active:
+   * may not be blank (refused locally) — `no_minimum: true` removes the minimum, never with
+   * `min_amount` beside it; raising it above the latest proof's amount takes the verification away. `active:
    * false` cancels an unsigned pending payout to it, and is refused 409
    * `payout_already_signed` while a signed one is pending.
    */
-  update(id: string, params: UpdatePayoutDestinationRequest): Promise<PayoutDestination> {
+  async update(id: string, params: UpdatePayoutDestinationRequest): Promise<PayoutDestination> {
+    checkMinimum(params, false)
     return this.http.patch(path`/payout_destinations/${id}`, params)
   }
 
