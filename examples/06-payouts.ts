@@ -64,7 +64,7 @@ try {
     token: USDC,
     address: DEPOSIT_ADDRESS,
     kind: 'exchange',
-    min_amount: '11000000', // the venue's deposit minimum, base units
+    min_amount: '11000000', // the venue's deposit minimum, base units — or no_minimum: true if none
     confirm_details: true, // the merchant said "yes" to the text above
   })
   console.log('Destination registered:', destination.status) // unverified

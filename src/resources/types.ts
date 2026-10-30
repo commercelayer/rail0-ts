@@ -334,8 +334,14 @@ export interface WebhookTestResult {
  * minimum, may be permanently lost and cannot be recovered by rail0." The SDK never sends
  * it for you: set it only once the merchant has made that check (422
  * `confirmation_required` otherwise).
+ *
+ * The minimum is a required, explicit answer too, never defaulted: EXACTLY ONE of
+ * `min_amount` (the venue's figure, base units) or `no_minimum: true` (the venue has none).
+ * The type refuses neither and both; the gateway answers 422 `minimum_required` (neither,
+ * or a blank figure) and `minimum_conflict` (both). A minimum nobody looked up is how a
+ * deposit gets lost.
  */
-export interface CreatePayoutDestinationRequest {
+export type CreatePayoutDestinationRequest = {
   /** The wallet (uuid or address) that will sign transfers to it; must be the session's own. */
   wallet_id: string
   /** The chain the deposit address was issued for. */
@@ -352,14 +358,25 @@ export interface CreatePayoutDestinationRequest {
    * `invalid_amount` otherwise). Omit for the suggestion (`suggested_reserve`).
    */
   reserve_amount?: Uint256String
-  /**
-   * The venue's deposit minimum in base units (digits only, below 2^120); omit for none.
-   * A payout below it is refused (`payout_below_minimum`) and the proof is raised to it.
-   */
-  min_amount?: Uint256String
   /** The merchant's confirmation of the `details_v1` text — see above. */
   confirm_details: true
-}
+} & (
+  | {
+      /**
+       * The venue's deposit minimum in base units, from its deposit page (digits only,
+       * below 2^120; 422 `invalid_amount` otherwise; never blank). `"0"` is a figure like
+       * any other. A payout below it is refused (`payout_below_minimum`) and the proof is
+       * raised to it.
+       */
+      min_amount: Uint256String
+      no_minimum?: undefined
+    }
+  | {
+      /** The merchant states the venue has no minimum deposit. */
+      no_minimum: true
+      min_amount?: undefined
+    }
+)
 /** The fields of a destination PATCH other than the minimum. */
 export interface PayoutDestinationEdits {
   label?: string
@@ -374,16 +391,28 @@ export interface PayoutDestinationEdits {
 /**
  * Body of PATCH /payout_destinations/:id.
  *
- * A request that CHANGES `min_amount` (an empty string removes it) needs
- * `confirm_details: true` — the merchant's statement of the `details_v1` text (see
- * `CreatePayoutDestinationRequest`); otherwise 422 `confirmation_required` and nothing is
- * written. The type asks for it whenever `min_amount` is present: the gateway itself
- * waives it for a re-send of the same value. Raising the minimum above the amount of the
- * latest proof takes the verification away (`status` back to `unverified`).
+ * The minimum: `min_amount` sets a figure (and clears `no_minimum`); `no_minimum: true`
+ * removes it (`min_amount` becomes null). Never both (422 `minimum_conflict`), and never a
+ * blank `min_amount` (refused locally; 422 `minimum_required` from the gateway). A request
+ * that CHANGES either needs `confirm_details: true` — the merchant's statement of the
+ * `details_v1` text (see `CreatePayoutDestinationRequest`); otherwise 422
+ * `confirmation_required` and nothing is written. The type asks for it whenever either is
+ * present: the gateway itself waives it for a re-send of the same value. Raising the
+ * minimum above the amount of the latest proof takes the verification away (`status` back
+ * to `unverified`).
  */
 export type UpdatePayoutDestinationRequest =
-  | (PayoutDestinationEdits & { min_amount?: undefined; confirm_details?: boolean })
-  | (PayoutDestinationEdits & { min_amount: Uint256String; confirm_details: true })
+  | (PayoutDestinationEdits & {
+      min_amount?: undefined
+      no_minimum?: undefined
+      confirm_details?: boolean
+    })
+  | (PayoutDestinationEdits & {
+      min_amount: Uint256String
+      no_minimum?: undefined
+      confirm_details: true
+    })
+  | (PayoutDestinationEdits & { no_minimum: true; min_amount?: undefined; confirm_details: true })
 /**
  * Body of POST /payouts/prepare. A `proof` sends the gateway's proof amount
  * (`PAYOUT_PROOF_AMOUNT`, 1 token unit by default), raised to the destination's
@@ -749,14 +778,23 @@ export interface Health {
  *
  * Amounts are base-unit strings with a `*_formatted` human twin: `reserve_amount` (null =
  * `suggested_reserve`, the refundable balance still inside its refund window, which an
- * `all` payout leaves in the wallet) and `min_amount` (the venue's deposit minimum; null
- * = none).
+ * `all` payout leaves in the wallet) and `min_amount` (the venue's deposit minimum). A
+ * null `min_amount` reads with `no_minimum`: true = the merchant stated the venue has
+ * none; false = never stated (a destination registered before it was asked).
  */
 export type PayoutDestination = components['schemas']['PayoutDestination'] &
   Required<
     Pick<
       components['schemas']['PayoutDestination'],
-      'id' | 'wallet_id' | 'chain_id' | 'token' | 'address' | 'kind' | 'status' | 'created_at'
+      | 'id'
+      | 'wallet_id'
+      | 'chain_id'
+      | 'token'
+      | 'address'
+      | 'kind'
+      | 'status'
+      | 'no_minimum'
+      | 'created_at'
     >
   >
 /**

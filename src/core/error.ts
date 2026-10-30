@@ -258,6 +258,9 @@ const errorHints: Record<string, string> = {
   // Payouts (merchant cash-out): POST /payout_destinations, POST /payouts/*.
   confirmation_required:
     "the merchant must confirm the destination's details (confirm_details: true, the PAYOUT_DETAILS_CONFIRMATION text) — required on create and on any change of min_amount",
+  minimum_required:
+    "the venue's deposit minimum must be stated — min_amount (base units, from its deposit page), or no_minimum: true when the venue has none; it may not be left out or blank",
+  minimum_conflict: 'send either min_amount or no_minimum: true, not both',
   payout_destination_exists:
     'this wallet already has this address for this token and chain — use the existing destination',
   payout_destination_zero_address: 'the destination address is the zero address',
