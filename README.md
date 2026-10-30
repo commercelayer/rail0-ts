@@ -765,6 +765,12 @@ buyer-facing discovery on `client.paymentMethods`.
 
 `chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against, typed `ChainContract`: `address`, `version`, `deployed_at`, nullable for a chain with no deployment. Since 1.2.0 `Blockchain` is an alias of the schema component, so it types `contract` and picks up future fields on regenerate; each chain also carries `settlement`, typed `BlockchainSettlement` — see below) · `tokens.list(chainId?, symbol?, active?)` → `Token[]` (every token by default, retired ones included — each carries `active`; pass `active: true` where only what a new payment can use should be offered) · `health.get()` → `Health`.
 
+**Slugs and public RPCs.** Each chain carries `slug` — a short name shared by its testnet and mainnet (`arc`), unique per `network_type` — and `public_rpc_urls`, keyless RPC endpoints for reading the chain directly, in failover order. `resolveChain(chains, ref)` picks one chain from a `chains.list()` result by slug (case-insensitive) or numeric chain id (a number or a digit string); it throws naming the available slugs when nothing matches, and on a slug that matches more than one chain (a list mixing testnet and mainnet):
+
+```ts
+const arc = resolveChain(await client.chains.list(), 'arc') // or 5042002, or '5042002'
+```
+
 **Measured settlement time.** Every chain carries `settlement: { p50_seconds, p90_seconds,
 sample_size, window_days }` — how long an operation has taken from broadcast
 (`submitted_at`) to confirmation (`confirmed_at`) **on this gateway**, over the confirmed

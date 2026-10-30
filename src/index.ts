@@ -36,7 +36,7 @@ export {
   REVOKE_ALL_STATEMENT,
   WALLET_LINK_STATEMENT,
 } from './resources/auth.js'
-export { ChainsResource } from './resources/chains.js'
+export { ChainsResource, resolveChain } from './resources/chains.js'
 export { DisputesResource } from './resources/disputes.js'
 export { HealthResource } from './resources/health.js'
 export type { PaymentMethodsQuery } from './resources/payment_methods.js'
