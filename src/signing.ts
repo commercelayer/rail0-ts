@@ -2,10 +2,12 @@ import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import type { Address, Bytes32, PaymentConfig, SigningPayload } from './resources/types.js'
 import {
+  type PayoutTxExpectation,
   type SigningPayloadExpectation,
   signerAddress,
   stripHex,
   type TxExpectation,
+  verifyPayoutTransaction,
   verifySigningPayload,
   verifyUnsignedTransaction,
 } from './tx-verify.js'
@@ -675,6 +677,46 @@ export function signTransaction(
   // fails the check must leave no signature behind.
   if (expectation)
     verifyUnsignedTransaction(unsignedTransaction, expectation, signerAddress(privateKey))
+  return signEip1559(unsignedTransaction, privateKey)
+}
+
+/**
+ * Sign a prepared payout's `unsigned_transaction` (an ERC-20 `transfer` on the token
+ * contract) and return the 0x-prefixed raw signed transaction for `payouts.submit`.
+ *
+ * ALWAYS verified first — there is no unchecked form: for a plain transfer the calldata
+ * is the money. `verifyPayoutTransaction` holds the transaction to the payout's decoded
+ * intent (value 0, the payout's chain, `to` = its token, calldata exactly
+ * `transfer(payout.address, payout.amount)`, `from` = this key) and, when given, that
+ * intent to the caller's destination and amount. A mismatch throws
+ * `Error("refusing to sign: …")` and nothing is signed.
+ *
+ * ```ts
+ * const destination = await merchant.payoutDestinations.get(destinationId)
+ * const payout = await merchant.payouts.prepare({ destination_id: destinationId, amount: '25.00' })
+ * const raw = signPayoutTransaction(payout.unsigned_transaction, MERCHANT_KEY, {
+ *   payout, destination, amount: '25.00', decimals: 6,
+ * })
+ * await merchant.payouts.submit(payout.id, { signed_transaction: raw })
+ * ```
+ */
+export function signPayoutTransaction(
+  unsignedTransaction: string | null | undefined,
+  privateKey: `0x${string}` | Uint8Array,
+  expectation: PayoutTxExpectation,
+): `0x${string}` {
+  verifyPayoutTransaction(unsignedTransaction, expectation, signerAddress(privateKey))
+  return signEip1559(unsignedTransaction as string, privateKey)
+}
+
+/**
+ * The EIP-1559 signer shared by signTransaction and signPayoutTransaction. Callers run
+ * their verification BEFORE this; it only refuses an empty recipient on its own.
+ */
+function signEip1559(
+  unsignedTransaction: string,
+  privateKey: `0x${string}` | Uint8Array,
+): `0x${string}` {
   const tx = JSON.parse(unsignedTransaction)
   const int = (v: unknown): Uint8Array => toMinimalBytes(BigInt(String(v ?? 0)))
   // Never an empty recipient, with or without an expectation (rail0-go refuses it too):
@@ -683,7 +725,7 @@ export function signTransaction(
   const toHex = typeof tx.to === 'string' ? tx.to.trim() : ''
   if (!/^0x[0-9a-f]{40}$/i.test(toHex)) {
     throw new Error(
-      `refusing to sign: invalid to address ${JSON.stringify(tx.to ?? null)} — a RAIL0 transaction always has a 20-byte recipient`,
+      `refusing to sign: invalid to address ${JSON.stringify(tx.to ?? null)} — a RAIL0 or payout transaction always has a 20-byte recipient`,
     )
   }
   const to = hexToBytes(toHex)

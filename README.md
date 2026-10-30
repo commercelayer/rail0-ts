@@ -121,6 +121,8 @@ All client-side, over `@noble` (no ethers/viem).
 | `packSignature(sig)` | Turn a `{ v, r, s }` into the `0x` r‖s‖v hex every `signature` field expects |
 | `signTransaction(unsignedJson, key, { payment, operation, amount? })` | Verify, then sign an unsigned EIP-1559 tx from any prepare step → raw hex for submit. The two-argument form signs blindly and is **deprecated** |
 | `verifyUnsignedTransaction(unsignedJson, { payment, operation, amount? }, signer?)` | The pre-sign check on its own (for a signer that is not a local key — a KMS, a hardware wallet) |
+| `signPayoutTransaction(unsignedJson, key, { payout, destination?, amount?, decimals?, maxAmount? })` | Verify, then sign a prepared payout's ERC-20 `transfer` → raw hex for `payouts.submit`. Always verified — there is no blind form (see [Payouts](#clientpayoutdestinations--clientpayouts-merchant-jwt)) |
+| `verifyPayoutTransaction(unsignedJson, { payout, … }, signer?)` | The payout pre-sign check on its own (for a browser wallet, a KMS, a hardware wallet) |
 | `signAuthorize` / `signCharge` | **Deprecated.** They rebuild the digest with the TransferWithAuthorization typehash, but every active deployment (v1.4.0) has the payer sign a ReceiveWithAuthorization, so the gateway answers `422 signer_mismatch`. Use `signPayment` / `signSigningPayload` with an expectation |
 | `signTransferWithAuthorization` / `signReceiveWithAuthorization` | Raw EIP-3009 transfer / receive signers |
 | `buildSiweMessage(params)` | Build the EIP-4361 text for a login or a wallet proof-of-ownership |
@@ -421,7 +423,17 @@ for (const w of methods) for (const h of w.tokens ?? []) {
 Topics (`WebhookTopic`): `payments.created`, `payments.signed`, `payments.authorized`,
 `payments.charged`, `payments.captured`, `payments.voided`, `payments.released`,
 `payments.refunded`, `payments.authorization_expiring`, `payments.expired`,
-`payments.failed`, `payments.disputed`, `payments.dispute_closed`.
+`payments.failed`, `payments.disputed`, `payments.dispute_closed`, and the payout topics
+`payouts.confirmed`, `payouts.failed`, `payout_destinations.verified`.
+
+**Payout topics** carry the same envelope (`id`, `emitted_at`, `topic`) with the subject
+under its own key instead of `payment`/`transaction`: `payouts.confirmed` and
+`payouts.failed` POST `{ id, emitted_at, topic, payout }` (a `Payout`; a failure's reason
+is its `error_code` — `reverted`, `foreign_transfer`, `dropped`, `submission_timeout`,
+`cancelled`), and `payout_destinations.verified` POSTs
+`{ id, emitted_at, topic, payout_destination }`. A payout failed `submission_timeout` or
+`dropped` can be revived by a late hash, so a `payouts.failed` with one of those two codes
+may be followed by `payouts.confirmed` for the same payout.
 
 **`payments.authorization_expiring`** is the advance notice of `payments.expired`: it
 fires **once** per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds before
@@ -514,6 +526,124 @@ const ok =
   verify(request.headers.get(WEBHOOK_SIGNATURE_HEADER)) ||
   verify(request.headers.get(WEBHOOK_SIGNATURE_PREVIOUS_HEADER))
 ```
+
+### `client.payoutDestinations` / `client.payouts` (merchant, JWT)
+
+The on-chain leg of a merchant cash-out: an ERC-20 `transfer` from one of the account's
+wallets to a deposit address at a venue — an exchange, Circle Mint, another wallet. The
+gateway builds the transfer and the merchant's key signs it; it never holds funds, keys or
+fiat, and never talks to the venue.
+
+**1. Register a destination — with the merchant's confirmation.** A destination is bound
+to ONE chain and ONE token: an exchange credits only the network it issued the address
+for. `confirm_details: true` is **required** (422 `confirmation_required` otherwise) and
+is typed as the literal `true`: it records the merchant's statement of the `details_v1`
+text, exported as `PAYOUT_DETAILS_CONFIRMATION.text`:
+
+> I have checked the address, network, token and minimum deposit on the venue's deposit
+> page and confirm they are correct. Funds sent to a wrong address or network, or below
+> the venue's minimum, may be permanently lost and cannot be recovered by rail0.
+
+Show it, and set the flag only once the merchant has made that check — the SDK never sets
+it for you.
+
+```ts
+import { PAYOUT_DETAILS_CONFIRMATION } from '@commercelayer/rail0-sdk'
+
+const destination = await merchant.payoutDestinations.create({
+  wallet_id: walletId,               // the session's own wallet
+  chain_id: 5042002,
+  token: USDC,
+  address: '0x…',                    // issued by the venue FOR THIS CHAIN
+  kind: 'exchange',                  // exchange | circle_mint | self_custody | provider
+  min_amount: '11000000',            // the venue's deposit minimum, base units (optional)
+  confirm_details: true,             // the merchant confirmed PAYOUT_DETAILS_CONFIRMATION.text
+})                                   // → status 'unverified'
+```
+
+**2. Prove it: proof → confirm.** A new destination is `unverified` and may receive the
+proof amount at most (`payout_destination_unverified`). Send the proof — the gateway's
+`PAYOUT_PROOF_AMOUNT` (1 token unit by default), raised to `min_amount` when that is
+higher — and once it is confirmed on-chain AND the venue shows it credited, attest it:
+
+```ts
+await merchant.payouts.prepareAndSubmit(
+  { destination_id: destination.id, purpose: 'proof' },
+  MERCHANT_KEY,
+  { destination, maxAmount: '11000000' },  // cap what the gateway may decide
+)
+// … the proof is `confirmed` and the venue credited it …
+await merchant.payoutDestinations.confirm(destination.id)  // → 'verified', fires payout_destinations.verified
+```
+
+**3. Pay out: prepare → verify → sign → submit.** `amount` is a human decimal or `"all"`
+(the balance minus the refund reserve). The prepared `Payout` carries
+`unsigned_transaction` beside its decoded intent (`chain_id`, `token`, `address`,
+`amount`); the signer holds the transaction to it **before** the key touches it:
+
+```ts
+// One call: prepare, verify, sign, submit.
+await merchant.payouts.prepareAndSubmit(
+  { destination_id: destination.id, amount: '250.00' },
+  MERCHANT_KEY,
+  { destination, decimals: 6 },  // decimals from YOUR records: required to check a typed amount
+)
+
+// Or step by step (or with another signer: verifyPayoutTransaction, then sign elsewhere).
+const payout = await merchant.payouts.prepare({ destination_id: destination.id, amount: '250.00' })
+const raw = signPayoutTransaction(payout.unsigned_transaction, MERCHANT_KEY, {
+  payout, destination, amount: '250.00', decimals: 6,
+})
+await merchant.payouts.submit(payout.id, { signed_transaction: raw })
+
+// Or broadcast from the wallet yourself and report the hash.
+await merchant.payouts.submitByHash(payout.id, { transaction_hash })
+```
+
+**What `signPayoutTransaction` verifies, and why.** For a plain transfer the calldata
+**is** the money, so there is no unchecked form. `verifyPayoutTransaction` refuses
+(`Error("refusing to sign: …")`, nothing signed) unless: `value` is zero; `chain_id` is
+the payout's chain; `from` is your key's address; `to` is an address equal to the payout's
+**token**; and the calldata is **exactly** `transfer(payout.address, payout.amount)` —
+selector `0xa9059cbb`, a left-padded recipient word, the amount word, nothing after. The
+payout's fields come from the same gateway, so the optional checks bind them to **your**
+input: `destination` (your record — chain, token, address, id must match), `amount` with
+`decimals` (the decimal you typed, checked to the unit; `"all"` is the gateway's to
+decide, so cap it with `maxAmount`). `decimals` must come from your own records, not the
+gateway: a reported scale could inflate the amount. `prepareAndSubmit` also refuses a
+payout prepared for another destination or purpose.
+
+**Minimum and reserve.** `min_amount` is the venue's deposit minimum (base units; `null`
+= none): a payout below it is refused at prepare and again at submit with
+`payout_below_minimum` — a deposit under a venue's minimum may never be credited.
+Changing it is `update(id, { min_amount, confirm_details: true })` (the type requires the
+confirmation whenever `min_amount` is present; `''` removes it); raising it above the
+latest proof's amount takes the verification away, so send a new proof at the new
+minimum. `reserve_amount` is what an `"all"` payout leaves in the wallet — `null` means
+`suggested_reserve`, the refundable balance of the wallet's payments still inside their
+refund window, because a refund pulls from the payee wallet.
+
+**Stuck or failed.** One pending payout per destination: a re-prepare replaces it while
+unsigned. Once a signature is stored (`signed: true`, `transaction_hash` set — even if the
+broadcast failed with a 502) it may still be mined, so it is `resend(id)`, never
+re-prepared or cancelled (409 `payout_already_signed`). `cancel(id)` fails an unsigned
+pending payout with `cancelled`. A payout failed `submission_timeout` or `dropped` comes
+back with `submitByHash` and the late or replacement hash.
+
+`payoutDestinations`: `list(params?)` → `PaginatedResponse<PayoutDestination>` (filter
+`wallet_id`, `status`) · `create(params)` · `get(id)` · `update(id, params)` (`label`,
+`reserve_amount`, `min_amount` + `confirm_details`, `active` — `false` disables, any wallet
+of the account may) · `confirm(id)` · `events(id, params?)` → `PaginatedResponse<PayoutEvent>`
+(the destination's audit trail and its payouts', newest first).
+
+`payouts`: `list(params?)` → `PaginatedResponse<Payout>` (filter `destination_id`,
+`wallet_id`, `status` — one or an array, `purpose`, `created_from`/`created_to`; `sort`) ·
+`get(id)` · `events(id, params?)` · `prepare(params)` · `submit(id, { signed_transaction })` ·
+`resend(id)` · `cancel(id)` · `submitByHash(id, { transaction_hash })` ·
+`signAndSubmit(payout, key, check?)` · `prepareAndSubmit(params, key, check?)`.
+
+A deactivated account is read-only here: every payout and destination write is 403
+`account_deactivated`. Writes act for the destination's own wallet (403 `not_your_wallet`).
 
 ### Pagination
 
@@ -634,6 +764,12 @@ buyer-facing discovery on `client.paymentMethods`.
 ### `client.chains` / `client.tokens` / `client.health`
 
 `chains.list(params?)` → `Blockchain[]` (filter by `{ network_type, symbol }`; each chain carries `contract` — the RAIL0 deployment new payments open against, typed `ChainContract`: `address`, `version`, `deployed_at`, nullable for a chain with no deployment. Since 1.2.0 `Blockchain` is an alias of the schema component, so it types `contract` and picks up future fields on regenerate; each chain also carries `settlement`, typed `BlockchainSettlement` — see below) · `tokens.list(chainId?, symbol?, active?)` → `Token[]` (every token by default, retired ones included — each carries `active`; pass `active: true` where only what a new payment can use should be offered) · `health.get()` → `Health`.
+
+**Slugs and public RPCs.** Each chain carries `slug` — a short name shared by its testnet and mainnet (`arc`), unique per `network_type` — and `public_rpc_urls`, keyless RPC endpoints for reading the chain directly, in failover order. `resolveChain(chains, ref)` picks one chain from a `chains.list()` result by slug (case-insensitive) or numeric chain id (a number or a digit string); it throws naming the available slugs when nothing matches, and on a slug that matches more than one chain (a list mixing testnet and mainnet):
+
+```ts
+const arc = resolveChain(await client.chains.list(), 'arc') // or 5042002, or '5042002'
+```
 
 **Measured settlement time.** Every chain carries `settlement: { p50_seconds, p90_seconds,
 sample_size, window_days }` — how long an operation has taken from broadcast
@@ -811,6 +947,8 @@ src/
     wallets.ts    WalletsResource  (CRUD, balances)
     payment_methods.ts  PaymentMethodsResource (public discovery)
     webhooks.ts   WebhooksResource
+    payout_destinations.ts  PayoutDestinationsResource (cash-out addresses)
+    payouts.ts    PayoutsResource (prepare → verify → sign → submit)
     analytics.ts  AnalyticsResource (merchant sales rollups)
     chains.ts     ChainsResource
     tokens.ts     TokensResource
@@ -820,6 +958,7 @@ src/
   amounts.ts      toBaseUnits / formatAmount
   stablecoins.ts  static stablecoin registry
   signing.ts      EIP-3009 / EIP-1559 signing helpers
+  tx-verify.ts    pre-sign verification (payment transactions, authorizations, payout transfers)
   webhook-signature.ts  webhook delivery verification (HMAC + freshness)
   dispute-reasons.ts    dispute-reason dictionary constants (generated from the OpenAPI)
   client.ts       Rail0Client — assembles the resources

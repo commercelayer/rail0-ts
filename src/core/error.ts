@@ -156,7 +156,7 @@ const errorHints: Record<string, string> = {
   wallet_deactivated_by_operator:
     'an operator deactivated this wallet, so only an operator can reactivate it — ask an operator to reactivate it',
   account_deactivated:
-    'this merchant account is deactivated — it can still read, void, release and refund, but not create, authorize, charge or capture; ask an operator to reactivate it',
+    'this merchant account is deactivated — it can still read, void, release and refund, but not create, authorize, charge or capture, and it makes no payout or payout-destination change; ask an operator to reactivate it',
   // last-one guards: login resolves the account FROM a wallet, so an account left with no
   // active wallet could neither act nor add one back; the operator grant has the same floor.
   // Adding a wallet is suspended and a session changes only its own wallet, so the other
@@ -249,6 +249,46 @@ const errorHints: Record<string, string> = {
     'the account already holds the most webhook subscriptions it may have — delete one, or add topics to an existing subscription',
   queue_unavailable:
     "the gateway's job queue could not be reached, so nothing was enqueued — retry in a moment",
+  unknown_chain: "that chain isn't active on this gateway — check GET /blockchains",
+  invalid_amount:
+    "the amount is malformed — a payment's amount is a human decimal the token can express; a payout destination's reserve_amount and min_amount are base units (digits only, below 2^120)",
+  invalid_transaction: 'the signed transaction could not be decoded — send the raw 0x… bytes',
+  invalid_cursor:
+    "a cursor page (after) cannot be combined with page or a sort other than -created_at — drop one, or use the previous page's x-next-cursor",
+  // Payouts (merchant cash-out): POST /payout_destinations, POST /payouts/*.
+  confirmation_required:
+    "the merchant must confirm the destination's details (confirm_details: true, the PAYOUT_DETAILS_CONFIRMATION text) — required on create and on any change of min_amount",
+  payout_destination_exists:
+    'this wallet already has this address for this token and chain — use the existing destination',
+  payout_destination_zero_address: 'the destination address is the zero address',
+  payout_destination_own_wallet:
+    'the destination is the paying wallet itself — use the deposit address from the venue',
+  payout_destination_is_contract:
+    'the destination is a RAIL0 deployment or a token contract — use the deposit address the venue issued for this chain',
+  payout_destination_unverified:
+    'the destination is not verified yet — send the proof transfer (purpose: proof) and confirm it once the venue credits it',
+  payout_destination_disabled: 'the destination is disabled — re-enable it (active: true) first',
+  payout_destination_proof_missing:
+    'there is no confirmed proof transfer yet — prepare and submit one (purpose: proof) and wait for it to confirm',
+  payout_below_minimum:
+    "the amount is below the destination's deposit minimum (min_amount) — the venue would not credit it; send more",
+  insufficient_balance:
+    "the wallet's balance, after the refund reserve, does not cover the transfer — the detail names what is available",
+  payout_limit_reached: 'the wallet has reached its hourly payout limit — wait and try again',
+  payout_already_signed:
+    'a signed transfer is already stored for this payout and may still be mined — resend it (payouts.resend) instead of preparing or cancelling it',
+  payout_not_pending:
+    'the payout is no longer pending — it was already submitted, confirmed or failed',
+  payout_not_signed: 'there is no signed transfer to resend — submit one first',
+  payout_hash_in_use: 'another payout already records this transaction hash',
+  foreign_transfer_hash:
+    "that transaction is not this payout's transfer (sender, token, amount or recipient differ) — report the hash of the transfer itself",
+  // A failed payout's error_code (the settlement's verdict, not a request error).
+  foreign_transfer:
+    "the mined transaction did not carry this payout's ERC-20 Transfer — nothing was paid to the destination by it",
+  dropped:
+    'the transfer was not mined and its nonce was spent by another transaction — if a replacement paid it, report that hash via payouts.submitByHash',
+  cancelled: 'the payout was cancelled before it was signed — prepare a new one',
 }
 
 /**

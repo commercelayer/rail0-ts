@@ -280,7 +280,7 @@ export interface paths {
         head?: never;
         /**
          * Update an account: own profile; an admin may also set active
-         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise). An admin may also change ANY account's name and email (audited as account.update, with the replaced values in detail.previous). The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. The owner or an admin may set the account's payment windows (authorization_ttl, refund_ttl; null = the gateway default): they apply to payments created afterwards, whose expiries are signed, and an operator's change is audited like name and email. Out of bounds, or a pair closer than the contract's one-day gap, is a 422 invalid_payment_windows. An admin cannot deactivate their own account (422 self_deactivate). Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin.
+         * @description The one write on the account row. The owner updates name, email and/or priority_tip (the fee setting of its own transactions); active is an operator field — supplying it requires the operator grant (403 otherwise). An admin may also change ANY account's name and email (audited as account.update, with the replaced values in detail.previous). The grant itself is not writable here: it is granted and revoked on /admin/administrators. Requires an ACTIVE session wallet: deactivation is the revocation primitive, and a revoked key must not be able to redirect the account's contact email. name/email are unique; a taken value is a 409. The owner or an admin may set the account's payment windows (authorization_ttl, refund_ttl; null = the gateway default): they apply to payments created afterwards, whose expiries are signed, and an operator's change is audited like name and email. Out of bounds, or a pair closer than the contract's one-day gap, is a 422 invalid_payment_windows. An admin cannot deactivate their own account (422 self_deactivate). Last-admin guard: deactivating the account holding the last operative grant is refused with 422 last_admin. Exposure guard: deactivating an account that still has money in motion (payments in flight or in escrow, open disputes, pending or submitted payouts — GET /admin/accounts/{id}/exposure) is refused with 409 account_has_open_exposure, whose body carries the summary as `exposure`, unless the request also sends acknowledge_open_exposure: true; the acknowledged deactivation is audited with acknowledged_open_exposure and the counts.
          */
         patch: {
             parameters: {
@@ -300,6 +300,8 @@ export interface paths {
                         email?: string;
                         /** @description Active status (admin only). */
                         active?: boolean;
+                        /** @description With active: false, deactivate even though the account still has open exposure (see GET /admin/accounts/{id}/exposure). Without it such a deactivation is refused with 409 account_has_open_exposure. Changes nothing on its own (it does not count as a field to update). */
+                        acknowledge_open_exposure?: boolean;
                         /** @description Tip the network's suggested priority fee on the merchant's own transactions (default true); false uses the chain's minimum tip (0 on most chains, 25 gwei on Polygon PoS/Amoy). Owner or admin. */
                         priority_tip?: boolean;
                         /**
@@ -352,13 +354,13 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description The name or email is already taken by another account. */
+                /** @description conflict: the name or email is already taken by another account; account_has_open_exposure: active: false on an account with open exposure and no acknowledge_open_exposure: true — the body adds `exposure` (AccountExposure). */
                 409: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Error"];
+                        "application/json": components["schemas"]["Error"] | components["schemas"]["AccountOpenExposureError"];
                     };
                 };
                 /** @description invalid_payment_windows: a window outside its bounds, or a refund window not at least min_refund_window past the authorization window; self_deactivate: an admin deactivating their own account; last_admin: the change would leave zero active admins. */
@@ -1348,7 +1350,7 @@ export interface paths {
         };
         /**
          * This process's chain-config snapshot against the database (admin)
-         * @description What a reload would change, before anyone presses it: per table (blockchains, tokens, contracts) the rows added since the snapshot, removed, and changed with the differing fields as {from, to} — bookkeeping timestamps excluded — plus the snapshot's loaded_at, a stale flag and the pending count. One process, like the reload: a worker's snapshot is not visible from here (#374).
+         * @description What a restart would pick up: per table (blockchains, tokens, contracts) the rows added since the snapshot, removed, and changed with the differing fields as {from, to} — bookkeeping timestamps excluded — plus the snapshot's loaded_at, a stale flag and the pending count. One process (chain config changes only via seeds and a deploy that restarts every process, #374): a worker's snapshot is not visible from here (#374).
          */
         get: operations["adminCatalogDiff"];
         put?: never;
@@ -1391,6 +1393,140 @@ export interface paths {
          * @description The cross-account transaction list, and with `stuck` only the wedged rows: `unbroadcast` (signed, never sent, past two broadcast re-drive cycles of 600 s — the rows behind /admin/health's broadcasts check), `unconfirmed` (broadcast past SUBMITTED_TX_TTL with no indexer confirm — the indexer_intake check) or `any`. Same predicates as the health figures, so count and page agree. Each row carries `redrivable` and its `payment` summary; never signed_transaction. Oldest first; paginated.
          */
         get: operations["listAdminTransactions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/accounts/{id}/exposure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An account's open exposure: what a deactivation would leave in motion (admin)
+         * @description Read before PATCH /accounts/{id} {active: false}, which refuses a non-empty exposure with 409 account_has_open_exposure unless acknowledged. Payee side only (payments whose payee is one of the account's wallets, switched-off wallets included); the account acting as a payer is not counted. in_flight: unsigned or signed, authorization_expiry still ahead (amount); in_escrow: authorized, expired, partially_captured or partially_refunded with capturable_amount > 0 (capturable_amount — captured and charged funds are already in the merchant's wallet, not escrow); disputed: an open dispute (refundable_amount). by_token adds those figures per chain and token, in base units, `count` being the distinct payments. Payouts are counted by status (pending, submitted). `empty` is true when every count is zero.
+         */
+        get: operations["getAdminAccountExposure"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every account's payouts (admin)
+         * @description Read-only, across accounts, newest first (the id breaks a tie). Each row is the whole record minus the signed payload, plus `token_symbol`, `amount_formatted` and `account: {id, name}`. Filters account_id, wallet_id, destination_id (UUIDs), chain_id, status (one or several, comma-separated), purpose, created_from / created_to (inclusive); sort created_at, updated_at, submitted_at, amount (numeric), status; offset pages like GET /payouts.
+         */
+        get: operations["listAdminPayouts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payouts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read any account's payout (admin) */
+        get: operations["getAdminPayout"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payouts/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Any account's payout audit trail (admin)
+         * @description Newest first, offset pages.
+         */
+        get: operations["listAdminPayoutEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payout_destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every account's payout destinations (admin)
+         * @description Read-only, across accounts, newest first. Each row is the whole record plus `token_symbol` and `account: {id, name}` (not the suggested reserve: one aggregate query per row). Filters account_id, wallet_id (UUIDs), chain_id, status; sort created_at, updated_at, label, status; offset pages.
+         */
+        get: operations["listAdminPayoutDestinations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payout_destinations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read any account's payout destination (admin) */
+        get: operations["getAdminPayoutDestination"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payout_destinations/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Any account's payout destination audit trail (admin)
+         * @description The destination's events and those of its payouts, newest first, offset pages.
+         */
+        get: operations["listAdminPayoutDestinationEvents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1735,6 +1871,242 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payout_destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the account's payout destinations */
+        get: operations["listPayoutDestinations"];
+        put?: never;
+        /** Register a payout destination for the session's wallet */
+        post: operations["createPayoutDestination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payout_destinations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a payout destination */
+        get: operations["getPayoutDestination"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update a payout destination (label, reserve, minimum, enabled)
+         * @description `active: false` disables the destination. Its pending payout, if any, is settled first: an unsigned one is marked `failed` with `cancelled`; a signed one (its transaction may still be mined) refuses the switch-off with 409 `payout_already_signed` — resend it or wait for it to settle, then disable. `active: true` restores the verification it had. Only the destination's own wallet may edit or re-enable it; any wallet of the account may disable it (`active: false` alone). A deactivated account is read-only: every change, disabling included, is 403 `account_deactivated`. Every change is recorded in the audit trail (GET /payout_destinations/{id}/events).
+         */
+        patch: operations["updatePayoutDestination"];
+        trace?: never;
+    };
+    "/payout_destinations/{id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm the proof transfer was credited: marks the destination verified
+         * @description The merchant's attestation that the venue credited the proof transfer, recorded with who and when. Requires the proof to be `confirmed` on-chain first.
+         */
+        post: operations["confirmPayoutDestination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payout_destinations/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A payout destination's audit trail, newest first
+         * @description The destination's own events AND those of every payout made to it (see PayoutEvent), newest first. Same visibility as GET /payout_destinations/{id}: every wallet of the account. Offset pages like GET /payouts (`page`, `per_page` default 25 capped at 100; x-total-count / x-total-pages / x-page / x-per-page and a Link header).
+         */
+        get: operations["listPayoutDestinationEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the account's payouts
+         * @description The payout history, paged exactly like GET /payments: offset pages (`page`, `per_page` default 25 capped at 100, with x-total-count / x-total-pages / x-page / x-per-page and a Link header) or cursor pages (`after`, x-next-cursor, no total). Newest first by default. `status` takes one value, a comma-separated list or the repeated `status[]=` form; `created_from` / `created_to` are inclusive. A `destination_id` / `wallet_id` that is not a UUID answers 404.
+         */
+        get: operations["listPayouts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payouts/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare a transfer to a payout destination
+         * @description Builds the unsigned ERC-20 transfer (one balance read, one fee/nonce read). `proof` sends PAYOUT_PROOF_AMOUNT, raised to the destination's `min_amount` when that is higher; `payout` sends `amount` — a human decimal, or `all` for the balance minus the refund reserve. An unverified destination may receive the proof amount at most. A payout below the destination's `min_amount` is refused with `payout_below_minimum` (for `all`: when what is available after the reserve is below it, but nothing available at all is `insufficient_balance`). One pending row per destination: a re-prepare replaces it while it is unsigned. Once a signed transaction is stored for it (see submit), a re-prepare is refused with 409 `payout_already_signed`: that transaction may still be mined, so it is resent (POST /payouts/{id}/resend), never replaced.
+         */
+        post: operations["preparePayout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payouts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a payout */
+        get: operations["getPayout"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payouts/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A payout's audit trail, newest first
+         * @description Every event of this payout (see PayoutEvent), newest first, paged like GET /payouts (offset pages).
+         */
+        get: operations["listPayoutEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payouts/{id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit the signed transfer; the gateway broadcasts it
+         * @description The signed payload must be signed by the wallet and match the prepared transaction (target, calldata, value, chain). The signature and its hash (keccak of the raw bytes, computed by the gateway) are stored BEFORE the broadcast, so from here on `signed` is true and `transaction_hash` is set, whatever the node answers. Broadcast is synchronous. A node answering `already known`, or `nonce too low` while a node has this very hash, counts as broadcast (202). Any other refusal leaves the row `pending` with its signature and hash, and the 502 carries the node's reason: retry with POST /payouts/{id}/resend (or submit the same bytes again). A signed row is also settled by Recovery from its hash if it is mined anyway. Submitting DIFFERENT bytes for a row that already holds a signature is refused (409).
+         */
+        post: operations["submitPayout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payouts/{id}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-broadcast the stored signed transfer
+         * @description No body. Re-sends the signed transaction stored by a submit whose broadcast was refused or went unanswered: the same bytes, so the same nonce and hash — it can be mined once at most. Same rules as submit's broadcast: `already known`, or `nonce too low` while a node has this hash, count as broadcast; any other refusal is a 502 with the node's reason and the row stays `pending`.
+         */
+        post: operations["resendPayout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payouts/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel an unsigned pending payout
+         * @description No body. A `pending` payout the wallet has not signed becomes `failed` with `error_code` `cancelled` and fires `payouts.failed`; the destination is free for a new prepare. A signed one is refused: its transaction may still be mined. Resend it and let it settle, or replace it from the wallet with any transaction of the same nonce (Recovery then fails it `dropped`).
+         */
+        post: operations["cancelPayout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payouts/{id}/submitted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record a wallet-broadcast transfer by hash
+         * @description For a wallet that signs and sends in one step. A hash a node already has must be THIS transfer: sent by the wallet, to the token, moving this amount to this destination. One no node has seen yet is accepted; Recovery settles it from the receipt and confirms it only if the receipt carries this ERC-20 Transfer (else `failed` with `foreign_transfer`). For a payout whose signed transaction the gateway already stores, only that transaction's hash is accepted. A LATE hash is accepted on a payout that failed `submission_timeout` or `dropped` (a sped-up or replaced transaction, or the wallet's own broadcast surfacing after the TTL): same claim check and the same `payout_hash_in_use` rule; the payout goes back to `submitted` under the reported hash (its stored signature, `sender` and failure fields are cleared) and Recovery settles it from the receipt.
+         */
+        post: operations["reportPayout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1779,6 +2151,70 @@ export interface components {
             /** @enum {string} */
             code?: "rpc_unavailable" | "rpc_error" | "timeout" | "error";
             message?: string;
+        };
+        /** @description What an account still has in motion (GET /admin/accounts/{id}/exposure, and `exposure` on a 409 account_has_open_exposure). */
+        AccountExposure: {
+            payments: {
+                /**
+                 * @description Created or signed, not yet on chain, authorization window still open.
+                 * @example 1
+                 */
+                in_flight: number;
+                /**
+                 * @description Buyer funds held by the RAIL0 contract (capturable_amount > 0).
+                 * @example 2
+                 */
+                in_escrow: number;
+                /**
+                 * @description Open disputes.
+                 * @example 0
+                 */
+                disputed: number;
+                by_token: {
+                    /** @example 5042002 */
+                    chain_id: number | null;
+                    /**
+                     * @description Token address, lowercase.
+                     * @example 0x3600000000000000000000000000000000000000
+                     */
+                    token: string;
+                    /**
+                     * @description null when the catalogue no longer knows the token.
+                     * @example USDC
+                     */
+                    symbol: string | null;
+                    /**
+                     * @description Distinct payments contributing.
+                     * @example 3
+                     */
+                    count: number;
+                    /**
+                     * @description Base units: in-flight amounts + escrow + disputed refundable balances.
+                     * @example 125500000
+                     */
+                    amount: string;
+                    /**
+                     * @description Human decimals; the base units when the token is unknown.
+                     * @example 125.5
+                     */
+                    amount_formatted: string;
+                }[];
+            };
+            payouts: {
+                /** @example 0 */
+                pending: number;
+                /** @example 1 */
+                submitted: number;
+            };
+            /**
+             * @description true when every count is zero.
+             * @example false
+             */
+            empty: boolean;
+        };
+        /** @description The 409 account_has_open_exposure: the error envelope plus the exposure summary. */
+        AccountOpenExposureError: components["schemas"]["Error"] & {
+            exposure: components["schemas"]["AccountExposure"];
         };
         /** @description The error envelope: exactly code (stable, the only field to branch on), title (short label) and detail (a sentence a UI can print verbatim). The legacy status/message/error aliases were removed in #252. */
         Error: {
@@ -2044,9 +2480,16 @@ export interface components {
         Blockchain: {
             chain_id?: number;
             name?: string;
+            /**
+             * @description The chain's short name, the same for its testnet and its mainnet (`arc` is Arc Testnet on a testnet gateway, Arc on production): a gateway serves one network class, so a client may name the chain by slug instead of chain_id. Lowercase, unique per network class.
+             * @example arc
+             */
+            slug: string;
             native_symbol?: string;
             network_type?: string;
             explorer_url?: string;
+            /** @description Public, keyless RPC endpoints published for clients that read the chain directly (a balance, a receipt), in failover order: try them in turn. Not necessarily the endpoints the gateway itself uses. */
+            public_rpc_urls: string[];
             /** @description Confirmations this gateway waits for before treating a transaction as settled. The FALLBACK rule: where the chain serves a finality tag (see finality_tag) that tag governs instead, so a client showing this number on such a chain is describing a rule that is not in force. */
             required_confirmations?: number;
             /** @description The block tag the chain calls settled (`safe`, `finalized`), when it serves one — and what the gateway actually gates on. Null where the chain serves none, in which case required_confirmations is counted. */
@@ -2336,10 +2779,10 @@ export interface components {
             updated_at?: string;
         };
         /**
-         * @description Payment event a subscription can receive. Every delivery POSTs the same JSON body — `{id, emitted_at, topic, payment: {id, rail0_id, status, mode, amount, payer, payee, token, chain_id, capturable_amount, authorization_expiry, last_error_code, last_error_message, metadata, reference, reference_origin}, transaction}` — with `transaction` null for events that involve none (`payments.created`, `payments.signed`, `payments.authorization_expiring`, `payments.expired`). The payment fields are read at delivery time. `payments.authorization_expiring` is the advance notice of `payments.expired`: sent once per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds (default 86400) before `authorization_expiry`, for a payment that is still capturable (`authorized`, `partially_captured` or `partially_refunded`) with `capturable_amount` above zero. A payment whose authorization window is shorter than the notice is warned once, as soon as it qualifies. The time left is `authorization_expiry` minus `emitted_at`; capture before then or the escrow returns to the payer via release. `payments.expired` follows if the authorization lapses uncaptured.
+         * @description Payment event a subscription can receive. Every delivery POSTs the same JSON body — `{id, emitted_at, topic, payment: {id, rail0_id, status, mode, amount, payer, payee, token, chain_id, capturable_amount, authorization_expiry, last_error_code, last_error_message, metadata, reference, reference_origin}, transaction}` — with `transaction` null for events that involve none (`payments.created`, `payments.signed`, `payments.authorization_expiring`, `payments.expired`). The payment fields are read at delivery time. `payments.authorization_expiring` is the advance notice of `payments.expired`: sent once per payment, `AUTHORIZATION_EXPIRING_NOTICE` seconds (default 86400) before `authorization_expiry`, for a payment that is still capturable (`authorized`, `partially_captured` or `partially_refunded`) with `capturable_amount` above zero. A payment whose authorization window is shorter than the notice is warned once, as soon as it qualifies. The time left is `authorization_expiry` minus `emitted_at`; capture before then or the escrow returns to the payer via release. `payments.expired` follows if the authorization lapses uncaptured. The payout topics carry the same envelope (`id`, `emitted_at`, `topic`) with the subject under its own key instead of `payment`/`transaction`: `payouts.confirmed` and `payouts.failed` POST `{id, emitted_at, topic, payout}` (`payout` = the Payout schema, as GET /payouts/{id} returns it; a failure's reason is its `error_code`: `reverted`, `foreign_transfer`, `dropped`, `submission_timeout`, `cancelled`), sent when Recovery settles a payout or when it is cancelled (POST /payouts/{id}/cancel, or disabling its destination); `payout_destinations.verified` POSTs `{id, emitted_at, topic, payout_destination}` (the PayoutDestination schema) when POST /payout_destinations/{id}/confirm verifies it. A payout failed `submission_timeout` or `dropped` and later revived by a late hash can be followed by `payouts.confirmed`. Like payment events, nothing is sent once the wallet or the account is deactivated.
          * @enum {string}
          */
-        WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.authorization_expiring" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed";
+        WebhookTopic: "payments.created" | "payments.signed" | "payments.authorized" | "payments.charged" | "payments.captured" | "payments.voided" | "payments.released" | "payments.refunded" | "payments.authorization_expiring" | "payments.expired" | "payments.failed" | "payments.disputed" | "payments.dispute_closed" | "payouts.confirmed" | "payouts.failed" | "payout_destinations.verified";
         /** @description The account's own profile as the holder reads it (GET) and as a PATCH returns it — id, name, email, priority_tip, payment windows, timestamps. Deliberately no admin/role field: the operator grant lives in a separate table, so a standard account's profile carries no trace of that axis. An ADMIN reading any account gets the whole record plus `admin` instead, which is a different shape and not this one. */
         Account: {
             /** Format: uuid */
@@ -2730,8 +3173,21 @@ export interface components {
             id?: string;
             /** Format: uuid */
             webhook_id?: string;
-            /** Format: uuid */
-            payment_id?: string;
+            /**
+             * Format: uuid
+             * @description The payment a payments.* delivery is about. Exactly one of payment_id, payout_id and payout_destination_id is set.
+             */
+            payment_id?: string | null;
+            /**
+             * Format: uuid
+             * @description The payout a payouts.* delivery is about.
+             */
+            payout_id?: string | null;
+            /**
+             * Format: uuid
+             * @description The destination a payout_destinations.verified delivery is about.
+             */
+            payout_destination_id?: string | null;
             topic?: string;
             callback_url?: string;
             response_code?: string | null;
@@ -2757,6 +3213,144 @@ export interface components {
             chain_id?: number;
             /** @description Address (lowercase) of the RAIL0 deployment the payment is bound to, archived versions included. The sweeper accepts a receipt's event only when this contract emitted it. */
             contract_address?: string;
+        };
+        /** @description One entry of the payout audit trail, written in the same transaction as the change it records. Append-only. */
+        PayoutEvent: {
+            /** Format: uuid */
+            id?: string;
+            /** @enum {string} */
+            action?: "destination.created" | "destination.verified" | "destination.disabled" | "destination.enabled" | "destination.label_changed" | "destination.reserve_changed" | "destination.min_amount_changed" | "payout.prepared" | "payout.replaced" | "payout.signed" | "payout.hash_reported" | "payout.resent" | "payout.cancelled" | "payout.confirmed" | "payout.failed";
+            /** @description Who did it: the lowercase 0x address of the session wallet; `system` for the gateway's own settlement (Recovery); `operator:<administrator id>` reserved for an operator (none today). */
+            actor?: string;
+            /** @description `{"before": {…}, "after": {…}}` of the fields the event changed, either side optional. Amounts in base units. Never a signature or a payload. `destination.created` and `destination.min_amount_changed` also carry `confirmed_details`: `{"version": "details_v1", "by": <session address>, "at": <ISO 8601 UTC>}`, the merchant's attestation that they checked the details at the venue. */
+            changes?: Record<string, never> | null;
+            /**
+             * Format: uuid
+             * @description The destination, also on every payout event.
+             */
+            destination_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Null for a destination event, and once Retention purged the payout (a never-signed prepare).
+             */
+            payout_id?: string | null;
+            /**
+             * Format: uuid
+             * @description The destination's / payout's wallet (not necessarily the actor's).
+             */
+            wallet_id?: string;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        PayoutEventOperator: components["schemas"]["PayoutEvent"] & {
+            /** Format: uuid */
+            account_id?: string;
+        };
+        /** @description An account named and nothing more, embedded where an operator listing must say whose row each is. */
+        AccountSummary: {
+            /** Format: uuid */
+            id?: string;
+            name?: string;
+        };
+        PayoutOperator: components["schemas"]["Payout"] & {
+            /** Format: uuid */
+            account_id?: string;
+            error_reason?: string | null;
+            account?: components["schemas"]["AccountSummary"];
+        };
+        PayoutDestinationOperator: components["schemas"]["PayoutDestination"] & {
+            /** Format: uuid */
+            account_id?: string;
+            /** @description The attesting session's address. */
+            verified_by?: string | null;
+            /** @description The session address that registered it. */
+            created_by?: string;
+            account?: components["schemas"]["AccountSummary"];
+        };
+        PayoutDestination: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            wallet_id?: string;
+            chain_id?: number;
+            /** @description ERC-20 address on that chain, lowercased. */
+            token?: string;
+            token_symbol?: string | null;
+            /** @description The deposit address, lowercased. */
+            address?: string;
+            label?: string | null;
+            /** @enum {string} */
+            kind?: "exchange" | "circle_mint" | "self_custody" | "provider";
+            /** @enum {string} */
+            status?: "unverified" | "verified" | "disabled";
+            /** @description Whether the address held code on this chain when registered (eth_getCode, best effort). An EOA and an undeployed contract look the same. */
+            has_code?: boolean | null;
+            /** @description Base units kept in the wallet on a full-balance payout; null = the suggestion. */
+            reserve_amount?: string | null;
+            /** @description `reserve_amount` in human decimals (the token's decimals); null while the suggestion applies, or when the token left the catalog. */
+            reserve_amount_formatted?: string | null;
+            /** @description Base units: the refundable balance of the wallet's payments in this token still inside their refund window. */
+            suggested_reserve?: string;
+            /** @description `suggested_reserve` in human decimals; null when the token left the catalog. */
+            suggested_reserve_formatted?: string | null;
+            /** @description The venue's deposit minimum, base units; null = no minimum. A payout below it is refused (`payout_below_minimum`); the proof transfer is raised to it. */
+            min_amount?: string | null;
+            /** @description `min_amount` in human decimals (the token's decimals); null when there is no minimum, or when the token left the catalog. */
+            min_amount_formatted?: string | null;
+            /** Format: uuid */
+            proof_payout_id?: string | null;
+            /** Format: date-time */
+            verified_at?: string | null;
+            /** Format: date-time */
+            disabled_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        Payout: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            destination_id?: string;
+            /** Format: uuid */
+            wallet_id?: string;
+            chain_id?: number;
+            token?: string;
+            token_symbol?: string | null;
+            /** @description The recipient. */
+            address?: string;
+            /** @description Base units. */
+            amount?: string;
+            /** @description Human decimals. */
+            amount_formatted?: string;
+            /** @enum {string} */
+            purpose?: "proof" | "payout";
+            /** @enum {string} */
+            status?: "pending" | "submitted" | "confirmed" | "failed";
+            /** @description JSON of the EIP-1559 transaction to sign (`to` = the token, `data` = transfer(address,uint256)). Check it against the decoded fields beside it before signing. */
+            unsigned_transaction?: string | null;
+            /** @description Whether the gateway stores the wallet's signed transaction (the payload itself is never exposed). A `pending` payout with `signed: true` already has its `transaction_hash` and may be in a mempool: resend it (POST /payouts/{id}/resend); it cannot be re-prepared. */
+            signed?: boolean;
+            /** @description Keccak of the signed transaction, stored with it on submit (so a signed `pending` row has it too), or the hash the wallet reported. */
+            transaction_hash?: string | null;
+            sender?: string | null;
+            block_number?: number | null;
+            gas_used?: string | null;
+            /** @description When failed: `reverted` (mined, status 0), `foreign_transfer` (mined, but the receipt has no Transfer of this amount of this token from the wallet to this destination), `dropped` (not mined, and the wallet's confirmed nonce has passed the signed transaction's), `submission_timeout` (a reported hash no node has ever known, past SUBMITTED_TX_TTL), `cancelled` (unsigned, cancelled by the merchant with POST /payouts/{id}/cancel or by disabling its destination). `submission_timeout` and `dropped` are not final: POST /payouts/{id}/submitted with a late hash puts the payout back to `submitted`. */
+            error_code?: string | null;
+            error_title?: string | null;
+            error_detail?: string | null;
+            /** Format: date-time */
+            submitted_at?: string | null;
+            /** Format: date-time */
+            confirmed_at?: string | null;
+            /** Format: date-time */
+            failed_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
         /**
          * @description Reason a payer may open a dispute with (POST /payments/{id}/dispute/prepare). On-chain the reason is a bytes32, derived from the code as keccak256("rail0.dispute.<code>") (see `x-enum-bytes32`).
@@ -5509,6 +6103,231 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    getAdminAccountExposure: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountExposure"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAdminPayouts: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only this account's payouts. */
+                account_id?: string;
+                /** @description Only this wallet's payouts. */
+                wallet_id?: string;
+                /** @description Only payouts to this destination. */
+                destination_id?: string;
+                /** @description Only payouts on this chain (EVM chain id). */
+                chain_id?: number;
+                /** @description Status(es): one value, a comma-separated list or the repeated `status[]=` form. */
+                status?: ("pending" | "submitted" | "confirmed" | "failed")[];
+                purpose?: "proof" | "payout";
+                /** @description Only payouts created at/after this time (ISO-8601). */
+                created_from?: string;
+                /** @description Only payouts created at/before this time (ISO-8601). */
+                created_to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The payouts (Full entity). */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutOperator"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAdminPayout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutOperator"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAdminPayoutEvents: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first. */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutEventOperator"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAdminPayoutDestinations: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only this account's destinations. */
+                account_id?: string;
+                /** @description Only this wallet's destinations. */
+                wallet_id?: string;
+                /** @description Only destinations on this chain (EVM chain id). */
+                chain_id?: number;
+                status?: "unverified" | "verified" | "disabled";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The destinations (Full entity). */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutDestinationOperator"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAdminPayoutDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutDestinationOperator"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAdminPayoutDestinationEvents: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first. */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutEventOperator"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listAdminEventCallbacks: {
         parameters: {
             query?: {
@@ -6203,6 +7022,713 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listPayoutDestinations: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                /** @description Restrict to one wallet (uuid). */
+                wallet_id?: string;
+                status?: "unverified" | "verified" | "disabled";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's destinations (x-total-count / x-total-pages headers). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutDestination"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createPayoutDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The wallet (uuid or address) that will sign transfers to it; must be the session's own. */
+                    wallet_id: string;
+                    /** @description The chain the deposit address was issued for. */
+                    chain_id: number;
+                    /** @description The token's address on that chain. */
+                    token: string;
+                    /** @description The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
+                    address: string;
+                    label?: string;
+                    /**
+                     * @default exchange
+                     * @enum {string}
+                     */
+                    kind?: "exchange" | "circle_mint" | "self_custody" | "provider";
+                    /** @description Base units to keep in the wallet on a full-balance payout (digits only, below 2^120; 422 `invalid_amount` otherwise); omit for the suggestion. */
+                    reserve_amount?: string;
+                    /** @description The venue's deposit minimum in base units (digits only, below 2^120; 422 `invalid_amount` otherwise); omit for none. A payout below it is refused (`payout_below_minimum`) and the proof transfer is raised to it. */
+                    min_amount?: string;
+                    /** @description Must be `true` (else 422 `confirmation_required`): the merchant confirms the text of version `details_v1` — "I have checked the address, network, token and minimum deposit on the venue's deposit page and confirm they are correct. Funds sent to a wrong address or network, or below the venue's minimum, may be permanently lost and cannot be recovered by rail0." Recorded in the `destination.created` event as `changes.confirmed_details` {version, by, at}. */
+                    confirm_details: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Registered, `unverified`. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutDestination"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_your_wallet`: the wallet is not the session's; `account_deactivated`; `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: the wallet is not in this account. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_destination_exists`: this wallet already has this address for this token and chain. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unknown_chain`, `unknown_token`, `payout_destination_zero_address`, `payout_destination_own_wallet`, `payout_destination_is_contract` (any RAIL0 deployment on the chain, archived included, or any catalogued token there), `invalid_amount` (`reserve_amount` or `min_amount` is not base units below 2^120), `confirmation_required` (`confirm_details` is not `true`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getPayoutDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutDestination"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updatePayoutDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    label?: string;
+                    /** @description Base units (digits only, below 2^120; 422 `invalid_amount` otherwise); an empty string restores the suggestion. */
+                    reserve_amount?: string;
+                    /** @description The venue's deposit minimum, base units (digits only, below 2^120; 422 `invalid_amount` otherwise); an empty string removes it. Changing it requires `confirm_details: true`. Raising it above the amount of the destination's latest proof takes its verification away (`status` back to `unverified`, `verified_at` null; a disabled one re-enables unverified): the merchant proves the address again with a new proof, prepared at the new minimum. The change is recorded in `destination.min_amount_changed`, with `status` and `verified_by` beside `min_amount`. */
+                    min_amount?: string;
+                    /** @description Required `true` when the request CHANGES `min_amount` (the same value again needs nothing; label, reserve and active never do): the merchant confirms the `details_v1` text (see POST /payout_destinations). Recorded in the `destination.min_amount_changed` event as `changes.confirmed_details` {version, by, at}. */
+                    confirm_details?: boolean;
+                    /** @description false disables it, true re-enables it (a verified destination stays verified). */
+                    active?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutDestination"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_your_wallet`: an edit (label, reserve, minimum, re-enable) by another wallet than the destination's — any wallet of the account may only disable; `account_deactivated`: any change on a deactivated account, disabling included (it is read-only); `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_already_signed`: disabling is refused while a signed payout to this destination is pending. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `invalid_amount`: `reserve_amount` or `min_amount` is not base units below 2^120; `confirmation_required`: the request changes `min_amount` without `confirm_details: true` (nothing is written). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    confirmPayoutDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Now `verified`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutDestination"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_your_wallet`; `account_deactivated`; `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_destination_proof_missing` (no confirmed proof yet), `payout_destination_disabled`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listPayoutDestinationEvents: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first. */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutEvent"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listPayouts: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Cursor paging: the `x-next-cursor` (or the Link `next`'s `after`) of the previous page. Walks the collection by `-created_at` without a total count, at a constant cost per page; `page` and any `sort` other than `-created_at` are rejected with 422 `invalid_cursor` beside it. The last page carries no `x-next-cursor` and no `next` link. */
+                after?: string;
+                /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
+                sort?: components["parameters"]["Sort"];
+                destination_id?: string;
+                wallet_id?: string;
+                /** @description Status(es): one value, a comma-separated list or the repeated `status[]=` form; matches any of them. */
+                status?: ("pending" | "submitted" | "confirmed" | "failed")[];
+                purpose?: "proof" | "payout";
+                /** @description Only payouts created at/after this time (ISO-8601). */
+                created_from?: string;
+                /** @description Only payouts created at/before this time (ISO-8601). */
+                created_to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first by default. */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Payout"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    preparePayout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    destination_id: string;
+                    /**
+                     * @default payout
+                     * @enum {string}
+                     */
+                    purpose?: "proof" | "payout";
+                    /** @description Human decimals, or `all`. Required for a payout. */
+                    amount?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The destination's pending payout, re-prepared. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Payout"];
+                };
+            };
+            /** @description A new pending payout; `unsigned_transaction` is the payload to sign. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Payout"];
+                };
+            };
+            /** @description `missing_param`: amount. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_your_wallet`: not the destination's own wallet; `account_deactivated`: the account is deactivated, and a deactivated account writes no payouts (see the Payouts section); `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_already_signed`: the destination's pending payout holds a signed transaction; resend it or let it settle. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_destination_disabled`, `payout_destination_unverified`, `payout_below_minimum` (the detail names the minimum, and for `all` what is available), `insufficient_balance` (names what is available after the reserve; also a proof above the balance), `payout_limit_reached`, `unknown_chain`, `unknown_token`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The chain could not be read (`rpc_unavailable`, …). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getPayout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Payout"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listPayoutEvents: {
+        parameters: {
+            query?: {
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Items per page (capped at 100). */
+                per_page?: components["parameters"]["PerPage"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first. */
+            200: {
+                headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutEvent"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    submitPayout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Signed raw transaction (0x…). */
+                    signed_transaction: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Broadcast; now `submitted` with its hash. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Payout"];
+                };
+            };
+            /** @description `invalid_transaction`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `forbidden`: not signed by the wallet; `not_your_wallet`: not the destination's own wallet; `account_deactivated`: the account is deactivated, and a deactivated account writes no payouts (see the Payouts section); `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_already_signed`: another signed transaction is already stored for this payout; `payout_hash_in_use`: another payout records this transaction's hash. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_not_pending`, `transaction_mismatch` (also when the payout was re-prepared meanwhile), `payout_destination_disabled`; `payout_below_minimum`: the destination's `min_amount` was raised above this payout after it was prepared; `payout_destination_unverified`: the destination lost its verification after prepare (a minimum raised above its proof). These last two store nothing: the payout stays `pending` and unsigned — prepare it again, or cancel it. A resend of bytes already stored is not judged again. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The node refused the broadcast (`insufficient_gas_funds`, `nonce_too_low`, `rpc_unavailable`, …). The row is still `pending`, with its signature and `transaction_hash`: resend it. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resendPayout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Broadcast; now `submitted` with its hash. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Payout"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_your_wallet`: not the destination's own wallet; `account_deactivated`: the account is deactivated, and a deactivated account writes no payouts (see the Payouts section); `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_not_pending`, `payout_not_signed` (nothing stored to resend: submit first), `payout_destination_disabled`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The node refused the broadcast (`insufficient_gas_funds`, `nonce_too_low`, `rpc_unavailable`, …). The row is still `pending`. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelPayout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Now `failed` with `cancelled`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Payout"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_your_wallet`: not the destination's own wallet; `account_deactivated`: the account is deactivated, and a deactivated account writes no payouts (see the Payouts section); `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_already_signed`: the payout holds a signed transaction (resend it, or reuse its nonce from the wallet). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_not_pending`: already submitted or settled. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reportPayout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    transaction_hash: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Now `submitted`. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Payout"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_your_wallet`: not the destination's own wallet; `account_deactivated`: the account is deactivated, and a deactivated account writes no payouts (see the Payouts section); `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_already_signed`: a different signed transaction is stored for this payout; `payout_hash_in_use`: another payout records this hash. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_not_pending` (settled, or failed for a reason other than `submission_timeout` / `dropped`), `foreign_transfer_hash`, `payout_destination_disabled`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
 }

@@ -95,6 +95,14 @@ export type HealthStatus = 'ok' | 'degraded'
  * before `authorization_expiry`, while the payment is still capturable with a
  * `capturable_amount` above zero. Time left is `payment.authorization_expiry` minus the
  * event's `emitted_at`; capture before then, or the escrow can only go back via release.
+ *
+ * The payout topics carry the same envelope (`id`, `emitted_at`, `topic`) with the
+ * subject under its own key instead of `payment`/`transaction`: `payouts.confirmed` and
+ * `payouts.failed` POST `{ id, emitted_at, topic, payout }` (a `Payout`, its failure
+ * reason in `error_code`), and `payout_destinations.verified` POSTs
+ * `{ id, emitted_at, topic, payout_destination }` (a `PayoutDestination`). A payout failed
+ * `submission_timeout` or `dropped` can be revived by a late hash, so a `payouts.failed`
+ * with one of those two codes may be followed by `payouts.confirmed` for the same payout.
  */
 export type WebhookTopic =
   | 'payments.created'
@@ -110,6 +118,27 @@ export type WebhookTopic =
   | 'payments.failed'
   | 'payments.disputed'
   | 'payments.dispute_closed'
+  | 'payouts.confirmed'
+  | 'payouts.failed'
+  | 'payout_destinations.verified'
+/** What a payout destination is: the venue its deposit address belongs to. */
+export type PayoutDestinationKind = 'exchange' | 'circle_mint' | 'self_custody' | 'provider'
+/**
+ * `unverified` (born so; may receive the proof amount at most), `verified` (the merchant
+ * attested the venue credited the proof), `disabled` (switched off; `active: true`
+ * restores the verification it had).
+ */
+export type PayoutDestinationStatus = 'unverified' | 'verified' | 'disabled'
+/** `proof`: the small transfer that verifies a destination. `payout`: a cash-out. */
+export type PayoutPurpose = 'proof' | 'payout'
+/**
+ * `pending` (prepared; may already be signed — see `Payout.signed`), `submitted`
+ * (broadcast or reported by hash), `confirmed` (the receipt carries this exact ERC-20
+ * Transfer), `failed` (`error_code` says why).
+ */
+export type PayoutStatus = 'pending' | 'submitted' | 'confirmed' | 'failed'
+/** What a payout audit event records, e.g. `destination.min_amount_changed`, `payout.signed`. */
+export type PayoutEventAction = NonNullable<components['schemas']['PayoutEvent']['action']>
 
 // ── Signing types (not named in the spec; hand-authored, as in rail0-go) ──
 export interface EIP712Domain {
@@ -294,6 +323,76 @@ export interface WebhookTestResult {
   error_reason: string | null
   duration_ms: number
 }
+/**
+ * Body of POST /payout_destinations: a deposit address at a venue, for the session's own
+ * wallet, bound to ONE chain and ONE token.
+ *
+ * `confirm_details` is REQUIRED and typed as the literal `true`: it records the merchant's
+ * statement of the `details_v1` text (`PAYOUT_DETAILS_CONFIRMATION.text`) — "I have checked
+ * the address, network, token and minimum deposit on the venue's deposit page and confirm
+ * they are correct. Funds sent to a wrong address or network, or below the venue's
+ * minimum, may be permanently lost and cannot be recovered by rail0." The SDK never sends
+ * it for you: set it only once the merchant has made that check (422
+ * `confirmation_required` otherwise).
+ */
+export interface CreatePayoutDestinationRequest {
+  /** The wallet (uuid or address) that will sign transfers to it; must be the session's own. */
+  wallet_id: string
+  /** The chain the deposit address was issued for. */
+  chain_id: number
+  /** The token's address on that chain. */
+  token: Address
+  /** The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
+  address: Address
+  label?: string
+  /** Defaults to `exchange`. */
+  kind?: PayoutDestinationKind
+  /**
+   * Base units to keep in the wallet on an `all` payout (digits only, below 2^120; 422
+   * `invalid_amount` otherwise). Omit for the suggestion (`suggested_reserve`).
+   */
+  reserve_amount?: Uint256String
+  /**
+   * The venue's deposit minimum in base units (digits only, below 2^120); omit for none.
+   * A payout below it is refused (`payout_below_minimum`) and the proof is raised to it.
+   */
+  min_amount?: Uint256String
+  /** The merchant's confirmation of the `details_v1` text — see above. */
+  confirm_details: true
+}
+/** The fields of a destination PATCH other than the minimum. */
+export interface PayoutDestinationEdits {
+  label?: string
+  /** Base units; an empty string restores the suggestion. */
+  reserve_amount?: Uint256String
+  /**
+   * `false` disables the destination (any wallet of the account may); `true` re-enables
+   * it, restoring the verification it had (only the destination's own wallet).
+   */
+  active?: boolean
+}
+/**
+ * Body of PATCH /payout_destinations/:id.
+ *
+ * A request that CHANGES `min_amount` (an empty string removes it) needs
+ * `confirm_details: true` — the merchant's statement of the `details_v1` text (see
+ * `CreatePayoutDestinationRequest`); otherwise 422 `confirmation_required` and nothing is
+ * written. The type asks for it whenever `min_amount` is present: the gateway itself
+ * waives it for a re-send of the same value. Raising the minimum above the amount of the
+ * latest proof takes the verification away (`status` back to `unverified`).
+ */
+export type UpdatePayoutDestinationRequest =
+  | (PayoutDestinationEdits & { min_amount?: undefined; confirm_details?: boolean })
+  | (PayoutDestinationEdits & { min_amount: Uint256String; confirm_details: true })
+/**
+ * Body of POST /payouts/prepare. A `proof` sends the gateway's proof amount
+ * (`PAYOUT_PROOF_AMOUNT`, 1 token unit by default), raised to the destination's
+ * `min_amount` when that is higher; a `payout` sends `amount` — a human decimal
+ * (`"25.50"`) or `"all"` (the wallet's balance minus the refund reserve).
+ */
+export type PreparePayoutRequest =
+  | { destination_id: string; purpose: 'proof' }
+  | { destination_id: string; purpose?: 'payout'; amount: string }
 
 // ── Domain models (gateway vocabulary) ───────────────────────────────
 /** Condensed payment record (GET /payments list item). */
@@ -641,6 +740,54 @@ export interface Health {
   active_contracts?: number
   timestamp?: string
 }
+
+// ── Payouts (merchant cash-out) ──────────────────────────────────────
+/**
+ * A deposit address at a venue (an exchange, Circle Mint, another wallet) that one of the
+ * account's wallets cashes out to — bound to ONE chain and ONE token. An alias of the
+ * schema component, with the fields the gateway always sends made required.
+ *
+ * Amounts are base-unit strings with a `*_formatted` human twin: `reserve_amount` (null =
+ * `suggested_reserve`, the refundable balance still inside its refund window, which an
+ * `all` payout leaves in the wallet) and `min_amount` (the venue's deposit minimum; null
+ * = none).
+ */
+export type PayoutDestination = components['schemas']['PayoutDestination'] &
+  Required<
+    Pick<
+      components['schemas']['PayoutDestination'],
+      'id' | 'wallet_id' | 'chain_id' | 'token' | 'address' | 'kind' | 'status' | 'created_at'
+    >
+  >
+/**
+ * One transfer to a payout destination. An alias of the schema component, with the
+ * fields the gateway always sends made required.
+ *
+ * `unsigned_transaction` (while `pending`) is the EIP-1559 ERC-20 `transfer` to sign;
+ * BESIDE it are its decoded intent — `chain_id`, `token`, `address` (the recipient) and
+ * `amount` (base units) — which `verifyPayoutTransaction` holds the transaction to before
+ * any key touches it. `signed: true` on a `pending` row means the gateway stores its
+ * signed bytes (and `transaction_hash`): resend it, never re-prepare it.
+ */
+export type Payout = components['schemas']['Payout'] &
+  Required<
+    Pick<
+      components['schemas']['Payout'],
+      | 'id'
+      | 'destination_id'
+      | 'wallet_id'
+      | 'chain_id'
+      | 'token'
+      | 'address'
+      | 'amount'
+      | 'purpose'
+      | 'status'
+      | 'signed'
+      | 'created_at'
+    >
+  >
+/** One append-only entry of the payout audit trail (destination and payout events). */
+export type PayoutEvent = components['schemas']['PayoutEvent']
 
 // ── Analytics (merchant sales rollups) ───────────────────────────────
 /** Volume for one (token, chain). Amounts are token base-unit integer strings

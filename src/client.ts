@@ -7,6 +7,8 @@ import { DisputesResource } from './resources/disputes.js'
 import { HealthResource } from './resources/health.js'
 import { PaymentMethodsResource } from './resources/payment_methods.js'
 import { PaymentsResource } from './resources/payments.js'
+import { PayoutDestinationsResource } from './resources/payout_destinations.js'
+import { PayoutsResource } from './resources/payouts.js'
 import { TokensResource } from './resources/tokens.js'
 import { WalletsResource } from './resources/wallets.js'
 import { WebhooksResource } from './resources/webhooks.js'
@@ -24,6 +26,8 @@ export class Rail0Client {
   readonly wallets: WalletsResource
   readonly paymentMethods: PaymentMethodsResource
   readonly webhooks: WebhooksResource
+  readonly payoutDestinations: PayoutDestinationsResource
+  readonly payouts: PayoutsResource
   readonly analytics: AnalyticsResource
   readonly health: HealthResource
 
@@ -38,6 +42,8 @@ export class Rail0Client {
     this.wallets = new WalletsResource(this.http)
     this.paymentMethods = new PaymentMethodsResource(this.http)
     this.webhooks = new WebhooksResource(this.http)
+    this.payoutDestinations = new PayoutDestinationsResource(this.http)
+    this.payouts = new PayoutsResource(this.http)
     this.analytics = new AnalyticsResource(this.http)
     this.health = new HealthResource(this.http)
   }

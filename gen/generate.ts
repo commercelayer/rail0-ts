@@ -7,7 +7,7 @@
  *   1. Read the OpenAPI schema from the rail0-gateway repo
  *   2. Generate raw TypeScript types via openapi-typescript → src/api.ts
  *   3. Emit src/resources/types.ts — public SDK types (gateway vocabulary)
- *   4. Emit src/resources/{payments,wallets,webhooks,chains,tokens,health}.ts
+ *   4. Emit src/resources/{payments,wallets,webhooks,payout_destinations,payouts,chains,tokens,health}.ts
  *   5. Emit src/dispute-reasons.ts — the dispute-reason dictionary as build-time
  *      constants, read from the x-enum-descriptions / x-enum-bytes32 arrays of the
  *      DisputeOpenReason / DisputeCloseReason / DisputeSystemCloseReason schemas
@@ -152,6 +152,14 @@ export type HealthStatus = 'ok' | 'degraded'
  * before \`authorization_expiry\`, while the payment is still capturable with a
  * \`capturable_amount\` above zero. Time left is \`payment.authorization_expiry\` minus the
  * event's \`emitted_at\`; capture before then, or the escrow can only go back via release.
+ *
+ * The payout topics carry the same envelope (\`id\`, \`emitted_at\`, \`topic\`) with the
+ * subject under its own key instead of \`payment\`/\`transaction\`: \`payouts.confirmed\` and
+ * \`payouts.failed\` POST \`{ id, emitted_at, topic, payout }\` (a \`Payout\`, its failure
+ * reason in \`error_code\`), and \`payout_destinations.verified\` POSTs
+ * \`{ id, emitted_at, topic, payout_destination }\` (a \`PayoutDestination\`). A payout failed
+ * \`submission_timeout\` or \`dropped\` can be revived by a late hash, so a \`payouts.failed\`
+ * with one of those two codes may be followed by \`payouts.confirmed\` for the same payout.
  */
 export type WebhookTopic =
   | 'payments.created'
@@ -167,6 +175,27 @@ export type WebhookTopic =
   | 'payments.failed'
   | 'payments.disputed'
   | 'payments.dispute_closed'
+  | 'payouts.confirmed'
+  | 'payouts.failed'
+  | 'payout_destinations.verified'
+/** What a payout destination is: the venue its deposit address belongs to. */
+export type PayoutDestinationKind = 'exchange' | 'circle_mint' | 'self_custody' | 'provider'
+/**
+ * \`unverified\` (born so; may receive the proof amount at most), \`verified\` (the merchant
+ * attested the venue credited the proof), \`disabled\` (switched off; \`active: true\`
+ * restores the verification it had).
+ */
+export type PayoutDestinationStatus = 'unverified' | 'verified' | 'disabled'
+/** \`proof\`: the small transfer that verifies a destination. \`payout\`: a cash-out. */
+export type PayoutPurpose = 'proof' | 'payout'
+/**
+ * \`pending\` (prepared; may already be signed — see \`Payout.signed\`), \`submitted\`
+ * (broadcast or reported by hash), \`confirmed\` (the receipt carries this exact ERC-20
+ * Transfer), \`failed\` (\`error_code\` says why).
+ */
+export type PayoutStatus = 'pending' | 'submitted' | 'confirmed' | 'failed'
+/** What a payout audit event records, e.g. \`destination.min_amount_changed\`, \`payout.signed\`. */
+export type PayoutEventAction = NonNullable<components['schemas']['PayoutEvent']['action']>
 
 // ── Signing types (not named in the spec; hand-authored, as in rail0-go) ──
 export interface EIP712Domain {
@@ -351,6 +380,76 @@ export interface WebhookTestResult {
   error_reason: string | null
   duration_ms: number
 }
+/**
+ * Body of POST /payout_destinations: a deposit address at a venue, for the session's own
+ * wallet, bound to ONE chain and ONE token.
+ *
+ * \`confirm_details\` is REQUIRED and typed as the literal \`true\`: it records the merchant's
+ * statement of the \`details_v1\` text (\`PAYOUT_DETAILS_CONFIRMATION.text\`) — "I have checked
+ * the address, network, token and minimum deposit on the venue's deposit page and confirm
+ * they are correct. Funds sent to a wrong address or network, or below the venue's
+ * minimum, may be permanently lost and cannot be recovered by rail0." The SDK never sends
+ * it for you: set it only once the merchant has made that check (422
+ * \`confirmation_required\` otherwise).
+ */
+export interface CreatePayoutDestinationRequest {
+  /** The wallet (uuid or address) that will sign transfers to it; must be the session's own. */
+  wallet_id: string
+  /** The chain the deposit address was issued for. */
+  chain_id: number
+  /** The token's address on that chain. */
+  token: Address
+  /** The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
+  address: Address
+  label?: string
+  /** Defaults to \`exchange\`. */
+  kind?: PayoutDestinationKind
+  /**
+   * Base units to keep in the wallet on an \`all\` payout (digits only, below 2^120; 422
+   * \`invalid_amount\` otherwise). Omit for the suggestion (\`suggested_reserve\`).
+   */
+  reserve_amount?: Uint256String
+  /**
+   * The venue's deposit minimum in base units (digits only, below 2^120); omit for none.
+   * A payout below it is refused (\`payout_below_minimum\`) and the proof is raised to it.
+   */
+  min_amount?: Uint256String
+  /** The merchant's confirmation of the \`details_v1\` text — see above. */
+  confirm_details: true
+}
+/** The fields of a destination PATCH other than the minimum. */
+export interface PayoutDestinationEdits {
+  label?: string
+  /** Base units; an empty string restores the suggestion. */
+  reserve_amount?: Uint256String
+  /**
+   * \`false\` disables the destination (any wallet of the account may); \`true\` re-enables
+   * it, restoring the verification it had (only the destination's own wallet).
+   */
+  active?: boolean
+}
+/**
+ * Body of PATCH /payout_destinations/:id.
+ *
+ * A request that CHANGES \`min_amount\` (an empty string removes it) needs
+ * \`confirm_details: true\` — the merchant's statement of the \`details_v1\` text (see
+ * \`CreatePayoutDestinationRequest\`); otherwise 422 \`confirmation_required\` and nothing is
+ * written. The type asks for it whenever \`min_amount\` is present: the gateway itself
+ * waives it for a re-send of the same value. Raising the minimum above the amount of the
+ * latest proof takes the verification away (\`status\` back to \`unverified\`).
+ */
+export type UpdatePayoutDestinationRequest =
+  | (PayoutDestinationEdits & { min_amount?: undefined; confirm_details?: boolean })
+  | (PayoutDestinationEdits & { min_amount: Uint256String; confirm_details: true })
+/**
+ * Body of POST /payouts/prepare. A \`proof\` sends the gateway's proof amount
+ * (\`PAYOUT_PROOF_AMOUNT\`, 1 token unit by default), raised to the destination's
+ * \`min_amount\` when that is higher; a \`payout\` sends \`amount\` — a human decimal
+ * (\`"25.50"\`) or \`"all"\` (the wallet's balance minus the refund reserve).
+ */
+export type PreparePayoutRequest =
+  | { destination_id: string; purpose: 'proof' }
+  | { destination_id: string; purpose?: 'payout'; amount: string }
 
 // ── Domain models (gateway vocabulary) ───────────────────────────────
 /** Condensed payment record (GET /payments list item). */
@@ -698,6 +797,54 @@ export interface Health {
   active_contracts?: number
   timestamp?: string
 }
+
+// ── Payouts (merchant cash-out) ──────────────────────────────────────
+/**
+ * A deposit address at a venue (an exchange, Circle Mint, another wallet) that one of the
+ * account's wallets cashes out to — bound to ONE chain and ONE token. An alias of the
+ * schema component, with the fields the gateway always sends made required.
+ *
+ * Amounts are base-unit strings with a \`*_formatted\` human twin: \`reserve_amount\` (null =
+ * \`suggested_reserve\`, the refundable balance still inside its refund window, which an
+ * \`all\` payout leaves in the wallet) and \`min_amount\` (the venue's deposit minimum; null
+ * = none).
+ */
+export type PayoutDestination = components['schemas']['PayoutDestination'] &
+  Required<
+    Pick<
+      components['schemas']['PayoutDestination'],
+      'id' | 'wallet_id' | 'chain_id' | 'token' | 'address' | 'kind' | 'status' | 'created_at'
+    >
+  >
+/**
+ * One transfer to a payout destination. An alias of the schema component, with the
+ * fields the gateway always sends made required.
+ *
+ * \`unsigned_transaction\` (while \`pending\`) is the EIP-1559 ERC-20 \`transfer\` to sign;
+ * BESIDE it are its decoded intent — \`chain_id\`, \`token\`, \`address\` (the recipient) and
+ * \`amount\` (base units) — which \`verifyPayoutTransaction\` holds the transaction to before
+ * any key touches it. \`signed: true\` on a \`pending\` row means the gateway stores its
+ * signed bytes (and \`transaction_hash\`): resend it, never re-prepare it.
+ */
+export type Payout = components['schemas']['Payout'] &
+  Required<
+    Pick<
+      components['schemas']['Payout'],
+      | 'id'
+      | 'destination_id'
+      | 'wallet_id'
+      | 'chain_id'
+      | 'token'
+      | 'address'
+      | 'amount'
+      | 'purpose'
+      | 'status'
+      | 'signed'
+      | 'created_at'
+    >
+  >
+/** One append-only entry of the payout audit trail (destination and payout events). */
+export type PayoutEvent = components['schemas']['PayoutEvent']
 
 // ── Analytics (merchant sales rollups) ───────────────────────────────
 /** Volume for one (token, chain). Amounts are token base-unit integer strings
@@ -1621,6 +1768,279 @@ export class WebhooksResource {
 }
 ${BUILD_QUERY}`
 
+const PAYOUT_DESTINATIONS = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
+import type {
+  CreatePayoutDestinationRequest,
+  PaginatedResponse,
+  PayoutDestination,
+  PayoutDestinationStatus,
+  PayoutEvent,
+  UpdatePayoutDestinationRequest,
+} from './types.js'
+
+/**
+ * The statement \`confirm_details: true\` records (POST /payout_destinations, and a PATCH that
+ * changes \`min_amount\`): show \`text\` to the merchant and send the flag only once they
+ * have made the check. A new wording gets a new \`version\` on the gateway.
+ */
+export const PAYOUT_DETAILS_CONFIRMATION = {
+  version: 'details_v1',
+  text: "I have checked the address, network, token and minimum deposit on the venue's deposit page and confirm they are correct. Funds sent to a wrong address or network, or below the venue's minimum, may be permanently lost and cannot be recovered by rail0.",
+} as const
+
+export interface ListPayoutDestinationsParams {
+  /** Restrict to one wallet (uuid). */
+  wallet_id?: string
+  status?: PayoutDestinationStatus
+  sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
+  page?: number
+  per_page?: number
+}
+
+/** Offset paging for an audit trail (newest first; \`per_page\` defaults to 25, at most 100). */
+export interface ListPayoutEventsParams {
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
+  page?: number
+  per_page?: number
+}
+
+/**
+ * Payout destinations (JWT): the deposit addresses — at an exchange, Circle Mint, another
+ * wallet — the account's wallets cash out to. Each is bound to ONE chain and ONE token,
+ * by design: an exchange credits only the network it issued the address for.
+ *
+ * Lifecycle: \`create\` (born \`unverified\`) → a \`proof\` payout (\`payouts.prepare({
+ * destination_id, purpose: 'proof' })\`) → once the venue credited it, \`confirm\` (now
+ * \`verified\`, fires \`payout_destinations.verified\`). Until then the destination may
+ * receive the proof amount at most (\`payout_destination_unverified\`).
+ *
+ * Reads are account-wide; writes act for the destination's own wallet (403
+ * \`not_your_wallet\` otherwise), except that any wallet of the account may disable one.
+ * A deactivated account is read-only (403 \`account_deactivated\`).
+ */
+export class PayoutDestinationsResource {
+  constructor(private readonly http: HttpClient) {}
+
+  /** List the account's destinations. */
+  list(params?: ListPayoutDestinationsParams): Promise<PaginatedResponse<PayoutDestination>> {
+    return this.http.getPaginated(\`/payout_destinations\${buildQuery(params)}\`)
+  }
+
+  /**
+   * Register a destination for the session's own wallet (201, \`unverified\`).
+   *
+   * \`confirm_details: true\` is required — the merchant's statement of
+   * \`PAYOUT_DETAILS_CONFIRMATION.text\`; never set it on their behalf. Refused: the zero
+   * address, the wallet itself, and every contract the gateway knows on the chain (422
+   * \`payout_destination_*\`); the same address/token/chain twice on a wallet (409
+   * \`payout_destination_exists\`).
+   */
+  create(params: CreatePayoutDestinationRequest): Promise<PayoutDestination> {
+    return this.http.post('/payout_destinations', params)
+  }
+
+  get(id: string): Promise<PayoutDestination> {
+    return this.http.get(path\`/payout_destinations/\${id}\`)
+  }
+
+  /**
+   * Update the label, reserve, minimum or \`active\` flag. Changing \`min_amount\` needs
+   * \`confirm_details: true\` (422 \`confirmation_required\` otherwise, nothing written);
+   * raising it above the latest proof's amount takes the verification away. \`active:
+   * false\` cancels an unsigned pending payout to it, and is refused 409
+   * \`payout_already_signed\` while a signed one is pending.
+   */
+  update(id: string, params: UpdatePayoutDestinationRequest): Promise<PayoutDestination> {
+    return this.http.patch(path\`/payout_destinations/\${id}\`, params)
+  }
+
+  /**
+   * Attest that the venue credited the proof transfer: the destination becomes
+   * \`verified\`. The proof must be \`confirmed\` on-chain first (422
+   * \`payout_destination_proof_missing\`) — check the credit at the venue, not here.
+   */
+  confirm(id: string): Promise<PayoutDestination> {
+    return this.http.post(path\`/payout_destinations/\${id}/confirm\`, {})
+  }
+
+  /** The destination's audit trail — its own events and its payouts', newest first. */
+  events(id: string, params?: ListPayoutEventsParams): Promise<PaginatedResponse<PayoutEvent>> {
+    return this.http.getPaginated(path\`/payout_destinations/\${id}/events\` + buildQuery(params))
+  }
+}
+${BUILD_QUERY}`
+
+const PAYOUTS = `${FILE_HEADER}
+import type { HttpClient } from '../core/http.js'
+import { path } from '../core/path.js'
+import { signPayoutTransaction } from '../signing.js'
+import type { PayoutTxExpectation } from '../tx-verify.js'
+import type {
+  PaginatedResponse,
+  Payout,
+  PayoutEvent,
+  PayoutPurpose,
+  PayoutStatus,
+  PreparePayoutRequest,
+  SubmitByHashRequest,
+  SubmitTransactionRequest,
+} from './types.js'
+import type { ListPayoutEventsParams } from './payout_destinations.js'
+
+export interface ListPayoutsParams {
+  destination_id?: string
+  wallet_id?: string
+  /** One status, or several: an array matches ANY of them and is sent comma-separated. */
+  status?: PayoutStatus | PayoutStatus[]
+  purpose?: PayoutPurpose
+  /** Only payouts created at/after this ISO-8601 timestamp (inclusive). */
+  created_from?: string
+  /** Only payouts created at/before this ISO-8601 timestamp (inclusive). */
+  created_to?: string
+  /** e.g. \`-amount\` (numeric). Newest first by default. */
+  sort?: string
+  /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
+  page?: number
+  per_page?: number
+}
+
+/**
+ * What the caller knows about a payout beyond the record itself, held against it before
+ * signing — see \`PayoutTxExpectation\`. \`prepareAndSubmit\` fills \`amount\` from its own
+ * request.
+ */
+export type PayoutCheck = Omit<PayoutTxExpectation, 'payout'>
+
+/**
+ * Payouts (JWT): the on-chain leg of a merchant cash-out — an ERC-20 \`transfer\` from one
+ * of the account's wallets to a payout destination. The gateway builds the transfer; the
+ * merchant's wallet signs it. It never holds funds, keys or fiat.
+ *
+ * Two ways to send a prepared payout:
+ * - sign offline and \`submit\` the raw bytes (the gateway stores them, then broadcasts;
+ *   \`resend\` re-broadcasts the same bytes) — \`signAndSubmit\` / \`prepareAndSubmit\` do this
+ *   with a private key, verifying the transfer first;
+ * - broadcast from the wallet yourself and report the hash with \`submitByHash\`.
+ *
+ * One pending payout per destination: a re-prepare replaces it while unsigned; once
+ * signed it is resent, never re-prepared (409 \`payout_already_signed\`). Settlement fires
+ * \`payouts.confirmed\` / \`payouts.failed\`.
+ */
+export class PayoutsResource {
+  constructor(private readonly http: HttpClient) {}
+
+  /** The account's payout history, newest first. */
+  list(params?: ListPayoutsParams): Promise<PaginatedResponse<Payout>> {
+    return this.http.getPaginated(\`/payouts\${buildQuery(params)}\`)
+  }
+
+  get(id: string): Promise<Payout> {
+    return this.http.get(path\`/payouts/\${id}\`)
+  }
+
+  /** The payout's audit trail, newest first. */
+  events(id: string, params?: ListPayoutEventsParams): Promise<PaginatedResponse<PayoutEvent>> {
+    return this.http.getPaginated(path\`/payouts/\${id}/events\` + buildQuery(params))
+  }
+
+  /**
+   * Build the unsigned transfer (201 new, 200 re-prepared). Returns the Payout with
+   * \`unsigned_transaction\` beside its decoded intent (\`chain_id\`, \`token\`, \`address\`,
+   * \`amount\`) — verify before signing (\`signPayoutTransaction\` always does).
+   *
+   * Refused: \`payout_destination_unverified\` (more than the proof before \`confirm\`),
+   * \`payout_below_minimum\`, \`insufficient_balance\` (names what is available after the
+   * reserve), \`payout_limit_reached\`, \`payout_destination_disabled\`, 409
+   * \`payout_already_signed\`.
+   */
+  prepare(params: PreparePayoutRequest): Promise<Payout> {
+    return this.http.post('/payouts/prepare', params)
+  }
+
+  /**
+   * Submit the signed transfer; the gateway stores it with its hash, then broadcasts
+   * (202, \`submitted\`). A node refusal is a 502 and leaves the row \`pending\` with
+   * \`signed: true\` — \`resend\` it.
+   */
+  submit(id: string, params: SubmitTransactionRequest): Promise<Payout> {
+    return this.http.post(path\`/payouts/\${id}/submit\`, params)
+  }
+
+  /** Re-broadcast the stored signed transfer — same bytes, same nonce, same hash (202). */
+  resend(id: string): Promise<Payout> {
+    return this.http.post(path\`/payouts/\${id}/resend\`, {})
+  }
+
+  /**
+   * Cancel an UNSIGNED pending payout (now \`failed\` / \`cancelled\`, fires
+   * \`payouts.failed\`). A signed one is 409 \`payout_already_signed\`: its transaction may
+   * still be mined — resend it, or replace its nonce from the wallet.
+   */
+  cancel(id: string): Promise<Payout> {
+    return this.http.post(path\`/payouts/\${id}/cancel\`, {})
+  }
+
+  /**
+   * Record a transfer the wallet broadcast itself (202, \`submitted\`). A hash a node
+   * already has must be THIS transfer (\`foreign_transfer_hash\` otherwise). Also revives a
+   * payout failed \`submission_timeout\` or \`dropped\` with a late or replacement hash.
+   */
+  submitByHash(id: string, params: SubmitByHashRequest): Promise<Payout> {
+    return this.http.post(path\`/payouts/\${id}/submitted\`, params)
+  }
+
+  /**
+   * Verify, sign and submit a prepared payout with a private key — the transfer is held
+   * to the payout's decoded intent and to \`check\` (\`signPayoutTransaction\`) BEFORE the key
+   * touches it; a mismatch rejects with \`refusing to sign: …\` and nothing is sent.
+   */
+  async signAndSubmit(
+    payout: Payout,
+    privateKey: \`0x\${string}\` | Uint8Array,
+    check?: PayoutCheck,
+  ): Promise<Payout> {
+    const signed = signPayoutTransaction(payout.unsigned_transaction, privateKey, {
+      ...check,
+      payout,
+    })
+    return this.submit(payout.id, { signed_transaction: signed })
+  }
+
+  /**
+   * Prepare, verify, sign and submit in one call. The prepared payout is held to
+   * \`params.destination_id\` and, for a decimal \`amount\`, to that amount exactly — which
+   * needs \`check.decimals\` (the token's scale, from your own records: a scale the gateway
+   * reported could inflate the amount). For \`"all"\` or a proof the gateway decides the
+   * amount: pass \`check.maxAmount\` to cap it. Pass \`check.destination\` to hold the payout
+   * to the destination's chain, token and address too.
+   */
+  async prepareAndSubmit(
+    params: PreparePayoutRequest,
+    privateKey: \`0x\${string}\` | Uint8Array,
+    check?: PayoutCheck,
+  ): Promise<Payout> {
+    const payout = await this.prepare(params)
+    if (payout.destination_id !== params.destination_id) {
+      throw new Error(
+        \`refusing to sign: the gateway prepared a payout to destination \${payout.destination_id}, not \${params.destination_id}\`,
+      )
+    }
+    const wantPurpose = params.purpose ?? 'payout'
+    if (payout.purpose !== wantPurpose) {
+      throw new Error(\`refusing to sign: the gateway prepared a \${payout.purpose}, not a \${wantPurpose}\`)
+    }
+    const amount = 'amount' in params ? params.amount : undefined
+    return this.signAndSubmit(payout, privateKey, {
+      ...check,
+      ...(amount !== undefined ? { amount } : {}),
+    })
+  }
+}
+${BUILD_QUERY}`
+
 const CHAINS = `${FILE_HEADER}
 import type { HttpClient } from '../core/http.js'
 import type { Blockchain } from './types.js'
@@ -1641,6 +2061,40 @@ export class ChainsResource {
   list(params?: ListChainsParams): Promise<Blockchain[]> {
     return this.http.get(\`/blockchains\${buildQuery(params)}\`)
   }
+}
+
+/**
+ * Pick ONE chain from a \`chains.list()\` result by slug or by numeric chain id — so a
+ * caller can say \`arc\` instead of \`5042002\`.
+ *
+ * - A number, or a string of digits, matches \`chain_id\`.
+ * - Anything else matches \`slug\`, case-insensitively (after trimming). A slug is shared
+ *   by a chain's testnet and mainnet and unique only per \`network_type\`; a gateway serves
+ *   one network class, so its own list has one match — but a list that mixes both classes
+ *   can have two, and that is an error rather than a guess.
+ *
+ * Throws when nothing matches (the message names the available slugs) or when a slug is
+ * ambiguous (the message names the matching chain ids and network types).
+ */
+export function resolveChain(blockchains: readonly Blockchain[], ref: string | number): Blockchain {
+  const raw = typeof ref === 'number' ? String(ref) : ref.trim()
+  if (raw === '') throw new Error('resolveChain: empty chain reference')
+  const byId = /^[0-9]+$/.test(raw)
+  const needle = raw.toLowerCase()
+  const matches = blockchains.filter((b) =>
+    byId ? b.chain_id === Number(raw) : (b.slug ?? '').toLowerCase() === needle,
+  )
+  if (matches.length === 1) return matches[0] as Blockchain
+  if (matches.length > 1) {
+    const which = matches.map((b) => \`\${b.chain_id} (\${b.network_type ?? 'unknown network'})\`).join(', ')
+    throw new Error(
+      \`resolveChain: "\${raw}" is ambiguous — it matches chains \${which}; filter the list by network_type or pass the chain id\`,
+    )
+  }
+  const slugs = [...new Set(blockchains.map((b) => b.slug).filter((s): s is string => !!s))].sort()
+  throw new Error(
+    \`resolveChain: no chain matches \${byId ? 'chain id' : 'slug'} "\${raw}" — available slugs: \${slugs.length ? slugs.join(', ') : '(none)'}\`,
+  )
 }
 ${BUILD_QUERY}`
 
@@ -1939,6 +2393,8 @@ await writeResource('disputes.ts', DISPUTES)
 await writeResource('wallets.ts', WALLETS)
 await writeResource('payment_methods.ts', PAYMENT_METHODS)
 await writeResource('webhooks.ts', WEBHOOKS)
+await writeResource('payout_destinations.ts', PAYOUT_DESTINATIONS)
+await writeResource('payouts.ts', PAYOUTS)
 await writeResource('chains.ts', CHAINS)
 await writeResource('tokens.ts', TOKENS)
 await writeResource('analytics.ts', ANALYTICS)
