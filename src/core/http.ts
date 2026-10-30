@@ -163,6 +163,18 @@ function parseLinkHeader(raw: string | null): {
   return out
 }
 
+/**
+ * The `after` query value of a (relative) Link URI — the cursor of a cursor-paged list's
+ * `next` link, the fallback when a response carries no `x-next-cursor` header. Undefined
+ * for a page-number link, which has no `after`.
+ */
+function cursorFromLink(uri: string | undefined): string | undefined {
+  if (!uri) return undefined
+  const q = uri.indexOf('?')
+  if (q < 0) return undefined
+  return new URLSearchParams(uri.slice(q + 1)).get('after') || undefined
+}
+
 export class HttpClient {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
@@ -230,6 +242,7 @@ export class HttpClient {
       total: number
       total_pages: number
       links: { first?: string; prev?: string; next?: string; last?: string }
+      next_cursor?: string
     }
   }> {
     const { data, headers } = await this.send<T[]>('GET', path)
@@ -239,6 +252,8 @@ export class HttpClient {
       const n = raw == null ? Number.NaN : Number(raw)
       return Number.isFinite(n) ? n : fallback
     }
+    const links = parseLinkHeader(headers.get('link'))
+    const nextCursor = headers.get('x-next-cursor') || cursorFromLink(links.next)
     return {
       data: arr,
       meta: {
@@ -251,7 +266,8 @@ export class HttpClient {
           'x-total-pages',
           Math.max(Math.ceil(arr.length / Math.max(arr.length, 1)), 1),
         ),
-        links: parseLinkHeader(headers.get('link')),
+        links,
+        ...(nextCursor ? { next_cursor: nextCursor } : {}),
       },
     }
   }

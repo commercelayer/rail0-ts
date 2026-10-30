@@ -25,6 +25,13 @@ export interface ListPayoutsParams {
   created_from?: string
   /** Only payouts created at/before this ISO-8601 timestamp (inclusive). */
   created_to?: string
+  /**
+   * Cursor paging: the previous page's `meta.next_cursor`. Walks the collection by
+   * `-created_at` at a constant cost per page, with no total count; the last page has no
+   * `next_cursor`. Not combinable with `page` or another `sort` (422 `invalid_cursor`).
+   * Omit it for page-number paging.
+   */
+  after?: string
   /** e.g. `-amount` (numeric). Newest first by default. */
   sort?: string
   /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
