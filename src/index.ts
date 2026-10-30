@@ -49,6 +49,16 @@ export type {
 } from './resources/payments.js'
 // ── Resources ────────────────────────────────────────────────────────
 export { PaymentsResource } from './resources/payments.js'
+export type {
+  ListPayoutDestinationsParams,
+  ListPayoutEventsParams,
+} from './resources/payout_destinations.js'
+export {
+  PAYOUT_DETAILS_CONFIRMATION,
+  PayoutDestinationsResource,
+} from './resources/payout_destinations.js'
+export type { ListPayoutsParams, PayoutCheck } from './resources/payouts.js'
+export { PayoutsResource } from './resources/payouts.js'
 export { TokensResource } from './resources/tokens.js'
 // ── Types ────────────────────────────────────────────────────────────
 export type {
@@ -75,6 +85,7 @@ export type {
   CircuitState,
   // Request bodies
   CreatePaymentRequest,
+  CreatePayoutDestinationRequest,
   CreateWalletRequest,
   CreateWebhookRequest,
   // Generated internals (advanced use)
@@ -105,6 +116,17 @@ export type {
   PaymentMode,
   PaymentStatus,
   PaymentWindows,
+  // Payouts
+  Payout,
+  PayoutDestination,
+  PayoutDestinationEdits,
+  PayoutDestinationKind,
+  PayoutDestinationStatus,
+  PayoutEvent,
+  PayoutEventAction,
+  PayoutPurpose,
+  PayoutStatus,
+  PreparePayoutRequest,
   PrepareRequest,
   Session,
   SigningPayload,
@@ -117,6 +139,7 @@ export type {
   Uint256String,
   UpdateAccountRequest,
   UpdatePaymentRequest,
+  UpdatePayoutDestinationRequest,
   UpdateWalletRequest,
   UpdateWebhookRequest,
   Wallet,
@@ -145,6 +168,7 @@ export {
   signAuthorize,
   signCharge,
   signPayment,
+  signPayoutTransaction,
   signReceiveWithAuthorization,
   signRefund,
   signSigningPayload,
@@ -155,12 +179,20 @@ export type { StablecoinChain, StablecoinInfo, StablecoinSymbol } from './stable
 // ── Stablecoin registry ──────────────────────────────────────────────
 export { chainInfo, eip2612Tokens, eip3009Tokens, stablecoins } from './stablecoins.js'
 // ── Pre-sign verification of a gateway-built transaction / authorization ─
-export type { Rail0Operation, SigningPayloadExpectation, TxExpectation } from './tx-verify.js'
+export type {
+  PayoutTxExpectation,
+  Rail0Operation,
+  SigningPayloadExpectation,
+  TxExpectation,
+} from './tx-verify.js'
 export {
   canonicalOperation,
+  ERC20_TRANSFER_SELECTOR,
+  ERC20_TRANSFER_SIGNATURE,
   RAIL0_FUNCTION_SIGNATURES,
   RAIL0_SELECTORS,
   signerAddress,
+  verifyPayoutTransaction,
   verifySigningPayload,
   verifyUnsignedTransaction,
 } from './tx-verify.js'

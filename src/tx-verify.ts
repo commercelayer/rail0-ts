@@ -602,3 +602,229 @@ function expectedPayloadValue({ payment, amount }: SigningPayloadExpectation): s
   }
   return stored
 }
+
+// ================================================================
+//  Pre-sign verification of a gateway-built payout transfer
+// ================================================================
+//
+// A payout's `unsigned_transaction` is a plain ERC-20 `transfer(address,uint256)` on the
+// token contract — so, unlike a RAIL0 call, the calldata IS the money: whoever controls
+// it controls where the merchant's balance goes. The gateway answers it BESIDE its
+// decoded intent (`chain_id`, `token`, `address`, `amount` on the Payout), and the check
+// below holds the transaction to that intent EXACTLY — and, when the caller passes them,
+// the intent to the destination the caller picked and to the amount it typed. Ported from
+// rail0-admin's assertTransferCall / assertPreparedMatches; same "refusing to sign: …"
+// wording as the payment checks above.
+
+/** The ERC-20 function a payout calls. */
+export const ERC20_TRANSFER_SIGNATURE = 'transfer(address,uint256)'
+
+/** `transfer(address,uint256)`'s selector as 8 lowercase hex chars (`a9059cbb`), derived. */
+export const ERC20_TRANSFER_SELECTOR: string = bytesToHex(
+  keccak_256(new TextEncoder().encode(ERC20_TRANSFER_SIGNATURE)).slice(0, 4),
+)
+
+/**
+ * What the caller independently knows about the payout it is about to sign.
+ *
+ * `payout` is the prepared record (`payouts.prepare()` / `payouts.get()`); its `chain_id`,
+ * `token`, `address` and `amount` are REQUIRED — they are what the transaction is held to.
+ *
+ * The rest bind that record to the CALLER's own input, and are each checked when given:
+ * - `destination`: the destination the caller picked (its own record, from
+ *   `payoutDestinations.get()` or `create()`) — the payout must be on its chain, in its
+ *   token, to its address. Catches a prepare answered for another destination.
+ * - `amount`: the human decimal the caller passed to prepare. Checked exactly, scaled by
+ *   `decimals`, which is then REQUIRED (a scale the gateway reports would let it inflate
+ *   the amount). `"all"` is decided by the gateway and skipped here — use `maxAmount`.
+ * - `maxAmount`: a base-unit ceiling (e.g. the balance the caller read, or one whole token
+ *   for a proof): the payout may move at most this much.
+ */
+export interface PayoutTxExpectation {
+  payout: {
+    id?: string | null
+    destination_id?: string | null
+    chain_id?: number | null
+    token?: string | null
+    /** The recipient. */
+    address?: string | null
+    /** Base units. */
+    amount?: string | null
+  }
+  destination?: {
+    id?: string | null
+    chain_id?: number | null
+    token?: string | null
+    address?: string | null
+  }
+  /** Human decimal as passed to prepare (`"25.50"`), or `"all"` (not checked exactly). */
+  amount?: string | undefined
+  /** The token's decimals, to scale `amount`. Required when `amount` is a decimal. */
+  decimals?: number | undefined
+  /** At most this many base units may move. */
+  maxAmount?: string | undefined
+}
+
+/**
+ * Verifies a payout's gateway-built `unsigned_transaction` BEFORE any key touches it.
+ * Throws `Error("refusing to sign: …")` naming the first field that disagrees; returns the
+ * parsed transaction otherwise.
+ *
+ * In order:
+ *  1. the JSON parses, and the payout carries its chain, token, recipient and amount;
+ *  2. the payout is for the caller's `destination` (chain, token, address, id), when given;
+ *  3. the payout's amount is the caller's `amount` scaled by `decimals` (unless `"all"`),
+ *     and at most `maxAmount`, when given;
+ *  4. `value` is zero — a token transfer never attaches native currency;
+ *  5. `chain_id` is the payout's chain;
+ *  6. `from`, when present, is the signing key's address (`signer`);
+ *  7. `to` is an address (never empty: that would sign a contract creation) and is the
+ *     payout's TOKEN contract;
+ *  8. the calldata is EXACTLY `transfer(payout.address, payout.amount)`: the selector
+ *     `0xa9059cbb`, the recipient word (12 zero bytes + the address), the amount word,
+ *     and nothing after them.
+ *
+ * FAIL-CLOSED throughout: a missing field refuses rather than skips.
+ */
+export function verifyPayoutTransaction(
+  unsignedTransaction: string | Record<string, unknown> | null | undefined,
+  expectation: PayoutTxExpectation,
+  signer?: string,
+): Record<string, unknown> {
+  if (unsignedTransaction === null || unsignedTransaction === undefined) {
+    refuse('the payout has no unsigned transaction (already signed, or not pending)')
+  }
+  let tx: Record<string, unknown>
+  if (typeof unsignedTransaction === 'string') {
+    try {
+      tx = JSON.parse(unsignedTransaction)
+    } catch (err) {
+      refuse(`the gateway's unsigned transaction is not valid JSON: ${(err as Error).message}`)
+    }
+  } else {
+    tx = unsignedTransaction
+  }
+  if (tx === null || typeof tx !== 'object') refuse('the unsigned transaction is not an object')
+
+  const payout = expectation?.payout
+  if (!payout) refuse('cannot check the transfer without the payout it is for')
+  const chainId = payout.chain_id
+  const token = (payout.token ?? '').trim()
+  const recipient = (payout.address ?? '').trim()
+  const amount = String(payout.amount ?? '').trim()
+  if (!chainId) refuse("cannot check the transfer's chain without the payout's chain_id")
+  if (!isAddress(token))
+    refuse(`the payout's token ${JSON.stringify(payout.token ?? null)} is not an address`)
+  if (!isAddress(recipient)) {
+    refuse(
+      `the payout's destination address ${JSON.stringify(payout.address ?? null)} is not an address`,
+    )
+  }
+  if (!/^\d+$/.test(amount))
+    refuse(`the payout's amount ${JSON.stringify(payout.amount ?? null)} is not base units`)
+
+  checkPayoutIntent(expectation, chainId, token, recipient, BigInt(amount))
+
+  if (!isZeroNativeValue(tx.value)) {
+    refuse(
+      `transaction attaches native currency (value=${String(tx.value)}); a token transfer is value-0`,
+    )
+  }
+  if (Number(tx.chain_id) !== chainId) {
+    refuse(`transaction targets chain ${tx.chain_id} but this payout is on chain ${chainId}`)
+  }
+  const from = typeof tx.from === 'string' ? tx.from : ''
+  if (signer && from && !same(from, signer)) {
+    refuse(`transaction is prepared from ${from} but the signing key is ${signer}`)
+  }
+  const to = typeof tx.to === 'string' ? tx.to.trim() : ''
+  if (!isAddress(to)) {
+    refuse(
+      to === ''
+        ? 'transaction has no recipient (`to` is missing or empty), which would deploy a contract'
+        : `transaction recipient ${to} is not an address`,
+    )
+  }
+  if (!same(to, token)) {
+    refuse(`transaction is addressed to ${to} but this payout's token is ${token}`)
+  }
+
+  checkTransferCalldata(typeof tx.data === 'string' ? tx.data : '', recipient, BigInt(amount))
+  return tx
+}
+
+/** Steps 2-3 of verifyPayoutTransaction: the payout's intent against the caller's input. */
+function checkPayoutIntent(
+  { payout, destination, amount, decimals, maxAmount }: PayoutTxExpectation,
+  chainId: number,
+  token: string,
+  recipient: string,
+  got: bigint,
+): void {
+  if (destination) {
+    if (destination.id && payout.destination_id && destination.id !== payout.destination_id) {
+      refuse(`the payout is for destination ${payout.destination_id}, not ${destination.id}`)
+    }
+    if (!destination.chain_id || destination.chain_id !== chainId) {
+      refuse(
+        `the payout is on chain ${chainId} but the destination is on chain ${destination.chain_id}`,
+      )
+    }
+    if (!destination.token || !same(destination.token, token)) {
+      refuse(`the payout moves token ${token} but the destination takes ${destination.token}`)
+    }
+    if (!destination.address || !same(destination.address, recipient)) {
+      refuse(`the payout pays ${recipient} but the destination's address is ${destination.address}`)
+    }
+  }
+  if (amount !== undefined && amount.trim().toLowerCase() !== 'all') {
+    if (decimals === undefined || decimals === null) {
+      refuse("the token's decimals are unknown, so the payout amount cannot be checked")
+    }
+    let want: string
+    try {
+      want = toBaseUnits(amount, decimals)
+    } catch (err) {
+      refuse(`amount "${amount}": ${(err as Error).message}`)
+    }
+    if (BigInt(want) !== got) refuse(`the payout moves ${got} base units but you asked for ${want}`)
+  }
+  if (maxAmount !== undefined) {
+    if (!/^\d+$/.test(maxAmount.trim())) refuse(`maxAmount "${maxAmount}" is not base units`)
+    if (got > BigInt(maxAmount.trim())) {
+      refuse(`the payout moves ${got} base units, more than the ${maxAmount.trim()} allowed`)
+    }
+  }
+}
+
+/**
+ * Asserts the calldata is exactly `transfer(recipient, amount)`: 4 + 32 + 32 bytes, no
+ * more. The recipient word's upper 12 bytes must be zero — a dirty word is a different
+ * input to the token than the address it ends in — and nothing may trail the two words.
+ */
+function checkTransferCalldata(data: string, recipient: string, amount: bigint): void {
+  const raw = stripHex(data)
+  if (!/^[0-9a-f]*$/.test(raw)) refuse('the calldata is not hex')
+  if (raw.length < SELECTOR_LEN) refuse('the transaction carries no function call')
+  const sel = raw.slice(0, SELECTOR_LEN)
+  if (sel !== ERC20_TRANSFER_SELECTOR) {
+    refuse(`the call is ${describeSelector(sel)}, not ${ERC20_TRANSFER_SIGNATURE}`)
+  }
+  const want = SELECTOR_LEN + 2 * WORD_LEN
+  if (raw.length < want) refuse(`calldata is ${raw.length} hex chars, too short for a transfer`)
+  if (raw.length > want) {
+    refuse(`calldata carries ${(raw.length - want) / 2} bytes after the transfer's two arguments`)
+  }
+  const toWord = raw.slice(SELECTOR_LEN, SELECTOR_LEN + WORD_LEN)
+  const wantTo = stripHex(recipient)
+  if (toWord.slice(0, 24) !== '0'.repeat(24)) {
+    refuse(`the transfer's recipient word 0x${toWord} is not a left-padded address`)
+  }
+  if (toWord.slice(24) !== wantTo) {
+    refuse(`the transfer pays 0x${toWord.slice(24)} but the payout's destination is ${recipient}`)
+  }
+  const value = BigInt(`0x${raw.slice(SELECTOR_LEN + WORD_LEN)}`)
+  if (value !== amount) {
+    refuse(`the transfer moves ${value} base units but the payout is for ${amount}`)
+  }
+}
