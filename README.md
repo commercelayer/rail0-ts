@@ -82,7 +82,7 @@ const detail = await merchant.payments.get(payment.rail0_id)
 console.log(detail.status, detail.capturable_amount, detail.refundable_amount)
 ```
 
-See [`examples/`](examples) for authorize+capture, charge, refund, dispute, and webhooks.
+See [`examples/`](examples) for authorize+capture, charge, refund, dispute, webhooks, and payouts ([`06-payouts.ts`](examples/06-payouts.ts): register a destination with the merchant's confirmation, proof → confirm, prepare → verify → sign → submit, poll to confirmed).
 
 ## Payment lifecycle
 
@@ -657,6 +657,24 @@ Every `PaginatedResponse<T>` carries `{ data, meta }`. `meta` is `{ page, per_pa
 let page = await client.payments.list({ per_page: 100 })
 while (page.meta.links.next) {
   page = await client.payments.list({ page: page.meta.page + 1, per_page: 100 })
+}
+```
+
+**Cursor paging** (`payments.list` and `payouts.list`). Offset pages count the whole
+collection and skip rows, so deep pages get slower; a cursor names the last row seen and
+costs the same on every page. Pass `after` — `''` for the first page, then the previous
+page's `meta.next_cursor` (read from `x-next-cursor`, or from the `next` link's `after`).
+The last page has no `next_cursor`. A cursor walks newest first (`-created_at`) and
+carries no total: `page` or another `sort` beside it is a `422 invalid_cursor`, and
+`total` / `total_pages` only count the page itself. Without `after`, paging is by page
+number as above.
+
+```ts
+let after: string | undefined = ''
+while (after !== undefined) {
+  const res = await client.payouts.list({ after, per_page: 100 })
+  for (const payout of res.data) handle(payout)
+  after = res.meta.next_cursor
 }
 ```
 

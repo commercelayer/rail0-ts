@@ -987,6 +987,14 @@ export interface PageMeta {
    * resolve against the URL you requested.
    */
   links: { first?: string; prev?: string; next?: string; last?: string }
+  /**
+   * CURSOR paging only (\`payments.list\` and \`payouts.list\` called with \`after\`, or
+   * with \`after: ''\` to start): the cursor of the next page — pass it back as \`after\`.
+   * Read from the \`x-next-cursor\` header, else from the \`next\` link's \`after\`; absent
+   * on the last page, and on every page-number response. A cursor page carries no total,
+   * so \`total\` / \`total_pages\` only count the page itself there.
+   */
+  next_cursor?: string
 }
 export interface PaginatedResponse<T> {
   data: T[]
@@ -1112,6 +1120,13 @@ export interface ListPaymentsParams {
    * many SECONDS from now (1..90 days).
    */
   expiring_within?: number
+  /**
+   * Cursor paging: the previous page's \`meta.next_cursor\`. Walks the collection by
+   * \`-created_at\` at a constant cost per page, with no total count; the last page has no
+   * \`next_cursor\`. Not combinable with \`page\` or another \`sort\` (422 \`invalid_cursor\`).
+   * Omit it for page-number paging.
+   */
+  after?: string
   sort?: string
   /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
@@ -1900,6 +1915,13 @@ export interface ListPayoutsParams {
   created_from?: string
   /** Only payouts created at/before this ISO-8601 timestamp (inclusive). */
   created_to?: string
+  /**
+   * Cursor paging: the previous page's \`meta.next_cursor\`. Walks the collection by
+   * \`-created_at\` at a constant cost per page, with no total count; the last page has no
+   * \`next_cursor\`. Not combinable with \`page\` or another \`sort\` (422 \`invalid_cursor\`).
+   * Omit it for page-number paging.
+   */
+  after?: string
   /** e.g. \`-amount\` (numeric). Newest first by default. */
   sort?: string
   /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */

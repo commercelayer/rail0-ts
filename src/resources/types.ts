@@ -930,6 +930,14 @@ export interface PageMeta {
    * resolve against the URL you requested.
    */
   links: { first?: string; prev?: string; next?: string; last?: string }
+  /**
+   * CURSOR paging only (`payments.list` and `payouts.list` called with `after`, or
+   * with `after: ''` to start): the cursor of the next page — pass it back as `after`.
+   * Read from the `x-next-cursor` header, else from the `next` link's `after`; absent
+   * on the last page, and on every page-number response. A cursor page carries no total,
+   * so `total` / `total_pages` only count the page itself there.
+   */
+  next_cursor?: string
 }
 export interface PaginatedResponse<T> {
   data: T[]

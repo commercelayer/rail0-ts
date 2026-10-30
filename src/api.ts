@@ -1405,7 +1405,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The account id. */
+                id: string;
+            };
             cookie?: never;
         };
         /**
@@ -1445,7 +1448,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout id. */
+                id: string;
+            };
             cookie?: never;
         };
         /** Read any account's payout (admin) */
@@ -1462,7 +1468,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout id. */
+                id: string;
+            };
             cookie?: never;
         };
         /**
@@ -1502,7 +1511,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
             cookie?: never;
         };
         /** Read any account's payout destination (admin) */
@@ -1519,7 +1531,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
             cookie?: never;
         };
         /**
@@ -1893,7 +1908,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
             cookie?: never;
         };
         /** Read a payout destination */
@@ -1934,7 +1952,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
             cookie?: never;
         };
         /**
@@ -1994,7 +2015,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout id. */
+                id: string;
+            };
             cookie?: never;
         };
         /** Read a payout */
@@ -2011,7 +2035,10 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout id. */
+                id: string;
+            };
             cookie?: never;
         };
         /**
@@ -3443,6 +3470,8 @@ export interface components {
         XPage: number;
         /** @description Items per page. */
         XPerPage: number;
+        /** @description Cursor paging: pass it as `after` to read the next page; absent on the last page. */
+        XNextCursor: string;
     };
     pathItems: never;
 }
@@ -3912,6 +3941,11 @@ export interface operations {
             /** @description The accounts, whole record each (Full entity). */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -4488,6 +4522,7 @@ export interface operations {
                     link: components["headers"]["Link"];
                     "x-page": components["headers"]["XPage"];
                     "x-per-page": components["headers"]["XPerPage"];
+                    "x-next-cursor": components["headers"]["XNextCursor"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5278,6 +5313,11 @@ export interface operations {
             /** @description Dispute open/close history. */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6093,6 +6133,11 @@ export interface operations {
             /** @description The rows, whole record each (Full entity, signed_transaction excluded). */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6107,7 +6152,10 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The account id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -6179,7 +6227,10 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -6207,7 +6258,10 @@ export interface operations {
                 per_page?: components["parameters"]["PerPage"];
             };
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -6276,7 +6330,10 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -6304,7 +6361,10 @@ export interface operations {
                 per_page?: components["parameters"]["PerPage"];
             };
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -6361,6 +6421,11 @@ export interface operations {
             /** @description The deliveries, whole record each (Full entity). */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6402,6 +6467,11 @@ export interface operations {
             /** @description The disputes, whole record each (Full entity). */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6561,6 +6631,11 @@ export interface operations {
             /** @description The sync errors, whole record each (Full entity). */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6652,6 +6727,11 @@ export interface operations {
             /** @description The rows, whole record each (Full entity). */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6720,6 +6800,11 @@ export interface operations {
             /** @description The rows, whole record each (Full entity). */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -6755,6 +6840,11 @@ export interface operations {
             /** @description The requests. */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7046,6 +7136,11 @@ export interface operations {
             /** @description The account's destinations (x-total-count / x-total-pages headers). */
             200: {
                 headers: {
+                    "x-total-count": components["headers"]["XTotalCount"];
+                    "x-total-pages": components["headers"]["XTotalPages"];
+                    link: components["headers"]["Link"];
+                    "x-page": components["headers"]["XPage"];
+                    "x-per-page": components["headers"]["XPerPage"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7133,7 +7228,10 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -7275,7 +7373,10 @@ export interface operations {
                 per_page?: components["parameters"]["PerPage"];
             };
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -7339,6 +7440,7 @@ export interface operations {
                     link: components["headers"]["Link"];
                     "x-page": components["headers"]["XPage"];
                     "x-per-page": components["headers"]["XPerPage"];
+                    "x-next-cursor": components["headers"]["XNextCursor"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7438,7 +7540,10 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -7471,7 +7576,10 @@ export interface operations {
                 per_page?: components["parameters"]["PerPage"];
             };
             header?: never;
-            path?: never;
+            path: {
+                /** @description The payout id. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
