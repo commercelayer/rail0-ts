@@ -7,6 +7,7 @@ import type {
   PayoutDestination,
   PayoutDestinationStatus,
   PayoutEvent,
+  PayoutReserves,
   UpdatePayoutDestinationRequest,
 } from './types.js'
 
@@ -48,6 +49,8 @@ export interface ListPayoutDestinationsParams {
   /** Restrict to one wallet (uuid). */
   wallet_id?: string
   status?: PayoutDestinationStatus
+  /** `true` lists deleted destinations too (left out by default). */
+  include_deleted?: boolean
   sort?: string
   /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
@@ -71,6 +74,10 @@ export interface ListPayoutEventsParams {
  * `verified`, fires `payout_destinations.verified`). Until then the destination may
  * receive the proof amount at most (`payout_destination_unverified`).
  *
+ * The reserves are decided per payout, not stored on the destination: `reserves` shows
+ * what a payout would keep back now, and `payouts.prepare` takes `keep_refund_reserve` /
+ * `keep_gas_reserve` to opt out of either.
+ *
  * Reads are account-wide; writes act for the destination's own wallet (403
  * `not_your_wallet` otherwise), except that any wallet of the account may disable one.
  * A deactivated account is read-only (403 `account_deactivated`).
@@ -78,7 +85,7 @@ export interface ListPayoutEventsParams {
 export class PayoutDestinationsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** List the account's destinations. */
+  /** List the account's destinations (deleted ones only with `include_deleted: true`). */
   list(params?: ListPayoutDestinationsParams): Promise<PaginatedResponse<PayoutDestination>> {
     return this.http.getPaginated(`/payout_destinations${buildQuery(params)}`)
   }
@@ -104,7 +111,7 @@ export class PayoutDestinationsResource {
   }
 
   /**
-   * Update the label, reserve, minimum or `active` flag. Changing `min_amount` needs
+   * Update the label, minimum or `active` flag. Changing `min_amount` needs
    * `confirm_details: true` (422 `confirmation_required` otherwise, nothing written) and
    * may not be blank (refused locally) — `no_minimum: true` removes the minimum, never with
    * `min_amount` beside it; raising it above the latest proof's amount takes the verification away. `active:
@@ -114,6 +121,28 @@ export class PayoutDestinationsResource {
   async update(id: string, params: UpdatePayoutDestinationRequest): Promise<PayoutDestination> {
     checkMinimum(params, false)
     return this.http.patch(path`/payout_destinations/${id}`, params)
+  }
+
+  /**
+   * Delete the destination (soft): it leaves the lists and its address may be registered
+   * again, while its payouts and audit trail still name it — `get` and `events` still
+   * read it, with `deleted_at` set and `status` `disabled`. An unsigned pending payout
+   * to it is cancelled; a signed one refuses the delete (409 `payout_already_signed`). Only
+   * the destination's own wallet may delete it; an already deleted one is 404.
+   */
+  delete(id: string): Promise<PayoutDestination> {
+    return this.http.delete<PayoutDestination>(path`/payout_destinations/${id}`)
+  }
+
+  /**
+   * What a payout to the destination would keep back in the wallet right now — the refund
+   * reserve, the gas reserve (native-gas chains only) and the transfer's own gas allowance
+   * — and `available`, what `amount: "all"` moves with both reserves kept. Computed live
+   * from the wallet's payments and the chain's fees (two chain reads; 502 when the chain
+   * cannot be read). A deleted destination still reads.
+   */
+  reserves(id: string): Promise<PayoutReserves> {
+    return this.http.get(path`/payout_destinations/${id}/reserves`)
   }
 
   /**

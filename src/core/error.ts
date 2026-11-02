@@ -251,7 +251,7 @@ const errorHints: Record<string, string> = {
     "the gateway's job queue could not be reached, so nothing was enqueued — retry in a moment",
   unknown_chain: "that chain isn't active on this gateway — check GET /blockchains",
   invalid_amount:
-    "the amount is malformed — a payment's amount is a human decimal the token can express; a payout destination's reserve_amount and min_amount are base units (digits only, below 2^120)",
+    "the amount is malformed — a payment's amount is a human decimal the token can express; a payout destination's min_amount is base units (digits only, below 2^120)",
   invalid_transaction: 'the signed transaction could not be decoded — send the raw 0x… bytes',
   invalid_cursor:
     "a cursor page (after) cannot be combined with page or a sort other than -created_at — drop one, or use the previous page's x-next-cursor",
@@ -276,7 +276,7 @@ const errorHints: Record<string, string> = {
   payout_below_minimum:
     "the amount is below the destination's deposit minimum (min_amount) — the venue would not credit it; send more",
   insufficient_balance:
-    "the wallet's balance, after the refund reserve, does not cover the transfer — the detail names what is available",
+    "the wallet's balance, after the reserves kept back (refund, gas), does not cover the transfer — the detail names what is available; payoutDestinations.reserves shows the figures, keep_refund_reserve / keep_gas_reserve: false opt out",
   payout_limit_reached: 'the wallet has reached its hourly payout limit — wait and try again',
   payout_already_signed:
     'a signed transfer is already stored for this payout and may still be mined — resend it (payouts.resend) instead of preparing or cancelling it',

@@ -10,7 +10,8 @@
  *    statement of the details_v1 text, so it is shown first and sent only on a "yes".
  * 2. Send the proof (a small transfer), wait for it to confirm on-chain, check the
  *    venue credited it, then confirm the destination: it becomes `verified`.
- * 3. Prepare a payout → verify → sign → submit, and poll it to `confirmed`.
+ * 3. Check the reserves the payout keeps back, then prepare a payout → verify → sign →
+ *    submit, and poll it to `confirmed`.
  */
 
 import { createInterface } from 'node:readline/promises'
@@ -82,9 +83,19 @@ try {
   const verified = await merchant.payoutDestinations.confirm(destination.id)
   console.log('Destination:', verified.status) // verified
 
-  // 3. Payout: prepare → verify → sign → submit, step by step.
+  // 3. Payout. The reserves are decided now: both are kept back by default (the refund
+  //    reserve, and the gas reserve on a chain whose gas is the token itself, like Arc).
+  const reserves = await merchant.payoutDestinations.reserves(destination.id)
+  console.log(
+    `Balance ${reserves.balance_formatted}, refund reserve ${reserves.refund_reserve_formatted}, ` +
+      `gas reserve ${reserves.gas_reserve_formatted}, available ${reserves.available_formatted}`,
+  )
+
+  //    Prepare → verify → sign → submit, step by step. Pass keep_refund_reserve: false or
+  //    keep_gas_reserve: false to move a reserve too — a refund after it may then fail.
   const amount = '250.00'
   const payout = await merchant.payouts.prepare({ destination_id: destination.id, amount })
+  console.log('Kept back:', payout.refund_reserve, payout.gas_reserve)
   const signed = signPayoutTransaction(payout.unsigned_transaction, MERCHANT_KEY, {
     payout,
     destination,

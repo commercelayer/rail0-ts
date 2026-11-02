@@ -85,7 +85,7 @@ export class PayoutsResource {
    *
    * Refused: `payout_destination_unverified` (more than the proof before `confirm`),
    * `payout_below_minimum`, `insufficient_balance` (names what is available after the
-   * reserve), `payout_limit_reached`, `payout_destination_disabled`, 409
+   * reserves kept), `payout_limit_reached`, `payout_destination_disabled`, 409
    * `payout_already_signed`.
    */
   prepare(params: PreparePayoutRequest): Promise<Payout> {

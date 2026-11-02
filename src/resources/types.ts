@@ -353,11 +353,6 @@ export type CreatePayoutDestinationRequest = {
   label?: string
   /** Defaults to `exchange`. */
   kind?: PayoutDestinationKind
-  /**
-   * Base units to keep in the wallet on an `all` payout (digits only, below 2^120; 422
-   * `invalid_amount` otherwise). Omit for the suggestion (`suggested_reserve`).
-   */
-  reserve_amount?: Uint256String
   /** The merchant's confirmation of the `details_v1` text — see above. */
   confirm_details: true
 } & (
@@ -380,8 +375,6 @@ export type CreatePayoutDestinationRequest = {
 /** The fields of a destination PATCH other than the minimum. */
 export interface PayoutDestinationEdits {
   label?: string
-  /** Base units; an empty string restores the suggestion. */
-  reserve_amount?: Uint256String
   /**
    * `false` disables the destination (any wallet of the account may); `true` re-enables
    * it, restoring the verification it had (only the destination's own wallet).
@@ -417,11 +410,25 @@ export type UpdatePayoutDestinationRequest =
  * Body of POST /payouts/prepare. A `proof` sends the gateway's proof amount
  * (`PAYOUT_PROOF_AMOUNT`, 1 token unit by default), raised to the destination's
  * `min_amount` when that is higher; a `payout` sends `amount` — a human decimal
- * (`"25.50"`) or `"all"` (the wallet's balance minus the refund reserve).
+ * (`"25.50"`) or `"all"` (the wallet's balance minus the reserves kept back).
+ *
+ * The reserves are decided here, per payout (see `payoutDestinations.reserves`): both are
+ * kept by default. `keep_refund_reserve: false` moves the refundable balance of payments
+ * still inside their refund window too — a refund after this payout may then fail for lack
+ * of funds; `keep_gas_reserve: false` moves the gas kept for the refunds and captures the
+ * wallet still owes (native-gas chains only). A proof takes neither.
  */
 export type PreparePayoutRequest =
   | { destination_id: string; purpose: 'proof' }
-  | { destination_id: string; purpose?: 'payout'; amount: string }
+  | {
+      destination_id: string
+      purpose?: 'payout'
+      amount: string
+      /** Defaults to `true`. `false`: do not keep back the refund reserve. */
+      keep_refund_reserve?: boolean
+      /** Defaults to `true`. `false`: do not keep back the gas reserve. */
+      keep_gas_reserve?: boolean
+    }
 
 // ── Domain models (gateway vocabulary) ───────────────────────────────
 /** Condensed payment record (GET /payments list item). */
@@ -776,11 +783,12 @@ export interface Health {
  * account's wallets cashes out to — bound to ONE chain and ONE token. An alias of the
  * schema component, with the fields the gateway always sends made required.
  *
- * Amounts are base-unit strings with a `*_formatted` human twin: `reserve_amount` (null =
- * `suggested_reserve`, the refundable balance still inside its refund window, which an
- * `all` payout leaves in the wallet) and `min_amount` (the venue's deposit minimum). A
- * null `min_amount` reads with `no_minimum`: true = the merchant stated the venue has
- * none; false = never stated (a destination registered before it was asked).
+ * `min_amount` (the venue's deposit minimum) is a base-unit string with a
+ * `min_amount_formatted` human twin. A null `min_amount` reads with `no_minimum`: true =
+ * the merchant stated the venue has none; false = never stated (a destination registered
+ * before it was asked). The reserves are not stored here: a payout decides them at prepare
+ * (`payoutDestinations.reserves` shows them). `deleted_at` is set (and `status`
+ * `disabled`) once the destination was deleted.
  */
 export type PayoutDestination = components['schemas']['PayoutDestination'] &
   Required<
@@ -806,6 +814,9 @@ export type PayoutDestination = components['schemas']['PayoutDestination'] &
  * `amount` (base units) — which `verifyPayoutTransaction` holds the transaction to before
  * any key touches it. `signed: true` on a `pending` row means the gateway stores its
  * signed bytes (and `transaction_hash`): resend it, never re-prepare it.
+ *
+ * `refund_reserve` and `gas_reserve` are the base units this payout kept back in the
+ * wallet, decided at prepare (`0` when opted out; null for a proof).
  */
 export type Payout = components['schemas']['Payout'] &
   Required<
@@ -826,6 +837,15 @@ export type Payout = components['schemas']['Payout'] &
   >
 /** One append-only entry of the payout audit trail (destination and payout events). */
 export type PayoutEvent = components['schemas']['PayoutEvent']
+/**
+ * What a payout to a destination would keep back right now (GET
+ * /payout_destinations/:id/reserves), computed from the wallet's payments and the chain's
+ * current fees — nothing is stored. Every amount is a base-unit string with a
+ * `*_formatted` human twin. `available` = `balance` − `refund_reserve` − `gas_reserve`
+ * − `gas_allowance`, floored at 0: what `amount: "all"` moves with both reserves kept.
+ * The gas figures are `0` unless `native_gas` (the chain's gas is paid in this token).
+ */
+export type PayoutReserves = components['schemas']['PayoutReserves']
 
 // ── Analytics (merchant sales rollups) ───────────────────────────────
 /** Volume for one (token, chain). Amounts are token base-unit integer strings

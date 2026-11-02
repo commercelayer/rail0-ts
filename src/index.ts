@@ -125,6 +125,7 @@ export type {
   PayoutEvent,
   PayoutEventAction,
   PayoutPurpose,
+  PayoutReserves,
   PayoutStatus,
   PreparePayoutRequest,
   PrepareRequest,

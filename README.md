@@ -582,7 +582,7 @@ await merchant.payoutDestinations.confirm(destination.id)  // → 'verified', fi
 ```
 
 **3. Pay out: prepare → verify → sign → submit.** `amount` is a human decimal or `"all"`
-(the balance minus the refund reserve). The prepared `Payout` carries
+(the balance minus the reserves kept back — see *Reserves* below). The prepared `Payout` carries
 `unsigned_transaction` beside its decoded intent (`chain_id`, `token`, `address`,
 `amount`); the signer holds the transaction to it **before** the key touches it:
 
@@ -627,9 +627,23 @@ true, confirm_details: true })` removes it, and a blank `''` is refused locally.
 `min_amount` reads with `no_minimum`: `true` = the merchant stated the venue has none,
 `false` = never stated (a destination registered before it was asked; not blocked).
 Raising the minimum above the latest proof's amount takes the verification away, so
-send a new proof at the new minimum. `reserve_amount` is what an `"all"` payout leaves in the wallet — `null` means
-`suggested_reserve`, the refundable balance of the wallet's payments still inside their
-refund window, because a refund pulls from the payee wallet.
+send a new proof at the new minimum.
+
+**Reserves.** They are decided at payout time, never stored on the destination. By
+default a payout keeps back the **refund reserve** — the refundable balance of the
+wallet's payments still inside their refund window, because a refund pulls from the payee
+wallet — and, on a chain whose gas is paid in the token itself (Arc's USDC), the **gas
+reserve** for the refunds and captures the wallet still owes. `reserves(id)` shows the
+figures now, and `available`: what `"all"` moves with both kept. Opt out per payout with
+`keep_refund_reserve: false` / `keep_gas_reserve: false` (a refund after it may then fail
+for lack of funds); the prepared `Payout` records what it kept in `refund_reserve` and
+`gas_reserve` (`"0"` when opted out, `null` for a proof):
+
+```ts
+const r = await merchant.payoutDestinations.reserves(destination.id)
+console.log(r.balance_formatted, r.refund_reserve_formatted, r.gas_reserve_formatted, r.available_formatted)
+await merchant.payouts.prepare({ destination_id: destination.id, amount: 'all', keep_gas_reserve: false })
+```
 
 **Stuck or failed.** One pending payout per destination: a re-prepare replaces it while
 unsigned. Once a signature is stored (`signed: true`, `transaction_hash` set — even if the
@@ -639,14 +653,19 @@ pending payout with `cancelled`. A payout failed `submission_timeout` or `droppe
 back with `submitByHash` and the late or replacement hash.
 
 `payoutDestinations`: `list(params?)` → `PaginatedResponse<PayoutDestination>` (filter
-`wallet_id`, `status`) · `create(params)` · `get(id)` · `update(id, params)` (`label`,
-`reserve_amount`, `min_amount` or `no_minimum` + `confirm_details`, `active` — `false` disables, any wallet
-of the account may) · `confirm(id)` · `events(id, params?)` → `PaginatedResponse<PayoutEvent>`
-(the destination's audit trail and its payouts', newest first).
+`wallet_id`, `status`; `include_deleted: true` lists deleted ones too) · `create(params)` ·
+`get(id)` · `update(id, params)` (`label`, `min_amount` or `no_minimum` + `confirm_details`,
+`active` — `false` disables, any wallet of the account may) · `delete(id)` (soft: the row
+stays readable with `deleted_at` set and `status` `disabled`, its address may be registered
+again; 409 `payout_already_signed` while a signed payout to it is pending) ·
+`reserves(id)` → `PayoutReserves` · `confirm(id)` · `events(id, params?)` →
+`PaginatedResponse<PayoutEvent>` (the destination's audit trail and its payouts', newest
+first).
 
 `payouts`: `list(params?)` → `PaginatedResponse<Payout>` (filter `destination_id`,
 `wallet_id`, `status` — one or an array, `purpose`, `created_from`/`created_to`; `sort`) ·
-`get(id)` · `events(id, params?)` · `prepare(params)` · `submit(id, { signed_transaction })` ·
+`get(id)` · `events(id, params?)` · `prepare(params)` (`keep_refund_reserve`,
+`keep_gas_reserve` on a payout) · `submit(id, { signed_transaction })` ·
 `resend(id)` · `cancel(id)` · `submitByHash(id, { transaction_hash })` ·
 `signAndSubmit(payout, key, check?)` · `prepareAndSubmit(params, key, check?)`.
 

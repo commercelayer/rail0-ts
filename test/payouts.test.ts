@@ -6,6 +6,7 @@ import type {
   CreatePayoutDestinationRequest,
   Payout,
   PayoutDestination,
+  PayoutReserves,
   UpdatePayoutDestinationRequest,
 } from '../src/resources/types.js'
 import { signPayoutTransaction, signTransaction } from '../src/signing.js'
@@ -550,6 +551,88 @@ describe('payout resources', () => {
       expect(call(spy, 3).url).toBe(`${BASE_URL}/payout_destinations/${DEST_ID}/events?per_page=50`)
       expect(events.data[0]?.action).toBe('destination.verified')
     })
+
+    it('lists deleted destinations only when asked', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json([destination]))
+      await client.payoutDestinations.list({ wallet_id: WALLET_ID, include_deleted: true })
+      expect(call(spy).url).toBe(
+        `${BASE_URL}/payout_destinations?wallet_id=${WALLET_ID}&include_deleted=true`,
+      )
+    })
+
+    it('deletes on DELETE and returns the row with deleted_at set', async () => {
+      const deleted: PayoutDestination = {
+        ...destination,
+        status: 'disabled',
+        deleted_at: '2026-11-02T10:00:00Z',
+      }
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(deleted))
+      const res = await client.payoutDestinations.delete(DEST_ID)
+      expect(call(spy)).toMatchObject({
+        url: `${BASE_URL}/payout_destinations/${DEST_ID}`,
+        method: 'DELETE',
+      })
+      expect(res.deleted_at).toBe('2026-11-02T10:00:00Z')
+      expect(res.status).toBe('disabled')
+    })
+
+    it('surfaces payout_already_signed on a delete with a signed payout pending', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        json(
+          {
+            code: 'payout_already_signed',
+            title: 'Payout already signed',
+            detail: 'A signed payout to this destination is pending.',
+          },
+          409,
+        ),
+      )
+      await expect(client.payoutDestinations.delete(DEST_ID)).rejects.toMatchObject({
+        status: 409,
+        code: 'payout_already_signed',
+      })
+    })
+
+    it('reads the reserves a payout would keep back', async () => {
+      const reserves: PayoutReserves = {
+        destination_id: DEST_ID,
+        chain_id: CHAIN_ID,
+        token: TOKEN,
+        token_symbol: 'USDC',
+        decimals: 6,
+        balance: '100000000',
+        balance_formatted: '100.0',
+        refund_reserve: '25000000',
+        refund_reserve_formatted: '25.0',
+        refundable_payments: 2,
+        native_gas: true,
+        gas_reserve: '300000',
+        gas_reserve_formatted: '0.3',
+        gas_refunds: 2,
+        open_authorizations: 1,
+        base_captures: 10,
+        gas_allowance: '20000',
+        gas_allowance_formatted: '0.02',
+        available: '74680000',
+        available_formatted: '74.68',
+      }
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(reserves))
+      const res = await client.payoutDestinations.reserves(DEST_ID)
+      expect(call(spy)).toMatchObject({
+        url: `${BASE_URL}/payout_destinations/${DEST_ID}/reserves`,
+        method: 'GET',
+      })
+      expect(res).toEqual(reserves)
+    })
+
+    it('no longer takes a reserve on a destination', () => {
+      const edits: UpdatePayoutDestinationRequest = {
+        label: 'Kraken',
+        // @ts-expect-error the reserve is decided at payout time, not stored on the destination
+        reserve_amount: '1000000',
+      }
+      expect(edits.label).toBe('Kraken')
+    })
   })
 
   describe('payouts', () => {
@@ -590,6 +673,40 @@ describe('payout resources', () => {
       expect(calls[1]?.body).toEqual({ destination_id: DEST_ID, purpose: 'proof' })
       expect(calls[2]?.body).toEqual({ signed_transaction: '0x02ab' })
       expect(calls[5]?.body).toEqual({ transaction_hash: `0x${'aa'.repeat(32)}` })
+    })
+
+    it('sends the reserve opt-outs on a payout prepare as given', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(json(makePayout({ refund_reserve: '0', gas_reserve: '0' }), 201))
+      const res = await client.payouts.prepare({
+        destination_id: DEST_ID,
+        amount: 'all',
+        keep_refund_reserve: false,
+        keep_gas_reserve: false,
+      })
+      expect(call(spy)).toMatchObject({
+        url: `${BASE_URL}/payouts/prepare`,
+        method: 'POST',
+        body: {
+          destination_id: DEST_ID,
+          amount: 'all',
+          keep_refund_reserve: false,
+          keep_gas_reserve: false,
+        },
+      })
+      expect(res.refund_reserve).toBe('0')
+      expect(res.gas_reserve).toBe('0')
+    })
+
+    it('takes the reserve opt-outs on a payout only, never on a proof', () => {
+      const p = client.payouts.prepare.bind(client.payouts, {
+        destination_id: DEST_ID,
+        purpose: 'proof',
+        // @ts-expect-error a proof keeps no reserve back
+        keep_refund_reserve: false,
+      })
+      expect(p).toBeTypeOf('function')
     })
 
     it('makes amount a compile-time requirement of a payout prepare', () => {

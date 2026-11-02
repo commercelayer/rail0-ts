@@ -1496,7 +1496,7 @@ export interface paths {
         };
         /**
          * Every account's payout destinations (admin)
-         * @description Read-only, across accounts, newest first. Each row is the whole record plus `token_symbol` and `account: {id, name}` (not the suggested reserve: one aggregate query per row). Filters account_id, wallet_id (UUIDs), chain_id, status; sort created_at, updated_at, label, status; offset pages.
+         * @description Read-only, across accounts, newest first. Each row is the whole record plus `token_symbol` and `account: {id, name}`. Filters account_id, wallet_id (UUIDs), chain_id, status; sort created_at, updated_at, label, status; offset pages.
          */
         get: operations["listAdminPayoutDestinations"];
         put?: never;
@@ -1918,11 +1918,15 @@ export interface paths {
         get: operations["getPayoutDestination"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a payout destination
+         * @description Removes the destination from the lists (GET /payout_destinations leaves it out unless `include_deleted=true`) and frees its address to be registered again. The row is kept: its payouts and audit trail still name it, and GET /payout_destinations/{id} and its events still read it, with `deleted_at` set and `status` `disabled`. Its pending payout is settled first, as on a switch-off: an unsigned one is marked `failed` with `cancelled`; a signed one refuses the delete with 409 `payout_already_signed`. A deleted destination takes no further write (404). Only the destination's own wallet may delete it. Recorded as `destination.deleted` in the audit trail.
+         */
+        delete: operations["deletePayoutDestination"];
         options?: never;
         head?: never;
         /**
-         * Update a payout destination (label, reserve, minimum, enabled)
+         * Update a payout destination (label, minimum, enabled)
          * @description `active: false` disables the destination. Its pending payout, if any, is settled first: an unsigned one is marked `failed` with `cancelled`; a signed one (its transaction may still be mined) refuses the switch-off with 409 `payout_already_signed` — resend it or wait for it to settle, then disable. `active: true` restores the verification it had. Only the destination's own wallet may edit or re-enable it; any wallet of the account may disable it (`active: false` alone). A deactivated account is read-only: every change, disabling included, is 403 `account_deactivated`. Every change is recorded in the audit trail (GET /payout_destinations/{id}/events).
          */
         patch: operations["updatePayoutDestination"];
@@ -1971,6 +1975,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payout_destinations/{id}/reserves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * The reserves a payout to this destination would keep back, and what it could move
+         * @description What POST /payouts/prepare would keep back in the wallet right now, computed from the wallet's payments and the chain's current fees (nothing is stored). The REFUND RESERVE is the refundable balance of the wallet's payments in this token still inside their refund window (a refund is pulled from the payee wallet, so an emptied wallet fails it). The GAS RESERVE, only on a chain whose gas is paid in this very token (Arc's USDC; `native_gas`), is the gas for those refunds and for capturing the wallet's open authorizations plus `base_captures` more, at the fee ceiling a prepare would set now; `0` on any other chain. Both reserves are kept by default at prepare; each can be opted out of per payout (`keep_refund_reserve`, `keep_gas_reserve`). `gas_allowance` is the payout transfer's own fee, always kept back on a native-gas chain. `available` is what `amount: all` moves with both reserves kept. Readable by every wallet of the account, like the destination; a deleted destination still reads. Two chain reads (balance, fees).
+         */
+        get: operations["getPayoutDestinationReserves"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payouts": {
         parameters: {
             query?: never;
@@ -2002,7 +2029,7 @@ export interface paths {
         put?: never;
         /**
          * Prepare a transfer to a payout destination
-         * @description Builds the unsigned ERC-20 transfer (one balance read, one fee/nonce read). `proof` sends PAYOUT_PROOF_AMOUNT, raised to the destination's `min_amount` when that is higher; `payout` sends `amount` — a human decimal, or `all` for the balance minus the refund reserve. An unverified destination may receive the proof amount at most. A payout below the destination's `min_amount` is refused with `payout_below_minimum` (for `all`: when what is available after the reserve is below it, but nothing available at all is `insufficient_balance`). One pending row per destination: a re-prepare replaces it while it is unsigned. Once a signed transaction is stored for it (see submit), a re-prepare is refused with 409 `payout_already_signed`: that transaction may still be mined, so it is resent (POST /payouts/{id}/resend), never replaced.
+         * @description Builds the unsigned ERC-20 transfer (one balance read, one fee/nonce read). `proof` sends PAYOUT_PROOF_AMOUNT, raised to the destination's `min_amount` when that is higher; `payout` sends `amount` — a human decimal, or `all` for the balance minus the reserves kept (decided now, both kept by default: the refund reserve and, on a chain whose gas is paid in this very token, the gas reserve — see GET /payout_destinations/{id}/reserves; `keep_refund_reserve` / `keep_gas_reserve: false` opt out of one for this payout) and, on such a chain (Arc's USDC), minus the gas allowance (gas_limit × max_fee_per_gas, the charge the EVM takes before the transfer runs — a transfer of the whole balance reverts for it; see `payout` on GET …/wallets/{id}/balances). A typed amount is held to the same ceiling. An unverified destination may receive the proof amount at most. A payout below the destination's `min_amount` is refused with `payout_below_minimum` (for `all`: when what is available after the reserves is below it, but nothing available at all is `insufficient_balance`). The payout records what it kept back (`refund_reserve`, `gas_reserve`). One pending row per destination: a re-prepare replaces it while it is unsigned. Once a signed transaction is stored for it (see submit), a re-prepare is refused with 409 `payout_already_signed`: that transaction may still be mined, so it is resent (POST /payouts/{id}/resend), never replaced.
          */
         post: operations["preparePayout"];
         delete?: never;
@@ -2172,6 +2199,14 @@ export interface components {
             raw?: string;
             /** @description Human-decimal balance. */
             amount?: string;
+            /** @description What a payout in this token keeps back for gas — on every ERC-20 line; null on the native balance. */
+            payout?: components["schemas"]["BalancePayout"] | null;
+        };
+        /** @description The gas figures of a payout in this token on this chain: whether the chain's gas IS this very token (`native_gas`; Arc's USDC) and, then, the allowance POST /payouts/prepare keeps back from `all`, from a typed amount's ceiling and from the proof (`gas_allowance` = gas_limit × max_fee_per_gas in base units, the charge the EVM takes before a transfer runs; `0` on any other chain). Null allowance when the fee could not be read. The reserves a payout keeps back are decided at payout time: GET /payout_destinations/{id}/reserves. */
+        BalancePayout: {
+            native_gas?: boolean;
+            gas_allowance?: string | null;
+            gas_allowance_formatted?: string | null;
         };
         /** @description Why a chain's balances couldn't be read. */
         BalanceError: {
@@ -3246,7 +3281,7 @@ export interface components {
             /** Format: uuid */
             id?: string;
             /** @enum {string} */
-            action?: "destination.created" | "destination.verified" | "destination.disabled" | "destination.enabled" | "destination.label_changed" | "destination.reserve_changed" | "destination.min_amount_changed" | "payout.prepared" | "payout.replaced" | "payout.signed" | "payout.hash_reported" | "payout.resent" | "payout.cancelled" | "payout.confirmed" | "payout.failed";
+            action?: "destination.created" | "destination.verified" | "destination.disabled" | "destination.enabled" | "destination.deleted" | "destination.label_changed" | "destination.reserve_changed" | "destination.min_amount_changed" | "payout.prepared" | "payout.replaced" | "payout.signed" | "payout.hash_reported" | "payout.resent" | "payout.cancelled" | "payout.confirmed" | "payout.failed";
             /** @description Who did it: the lowercase 0x address of the session wallet; `system` for the gateway's own settlement (Recovery); `operator:<administrator id>` reserved for an operator (none today). */
             actor?: string;
             /** @description `{"before": {…}, "after": {…}}` of the fields the event changed, either side optional. Amounts in base units. Never a signature or a payload. `destination.created` and `destination.min_amount_changed` also carry `confirmed_details`: `{"version": "details_v1", "by": <session address>, "at": <ISO 8601 UTC>}`, the merchant's attestation that they checked the details at the venue. */
@@ -3314,14 +3349,6 @@ export interface components {
             status?: "unverified" | "verified" | "disabled";
             /** @description Whether the address held code on this chain when registered (eth_getCode, best effort). An EOA and an undeployed contract look the same. */
             has_code?: boolean | null;
-            /** @description Base units kept in the wallet on a full-balance payout; null = the suggestion. */
-            reserve_amount?: string | null;
-            /** @description `reserve_amount` in human decimals (the token's decimals); null while the suggestion applies, or when the token left the catalog. */
-            reserve_amount_formatted?: string | null;
-            /** @description Base units: the refundable balance of the wallet's payments in this token still inside their refund window. */
-            suggested_reserve?: string;
-            /** @description `suggested_reserve` in human decimals; null when the token left the catalog. */
-            suggested_reserve_formatted?: string | null;
             /** @description The venue's deposit minimum, base units; null = no minimum. A payout below it is refused (`payout_below_minimum`); the proof transfer is raised to it. */
             min_amount?: string | null;
             /** @description true when the merchant stated the venue has no minimum deposit (`min_amount` is then null). false with a null `min_amount`: never stated (a destination registered before it was asked). */
@@ -3334,10 +3361,53 @@ export interface components {
             verified_at?: string | null;
             /** Format: date-time */
             disabled_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When the merchant deleted it (DELETE /payout_destinations/{id}); null for a live destination.
+             */
+            deleted_at?: string | null;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description What a payout to the destination would keep back right now (GET /payout_destinations/{id}/reserves). Every amount is base units as a string, with its human-decimals twin (`*_formatted`, the token's decimals). */
+        PayoutReserves: {
+            /** Format: uuid */
+            destination_id: string;
+            chain_id: number;
+            /** @description ERC-20 address on that chain, lowercased. */
+            token: string;
+            token_symbol: string;
+            decimals: number;
+            /** @description The wallet's balance of the token, read now. */
+            balance: string;
+            balance_formatted: string;
+            /** @description The refundable balance of the wallet's payments in this token still inside their refund window. */
+            refund_reserve: string;
+            refund_reserve_formatted: string;
+            /** @description How many payments `refund_reserve` covers: the refunds the wallet may still owe. */
+            refundable_payments: number;
+            /** @description Whether the chain's gas is paid in this very token (Arc's USDC). The gas figures are `0` when it is not. */
+            native_gas: boolean;
+            /** @description Gas for `gas_refunds` refunds and for `open_authorizations` + `base_captures` captures, at their gas limits and the fee ceiling a prepare would set now; `0` off a native-gas chain. Counted over every token of the chain: on Arc a EURC payment's capture or refund is paid in USDC gas too. */
+            gas_reserve: string;
+            gas_reserve_formatted: string;
+            /** @description The wallet's payments on this chain, in any token, still inside their refund window with something left to refund: the refunds the gas reserve pays for. */
+            gas_refunds: number;
+            /** @description The wallet's payments on this chain, in any token, still capturable (a capture's gas is the merchant wallet's). */
+            open_authorizations: number;
+            /**
+             * @description Captures the gas reserve pays for on top of the open authorizations, so the wallet can capture the payments it takes next.
+             * @example 10
+             */
+            base_captures: number;
+            /** @description The payout transfer's own fee (gas_limit × max_fee_per_gas), always kept back on a native-gas chain; `0` elsewhere. */
+            gas_allowance: string;
+            gas_allowance_formatted: string;
+            /** @description balance − refund_reserve − gas_reserve − gas_allowance, floored at 0: what `amount: all` moves with both reserves kept (the default). */
+            available: string;
+            available_formatted: string;
         };
         Payout: {
             /** Format: uuid */
@@ -3355,6 +3425,10 @@ export interface components {
             amount?: string;
             /** @description Human decimals. */
             amount_formatted?: string;
+            /** @description Base units this payout kept back in the wallet for refunds, decided at prepare; `0` when the merchant opted out (`keep_refund_reserve: false`); null for a proof. */
+            refund_reserve?: string | null;
+            /** @description Base units this payout kept back for the gas the wallet still owes (native-gas chains only, `0` elsewhere or when opted out with `keep_gas_reserve: false`); null for a proof. */
+            gas_reserve?: string | null;
             /** @enum {string} */
             purpose?: "proof" | "payout";
             /**
@@ -7139,6 +7213,8 @@ export interface operations {
                 /** @description Restrict to one wallet (uuid). */
                 wallet_id?: string;
                 status?: "unverified" | "verified" | "disabled";
+                /** @description true lists deleted destinations too (deleted_at set). */
+                include_deleted?: boolean;
             };
             header?: never;
             path?: never;
@@ -7187,8 +7263,6 @@ export interface operations {
                      * @enum {string}
                      */
                     kind?: "exchange" | "circle_mint" | "self_custody" | "provider";
-                    /** @description Base units to keep in the wallet on a full-balance payout (digits only, below 2^120; 422 `invalid_amount` otherwise); omit for the suggestion. */
-                    reserve_amount?: string;
                     /** @description The venue's deposit minimum in base units, from its deposit page (digits only, below 2^120; 422 `invalid_amount` otherwise). This OR `no_minimum: true` is required (422 `minimum_required` for neither or a blank figure, `minimum_conflict` for both). A payout below it is refused (`payout_below_minimum`) and the proof transfer is raised to it. */
                     min_amount?: string;
                     /** @description true: the venue has no minimum deposit, stated by the merchant. This OR `min_amount` is required; never both (422 `minimum_conflict`). */
@@ -7230,7 +7304,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `unknown_chain`, `unknown_token`, `payout_destination_zero_address`, `payout_destination_own_wallet`, `payout_destination_is_contract` (any RAIL0 deployment on the chain, archived included, or any catalogued token there), `invalid_amount` (`reserve_amount` or `min_amount` is not base units below 2^120), `confirmation_required` (`confirm_details` is not `true`), `minimum_required` (neither `min_amount` nor `no_minimum: true`, or a blank `min_amount`), `minimum_conflict` (both). */
+            /** @description `unknown_chain`, `unknown_token`, `payout_destination_zero_address`, `payout_destination_own_wallet`, `payout_destination_is_contract` (any RAIL0 deployment on the chain, archived included, or any catalogued token there), `invalid_amount` (`min_amount` is not base units below 2^120), `confirmation_required` (`confirm_details` is not `true`), `minimum_required` (neither `min_amount` nor `no_minimum: true`, or a blank `min_amount`), `minimum_conflict` (both). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7270,6 +7344,51 @@ export interface operations {
             };
         };
     };
+    deletePayoutDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted; the row as it now stands. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutDestination"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_your_wallet`: another wallet than the destination's; `account_deactivated`: the account is read-only; `wallet_deactivated`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found`: no such row in this account, or it is already deleted. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `payout_already_signed`: a signed payout to this destination is pending. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     updatePayoutDestination: {
         parameters: {
             query?: never;
@@ -7283,13 +7402,11 @@ export interface operations {
             content: {
                 "application/json": {
                     label?: string;
-                    /** @description Base units (digits only, below 2^120; 422 `invalid_amount` otherwise); an empty string restores the suggestion. */
-                    reserve_amount?: string;
                     /** @description The venue's deposit minimum, base units (digits only, below 2^120; 422 `invalid_amount` otherwise); it also clears `no_minimum`. Never blank (422 `minimum_required`): `no_minimum: true` is how a minimum is removed. Changing it requires `confirm_details: true`. Raising it above the amount of the destination's latest proof takes its verification away (`status` back to `unverified`, `verified_at` null; a disabled one re-enables unverified): the merchant proves the address again with a new proof, prepared at the new minimum. The change is recorded in `destination.min_amount_changed`, with `status` and `verified_by` beside `min_amount`. */
                     min_amount?: string;
                     /** @description true: the venue has no minimum deposit (stated); clears `min_amount`. Never with `min_amount` (422 `minimum_conflict`). Changing it requires `confirm_details: true`. */
                     no_minimum?: boolean;
-                    /** @description Required `true` when the request CHANGES `min_amount` (the same value again needs nothing; label, reserve and active never do): the merchant confirms the `details_v1` text (see POST /payout_destinations). Recorded in the `destination.min_amount_changed` event as `changes.confirmed_details` {version, by, at}. */
+                    /** @description Required `true` when the request CHANGES `min_amount` (the same value again needs nothing; label and active never do): the merchant confirms the `details_v1` text (see POST /payout_destinations). Recorded in the `destination.min_amount_changed` event as `changes.confirmed_details` {version, by, at}. */
                     confirm_details?: boolean;
                     /** @description false disables it, true re-enables it (a verified destination stays verified). */
                     active?: boolean;
@@ -7307,7 +7424,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description `not_your_wallet`: an edit (label, reserve, minimum, re-enable) by another wallet than the destination's — any wallet of the account may only disable; `account_deactivated`: any change on a deactivated account, disabling included (it is read-only); `wallet_deactivated`. */
+            /** @description `not_your_wallet`: an edit (label, minimum, re-enable) by another wallet than the destination's — any wallet of the account may only disable; `account_deactivated`: any change on a deactivated account, disabling included (it is read-only); `wallet_deactivated`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -7328,7 +7445,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `invalid_amount`: `reserve_amount` or `min_amount` is not base units below 2^120; `minimum_required`: `min_amount` sent blank (`no_minimum: true` is how to say the venue has none); `minimum_conflict`: both `min_amount` and `no_minimum: true`; `confirmation_required`: the request changes `min_amount` without `confirm_details: true` (nothing is written). */
+            /** @description `invalid_amount`: `min_amount` is not base units below 2^120; `minimum_required`: `min_amount` sent blank (`no_minimum: true` is how to say the venue has none); `minimum_conflict`: both `min_amount` and `no_minimum: true`; `confirmation_required`: the request changes `min_amount` without `confirm_details: true` (nothing is written). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7422,6 +7539,51 @@ export interface operations {
             };
         };
     };
+    getPayoutDestinationReserves: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The payout destination id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutReserves"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description `not_found`: no such row in this account (another account's row answers the same). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unknown_chain`, `unknown_token`: the destination's chain or token left the catalog. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `rpc_unavailable` or a classified RPC error: the balance or the fees could not be read. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listPayouts: {
         parameters: {
             query?: {
@@ -7486,6 +7648,16 @@ export interface operations {
                     purpose?: "proof" | "payout";
                     /** @description Human decimals, or `all`. Required for a payout. */
                     amount?: string;
+                    /**
+                     * @description Payout purpose only. `false`: do not keep back the refund reserve (the refundable balance of the wallet's payments still inside their refund window) — a refund after this payout may then fail for lack of funds.
+                     * @default true
+                     */
+                    keep_refund_reserve?: boolean;
+                    /**
+                     * @description Payout purpose only. `false`: do not keep back the gas reserve (on a native-gas chain, the gas for the refunds and captures the wallet still owes plus a base of new captures; `0` elsewhere).
+                     * @default true
+                     */
+                    keep_gas_reserve?: boolean;
                 };
             };
         };
@@ -7537,7 +7709,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `payout_destination_disabled`, `payout_destination_unverified`, `payout_below_minimum` (the detail names the minimum, and for `all` what is available), `insufficient_balance` (names what is available after the reserve; also a proof above the balance), `payout_limit_reached`, `unknown_chain`, `unknown_token`. */
+            /** @description `payout_destination_disabled`, `payout_destination_unverified`, `payout_below_minimum` (the detail names the minimum, and for `all` what is available), `insufficient_balance` (names what is available after the reserves kept, and the network fee where one is kept back; also a proof above the balance), `payout_limit_reached`, `unknown_chain`, `unknown_token`. */
             422: {
                 headers: {
                     [name: string]: unknown;
