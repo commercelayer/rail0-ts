@@ -303,7 +303,7 @@ capture, where the broadcast may already be in flight — those are never retrie
 `signal` cancels the request **and any retry that is waiting**, which matters precisely
 because `retryOn429` can hold a promise for up to a minute.
 
-Resources: `client.payments`, `client.accounts`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.disputes`, `client.analytics`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
+Resources: `client.payments`, `client.accounts`, `client.wallets`, `client.paymentMethods`, `client.webhooks`, `client.payoutDestinations`, `client.payouts`, `client.disputes`, `client.analytics`, `client.chains`, `client.tokens`, `client.health`, `client.auth`.
 
 `setAuthToken(jwt)` sets (or, with `null`/`undefined`, clears) the `Authorization: Bearer …` header on every subsequent request. A successful `auth.login()` or `auth.verify()` already calls it for you (as rail0-go's `Auth.Login`/`Verify` do), so a long-lived client is authenticated right after signing in; use `setAuthToken` to install a token you persisted, or to share one session across several clients:
 
