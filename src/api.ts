@@ -3344,8 +3344,6 @@ export interface components {
             address?: string;
             label?: string | null;
             /** @enum {string} */
-            kind?: "exchange" | "circle_mint" | "self_custody" | "provider";
-            /** @enum {string} */
             status?: "unverified" | "verified" | "disabled";
             /** @description Whether the address held code on this chain when registered (eth_getCode, best effort). An EOA and an undeployed contract look the same. */
             has_code?: boolean | null;
@@ -7258,11 +7256,6 @@ export interface operations {
                     /** @description The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
                     address: string;
                     label?: string;
-                    /**
-                     * @default exchange
-                     * @enum {string}
-                     */
-                    kind?: "exchange" | "circle_mint" | "self_custody" | "provider";
                     /** @description The venue's deposit minimum in base units, from its deposit page (digits only, below 2^120; 422 `invalid_amount` otherwise). This OR `no_minimum: true` is required (422 `minimum_required` for neither or a blank figure, `minimum_conflict` for both). A payout below it is refused (`payout_below_minimum`) and the proof transfer is raised to it. */
                     min_amount?: string;
                     /** @description true: the venue has no minimum deposit, stated by the merchant. This OR `min_amount` is required; never both (422 `minimum_conflict`). */

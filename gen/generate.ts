@@ -178,8 +178,6 @@ export type WebhookTopic =
   | 'payouts.confirmed'
   | 'payouts.failed'
   | 'payout_destinations.verified'
-/** What a payout destination is: the venue its deposit address belongs to. */
-export type PayoutDestinationKind = 'exchange' | 'circle_mint' | 'self_custody' | 'provider'
 /**
  * \`unverified\` (born so; may receive the proof amount at most), \`verified\` (the merchant
  * attested the venue credited the proof), \`disabled\` (switched off; \`active: true\`
@@ -408,8 +406,6 @@ export type CreatePayoutDestinationRequest = {
   /** The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
   address: Address
   label?: string
-  /** Defaults to \`exchange\`. */
-  kind?: PayoutDestinationKind
   /** The merchant's confirmation of the \`details_v1\` text — see above. */
   confirm_details: true
 } & (
@@ -856,7 +852,6 @@ export type PayoutDestination = components['schemas']['PayoutDestination'] &
       | 'chain_id'
       | 'token'
       | 'address'
-      | 'kind'
       | 'status'
       | 'no_minimum'
       | 'created_at'

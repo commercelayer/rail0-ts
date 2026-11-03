@@ -81,7 +81,6 @@ const destination: PayoutDestination = {
   chain_id: CHAIN_ID,
   token: TOKEN,
   address: DEST_ADDRESS,
-  kind: 'exchange',
   status: 'verified',
   created_at: '2026-10-29T10:00:00Z',
 }
@@ -392,7 +391,6 @@ describe('payout resources', () => {
         chain_id: CHAIN_ID,
         token: TOKEN,
         address: DEST_ADDRESS,
-        kind: 'exchange',
         min_amount: '11000000',
         confirm_details: true,
       }

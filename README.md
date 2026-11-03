@@ -559,7 +559,6 @@ const destination = await merchant.payoutDestinations.create({
   chain_id: 5042002,
   token: USDC,
   address: '0x…',                    // issued by the venue FOR THIS CHAIN
-  kind: 'exchange',                  // exchange | circle_mint | self_custody | provider
   min_amount: '11000000',            // the venue's deposit minimum, base units —
                                      // or no_minimum: true when the venue has none
   confirm_details: true,             // the merchant confirmed PAYOUT_DETAILS_CONFIRMATION.text

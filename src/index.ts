@@ -120,7 +120,6 @@ export type {
   Payout,
   PayoutDestination,
   PayoutDestinationEdits,
-  PayoutDestinationKind,
   PayoutDestinationStatus,
   PayoutEvent,
   PayoutEventAction,
