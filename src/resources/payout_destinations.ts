@@ -98,8 +98,8 @@ export class PayoutDestinationsResource {
    * `min_amount` or `no_minimum: true` is required as well (checked locally before the
    * request; 422 `minimum_required` / `minimum_conflict` from the gateway). Refused: the zero
    * address, the wallet itself, and every contract the gateway knows on the chain (422
-   * `payout_destination_*`); the same address/token/chain twice on a wallet (409
-   * `payout_destination_exists`).
+   * `payout_destination_*`); a second destination for the same token and chain on a
+   * wallet — one per payment method — (409 `payout_destination_exists`).
    */
   async create(params: CreatePayoutDestinationRequest): Promise<PayoutDestination> {
     checkMinimum(params, true)

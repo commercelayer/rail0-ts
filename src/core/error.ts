@@ -262,7 +262,7 @@ const errorHints: Record<string, string> = {
     "the venue's deposit minimum must be stated — min_amount (base units, from its deposit page), or no_minimum: true when the venue has none; it may not be left out or blank",
   minimum_conflict: 'send either min_amount or no_minimum: true, not both',
   payout_destination_exists:
-    'this wallet already has this address for this token and chain — use the existing destination',
+    'this payment method (token and chain) already has a destination — one per method; delete it to register another address',
   payout_destination_zero_address: 'the destination address is the zero address',
   payout_destination_own_wallet:
     'the destination is the paying wallet itself — use the deposit address from the venue',

@@ -7290,7 +7290,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `payout_destination_exists`: this wallet already has this address for this token and chain. */
+            /** @description `payout_destination_exists`: this wallet already has a destination for this token and chain (one per payment method; delete it to register another). */
             409: {
                 headers: {
                     [name: string]: unknown;
