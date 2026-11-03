@@ -7255,7 +7255,8 @@ export interface operations {
                     token: string;
                     /** @description The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
                     address: string;
-                    label?: string;
+                    /** @description The merchant's name for it: never blank, unique (case-insensitive) among the account's live destinations. */
+                    label: string;
                     /** @description The venue's deposit minimum in base units, from its deposit page (digits only, below 2^120; 422 `invalid_amount` otherwise). This OR `no_minimum: true` is required (422 `minimum_required` for neither or a blank figure, `minimum_conflict` for both). A payout below it is refused (`payout_below_minimum`) and the proof transfer is raised to it. */
                     min_amount?: string;
                     /** @description true: the venue has no minimum deposit, stated by the merchant. This OR `min_amount` is required; never both (422 `minimum_conflict`). */
@@ -7290,14 +7291,14 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `payout_destination_exists`: this wallet already has a destination for this token and chain (one per payment method; delete it to register another). */
+            /** @description `payout_destination_exists`: this wallet already has a destination for this token and chain (one per payment method; delete it to register another); `payout_destination_label_taken`: another live destination of the account has this label (case-insensitive). */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description `unknown_chain`, `unknown_token`, `payout_destination_zero_address`, `payout_destination_own_wallet`, `payout_destination_is_contract` (any RAIL0 deployment on the chain, archived included, or any catalogued token there), `invalid_amount` (`min_amount` is not base units below 2^120), `confirmation_required` (`confirm_details` is not `true`), `minimum_required` (neither `min_amount` nor `no_minimum: true`, or a blank `min_amount`), `minimum_conflict` (both). */
+            /** @description `unknown_chain`, `unknown_token`, `payout_destination_zero_address`, `payout_destination_own_wallet`, `payout_destination_is_contract` (any RAIL0 deployment on the chain, archived included, or any catalogued token there), `invalid_amount` (`min_amount` is not base units below 2^120), `confirmation_required` (`confirm_details` is not `true`), `minimum_required` (neither `min_amount` nor `no_minimum: true`, or a blank `min_amount`), `minimum_conflict` (both), `label_required` (a blank `label`). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -7431,14 +7432,14 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `payout_already_signed`: disabling is refused while a signed payout to this destination is pending. */
+            /** @description `payout_already_signed`: disabling is refused while a signed payout to this destination is pending; `payout_destination_label_taken`: another live destination of the account has this label (case-insensitive). */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description `invalid_amount`: `min_amount` is not base units below 2^120; `minimum_required`: `min_amount` sent blank (`no_minimum: true` is how to say the venue has none); `minimum_conflict`: both `min_amount` and `no_minimum: true`; `confirmation_required`: the request changes `min_amount` without `confirm_details: true` (nothing is written). */
+            /** @description `invalid_amount`: `min_amount` is not base units below 2^120; `minimum_required`: `min_amount` sent blank (`no_minimum: true` is how to say the venue has none); `minimum_conflict`: both `min_amount` and `no_minimum: true`; `label_required`: `label` sent blank; `confirmation_required`: the request changes `min_amount` without `confirm_details: true` (nothing is written). */
             422: {
                 headers: {
                     [name: string]: unknown;

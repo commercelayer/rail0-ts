@@ -391,6 +391,7 @@ describe('payout resources', () => {
         chain_id: CHAIN_ID,
         token: TOKEN,
         address: DEST_ADDRESS,
+        label: 'Kraken',
         min_amount: '11000000',
         confirm_details: true,
       }
@@ -408,6 +409,7 @@ describe('payout resources', () => {
         chain_id: CHAIN_ID,
         token: TOKEN,
         address: DEST_ADDRESS,
+        label: 'Kraken',
       } as const
       // @ts-expect-error confirm_details is required on create
       const missing: CreatePayoutDestinationRequest = { ...base, min_amount: '11000000' }
@@ -438,6 +440,13 @@ describe('payout resources', () => {
         no_minimum: true,
         confirm_details: true,
       }
+      const { label: _label, ...unlabelled } = base
+      // @ts-expect-error the label is required on create
+      const noLabel: CreatePayoutDestinationRequest = {
+        ...unlabelled,
+        no_minimum: true,
+        confirm_details: true,
+      }
       // @ts-expect-error changing min_amount needs confirm_details: true
       const minOnly: UpdatePayoutDestinationRequest = { min_amount: '5000000' }
       // @ts-expect-error removing the minimum needs confirm_details: true
@@ -445,7 +454,7 @@ describe('payout resources', () => {
       const label: UpdatePayoutDestinationRequest = { label: 'Kraken' }
       const min: UpdatePayoutDestinationRequest = { min_amount: '5000000', confirm_details: true }
       const remove: UpdatePayoutDestinationRequest = { no_minimum: true, confirm_details: true }
-      expect([missing, refused, neither, both, falseFlag, figure, none]).toHaveLength(7)
+      expect([missing, refused, neither, both, falseFlag, figure, none, noLabel]).toHaveLength(8)
       expect([minOnly, flagOnly, label, min, remove]).toHaveLength(5)
     })
 
@@ -460,6 +469,7 @@ describe('payout resources', () => {
         chain_id: CHAIN_ID,
         token: TOKEN,
         address: DEST_ADDRESS,
+        label: 'Kraken',
         no_minimum: true,
         confirm_details: true,
       }
@@ -475,6 +485,7 @@ describe('payout resources', () => {
         chain_id: CHAIN_ID,
         token: TOKEN,
         address: DEST_ADDRESS,
+        label: 'Kraken',
         confirm_details: true,
       } as const
       // Casts stand for plain-JS callers the type cannot hold.
@@ -495,6 +506,50 @@ describe('payout resources', () => {
         client.payoutDestinations.update(DEST_ID, { min_amount: '', confirm_details: true }),
       ).rejects.toThrow(/may not be blank/)
       expect(spy).not.toHaveBeenCalled()
+    })
+
+    it('refuses a missing or blank label locally, before any request', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch')
+      const base = {
+        wallet_id: WALLET_ID,
+        chain_id: CHAIN_ID,
+        token: TOKEN,
+        address: DEST_ADDRESS,
+        no_minimum: true,
+        confirm_details: true,
+      } as const
+      // A cast stands for a plain-JS caller the type cannot hold.
+      const missing = base as unknown as CreatePayoutDestinationRequest
+      await expect(client.payoutDestinations.create(missing)).rejects.toThrow(/label required/)
+      await expect(client.payoutDestinations.create({ ...base, label: '  ' })).rejects.toThrow(
+        /label required/,
+      )
+      await expect(client.payoutDestinations.update(DEST_ID, { label: '' })).rejects.toThrow(
+        /label required/,
+      )
+      expect(spy).not.toHaveBeenCalled()
+    })
+
+    it('leaves the label alone on an update that does not send one', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(destination))
+      await client.payoutDestinations.update(DEST_ID, { active: false })
+      expect(call(spy).body).toEqual({ active: false })
+    })
+
+    it('surfaces payout_destination_label_taken from the gateway', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        json(
+          {
+            code: 'payout_destination_label_taken',
+            title: 'Label already in use',
+            detail: 'Another destination of this account already has this label.',
+          },
+          409,
+        ),
+      )
+      await expect(
+        client.payoutDestinations.update(DEST_ID, { label: 'kraken' }),
+      ).rejects.toMatchObject({ status: 409, code: 'payout_destination_label_taken' })
     })
 
     it('surfaces minimum_conflict from the gateway', async () => {
@@ -809,6 +864,8 @@ describe('payout error hints', () => {
     'insufficient_balance',
     'foreign_transfer_hash',
     'payout_destination_exists',
+    'payout_destination_label_taken',
+    'label_required',
     'payout_destination_is_contract',
     'invalid_amount',
   ])('has a hint for %s', (code) => {

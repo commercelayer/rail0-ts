@@ -549,7 +549,10 @@ it for you. The minimum is **required** too, never defaulted: exactly one of `mi
 (the venue's figure from its deposit page, base units) or `no_minimum: true` (the venue has
 none). The type refuses neither and both, and so does a local check before the request
 (the gateway: 422 `minimum_required` / `minimum_conflict`) — a minimum nobody looked up is
-how a deposit gets lost.
+how a deposit gets lost. A `label` is **required** as well and unique per account: the
+gateway trims it, refuses a blank one (422 `label_required`, also checked locally) and one
+another live destination of the account already has, case-insensitive (409
+`payout_destination_label_taken`); deleting a destination frees its label.
 
 ```ts
 import { PAYOUT_DETAILS_CONFIRMATION } from '@commercelayer/rail0-sdk'
@@ -559,6 +562,7 @@ const destination = await merchant.payoutDestinations.create({
   chain_id: 5042002,
   token: USDC,
   address: '0x…',                    // issued by the venue FOR THIS CHAIN
+  label: 'Kraken',                   // required, unique per account (case-insensitive)
   min_amount: '11000000',            // the venue's deposit minimum, base units —
                                      // or no_minimum: true when the venue has none
   confirm_details: true,             // the merchant confirmed PAYOUT_DETAILS_CONFIRMATION.text
@@ -652,11 +656,11 @@ pending payout with `cancelled`. A payout failed `submission_timeout` or `droppe
 back with `submitByHash` and the late or replacement hash.
 
 `payoutDestinations`: `list(params?)` → `PaginatedResponse<PayoutDestination>` (filter
-`wallet_id`, `status`; `include_deleted: true` lists deleted ones too) · `create(params)` ·
-`get(id)` · `update(id, params)` (`label`, `min_amount` or `no_minimum` + `confirm_details`,
+`wallet_id`, `status`; `include_deleted: true` lists deleted ones too) · `create(params)` (`label` required) ·
+`get(id)` · `update(id, params)` (`label` — never blank, unique per account; `min_amount` or `no_minimum` + `confirm_details`,
 `active` — `false` disables, any wallet of the account may) · `delete(id)` (soft: the row
-stays readable with `deleted_at` set and `status` `disabled`, its address may be registered
-again; 409 `payout_already_signed` while a signed payout to it is pending) ·
+stays readable with `deleted_at` set and `status` `disabled`, its address and label may be
+registered again; 409 `payout_already_signed` while a signed payout to it is pending) ·
 `reserves(id)` → `PayoutReserves` · `confirm(id)` · `events(id, params?)` →
 `PaginatedResponse<PayoutEvent>` (the destination's audit trail and its payouts', newest
 first).

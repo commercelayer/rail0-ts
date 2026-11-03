@@ -323,7 +323,7 @@ export interface WebhookTestResult {
 }
 /**
  * Body of POST /payout_destinations: a deposit address at a venue, for the session's own
- * wallet, bound to ONE chain and ONE token.
+ * wallet, bound to ONE chain and ONE token, under a REQUIRED `label` unique per account.
  *
  * `confirm_details` is REQUIRED and typed as the literal `true`: it records the merchant's
  * statement of the `details_v1` text (`PAYOUT_DETAILS_CONFIRMATION.text`) — "I have checked
@@ -348,7 +348,13 @@ export type CreatePayoutDestinationRequest = {
   token: Address
   /** The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
   address: Address
-  label?: string
+  /**
+   * REQUIRED name for the destination (e.g. "Kraken"), unique per account: the gateway
+   * trims it, refuses a blank one (422 `label_required`; checked locally before the
+   * request) and one another live destination of the account already has, case-insensitive
+   * (409 `payout_destination_label_taken`). Deleting a destination frees its label.
+   */
+  label: string
   /** The merchant's confirmation of the `details_v1` text — see above. */
   confirm_details: true
 } & (
@@ -370,6 +376,10 @@ export type CreatePayoutDestinationRequest = {
 )
 /** The fields of a destination PATCH other than the minimum. */
 export interface PayoutDestinationEdits {
+  /**
+   * Renames the destination: never blank (422 `label_required`; checked locally) and
+   * unique per account, case-insensitive (409 `payout_destination_label_taken`).
+   */
   label?: string
   /**
    * `false` disables the destination (any wallet of the account may); `true` re-enables

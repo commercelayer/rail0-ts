@@ -64,6 +64,7 @@ try {
     chain_id: CHAIN_ID,
     token: USDC,
     address: DEPOSIT_ADDRESS,
+    label: 'Exchange deposit', // required, unique per account
     min_amount: '11000000', // the venue's deposit minimum, base units — or no_minimum: true if none
     confirm_details: true, // the merchant said "yes" to the text above
   })

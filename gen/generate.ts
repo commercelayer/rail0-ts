@@ -380,7 +380,7 @@ export interface WebhookTestResult {
 }
 /**
  * Body of POST /payout_destinations: a deposit address at a venue, for the session's own
- * wallet, bound to ONE chain and ONE token.
+ * wallet, bound to ONE chain and ONE token, under a REQUIRED \`label\` unique per account.
  *
  * \`confirm_details\` is REQUIRED and typed as the literal \`true\`: it records the merchant's
  * statement of the \`details_v1\` text (\`PAYOUT_DETAILS_CONFIRMATION.text\`) — "I have checked
@@ -405,7 +405,13 @@ export type CreatePayoutDestinationRequest = {
   token: Address
   /** The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
   address: Address
-  label?: string
+  /**
+   * REQUIRED name for the destination (e.g. "Kraken"), unique per account: the gateway
+   * trims it, refuses a blank one (422 \`label_required\`; checked locally before the
+   * request) and one another live destination of the account already has, case-insensitive
+   * (409 \`payout_destination_label_taken\`). Deleting a destination frees its label.
+   */
+  label: string
   /** The merchant's confirmation of the \`details_v1\` text — see above. */
   confirm_details: true
 } & (
@@ -427,6 +433,10 @@ export type CreatePayoutDestinationRequest = {
 )
 /** The fields of a destination PATCH other than the minimum. */
 export interface PayoutDestinationEdits {
+  /**
+   * Renames the destination: never blank (422 \`label_required\`; checked locally) and
+   * unique per account, case-insensitive (409 \`payout_destination_label_taken\`).
+   */
   label?: string
   /**
    * \`false\` disables the destination (any wallet of the account may); \`true\` re-enables
@@ -1883,6 +1893,18 @@ function checkMinimum(
   }
 }
 
+/**
+ * A destination's label is required on create and never blank on update (when given).
+ * Throws before any request; the gateway enforces the same (\`label_required\`) and also
+ * refuses a label another live destination of the account has (\`payout_destination_label_taken\`).
+ */
+function checkLabel(params: { label?: string | undefined }, create: boolean): void {
+  const label = params.label
+  if (label === undefined ? create : label.trim() === '') {
+    throw new Error('label required — name the destination (unique per account)')
+  }
+}
+
 export interface ListPayoutDestinationsParams {
   /** Restrict to one wallet (uuid). */
   wallet_id?: string
@@ -1931,7 +1953,9 @@ export class PayoutDestinationsResource {
   /**
    * Register a destination for the session's own wallet (201, \`unverified\`).
    *
-   * \`confirm_details: true\` is required — the merchant's statement of
+   * \`label\` is required and unique per account (case-insensitive; a blank one is refused
+   * locally, 422 \`label_required\` from the gateway; one already in use is 409
+   * \`payout_destination_label_taken\`). \`confirm_details: true\` is required — the merchant's statement of
    * \`PAYOUT_DETAILS_CONFIRMATION.text\`; never set it on their behalf. Exactly one of
    * \`min_amount\` or \`no_minimum: true\` is required as well (checked locally before the
    * request; 422 \`minimum_required\` / \`minimum_conflict\` from the gateway). Refused: the zero
@@ -1940,6 +1964,7 @@ export class PayoutDestinationsResource {
    * wallet — one per payment method — (409 \`payout_destination_exists\`).
    */
   async create(params: CreatePayoutDestinationRequest): Promise<PayoutDestination> {
+    checkLabel(params, true)
     checkMinimum(params, true)
     return this.http.post('/payout_destinations', params)
   }
@@ -1949,7 +1974,8 @@ export class PayoutDestinationsResource {
   }
 
   /**
-   * Update the label, minimum or \`active\` flag. Changing \`min_amount\` needs
+   * Update the label, minimum or \`active\` flag. A label is never blank (refused locally)
+   * and unique per account (409 \`payout_destination_label_taken\`). Changing \`min_amount\` needs
    * \`confirm_details: true\` (422 \`confirmation_required\` otherwise, nothing written) and
    * may not be blank (refused locally) — \`no_minimum: true\` removes the minimum, never with
    * \`min_amount\` beside it; raising it above the latest proof's amount takes the verification away. \`active:
@@ -1957,13 +1983,14 @@ export class PayoutDestinationsResource {
    * \`payout_already_signed\` while a signed one is pending.
    */
   async update(id: string, params: UpdatePayoutDestinationRequest): Promise<PayoutDestination> {
+    checkLabel(params, false)
     checkMinimum(params, false)
     return this.http.patch(path\`/payout_destinations/\${id}\`, params)
   }
 
   /**
-   * Delete the destination (soft): it leaves the lists and its address may be registered
-   * again, while its payouts and audit trail still name it — \`get\` and \`events\` still
+   * Delete the destination (soft): it leaves the lists and its address and label may be
+   * registered again, while its payouts and audit trail still name it — \`get\` and \`events\` still
    * read it, with \`deleted_at\` set and \`status\` \`disabled\`. An unsigned pending payout
    * to it is cancelled; a signed one refuses the delete (409 \`payout_already_signed\`). Only
    * the destination's own wallet may delete it; an already deleted one is 404.
