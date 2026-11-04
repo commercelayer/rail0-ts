@@ -6,3 +6,13 @@
 allowBuilds:
   esbuild: true
 
+
+# GHSA-g3hv-75wg-m249 (moderate, minimatch DoS via globparts amplification), fixed
+# only in minimatch >= 11.0.1 (no 5.x backport). Dev-only: openapi-typescript 7 ->
+# @redocly/openapi-core 1.34.x pins minimatch 5.1.9, and no 1.x release moves off it.
+# Scoped to that one edge. minimatch 11's CommonJS export is not callable, so redocly's
+# match() would throw, but it runs only for resolve.http.headers rules in a redocly
+# config, which this repo does not have (`pnpm generate` is unaffected). Drop once
+# openapi-typescript moves to a redocly that ships a fixed minimatch.
+overrides:
+  '@redocly/openapi-core>minimatch': '11.0.1'
