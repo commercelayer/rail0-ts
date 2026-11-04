@@ -81,6 +81,7 @@ const destination: PayoutDestination = {
   chain_id: CHAIN_ID,
   token: TOKEN,
   address: DEST_ADDRESS,
+  label: 'Kraken',
   status: 'verified',
   created_at: '2026-10-29T10:00:00Z',
 }
@@ -506,6 +507,16 @@ describe('payout resources', () => {
         client.payoutDestinations.update(DEST_ID, { min_amount: '', confirm_details: true }),
       ).rejects.toThrow(/may not be blank/)
       expect(spy).not.toHaveBeenCalled()
+    })
+
+    it('reads the label as a non-null string', () => {
+      const label: string = destination.label
+      const { label: _label, ...unlabelled } = destination
+      // @ts-expect-error the gateway always sends the label
+      const noLabel: PayoutDestination = unlabelled
+      // @ts-expect-error the label is never null
+      const nullLabel: PayoutDestination = { ...destination, label: null }
+      expect([label, noLabel, nullLabel]).toHaveLength(3)
     })
 
     it('refuses a missing or blank label locally, before any request', async () => {

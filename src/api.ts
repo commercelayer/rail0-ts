@@ -3342,7 +3342,8 @@ export interface components {
             token_symbol?: string | null;
             /** @description The deposit address, lowercased. */
             address?: string;
-            label?: string | null;
+            /** @description The merchant's name for it: never blank, unique (case-insensitive) among the account's live destinations. */
+            label?: string;
             /** @enum {string} */
             status?: "unverified" | "verified" | "disabled";
             /** @description Whether the address held code on this chain when registered (eth_getCode, best effort). An EOA and an undeployed contract look the same. */

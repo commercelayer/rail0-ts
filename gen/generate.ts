@@ -851,7 +851,8 @@ export interface Health {
  * the merchant stated the venue has none; false = never stated (a destination registered
  * before it was asked). The reserves are not stored here: a payout decides them at prepare
  * (\`payoutDestinations.reserves\` shows them). \`deleted_at\` is set (and \`status\`
- * \`disabled\`) once the destination was deleted.
+ * \`disabled\`) once the destination was deleted. \`label\` is always a non-blank string,
+ * unique (case-insensitive) among the account's live destinations.
  */
 export type PayoutDestination = components['schemas']['PayoutDestination'] &
   Required<
@@ -862,6 +863,7 @@ export type PayoutDestination = components['schemas']['PayoutDestination'] &
       | 'chain_id'
       | 'token'
       | 'address'
+      | 'label'
       | 'status'
       | 'no_minimum'
       | 'created_at'
