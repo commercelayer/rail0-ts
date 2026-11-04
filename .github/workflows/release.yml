@@ -306,7 +306,7 @@ jobs:
               "type": "section",
               "text": {
                 "type": "mrkdwn",
-                "text": ":package: New release for <https://www.npmjs.com/package/@commercelayer/rail0-sdk/v/${{ needs.plan.outputs.version }}|rail0 SDK for TypeScript>\n<${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.plan.outputs.tag }}|release notes>"
+                "text": ":package: New release for <https://www.npmjs.com/package/@commercelayer/rail0-sdk/v/${{ needs.plan.outputs.version }}|rail0 SDK for TypeScript>\n*<${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.plan.outputs.tag }}|release notes>*"
               }
               },
               {
