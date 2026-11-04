@@ -6,6 +6,7 @@ import type {
   CreatePayoutDestinationRequest,
   Payout,
   PayoutDestination,
+  PayoutReserves,
   UpdatePayoutDestinationRequest,
 } from '../src/resources/types.js'
 import { signPayoutTransaction, signTransaction } from '../src/signing.js'
@@ -75,11 +76,12 @@ function makePayout(overrides: Partial<Payout> = {}): Payout {
 
 const destination: PayoutDestination = {
   id: DEST_ID,
+  no_minimum: false,
   wallet_id: WALLET_ID,
   chain_id: CHAIN_ID,
   token: TOKEN,
   address: DEST_ADDRESS,
-  kind: 'exchange',
+  label: 'Kraken',
   status: 'verified',
   created_at: '2026-10-29T10:00:00Z',
 }
@@ -390,7 +392,7 @@ describe('payout resources', () => {
         chain_id: CHAIN_ID,
         token: TOKEN,
         address: DEST_ADDRESS,
-        kind: 'exchange',
+        label: 'Kraken',
         min_amount: '11000000',
         confirm_details: true,
       }
@@ -402,21 +404,179 @@ describe('payout resources', () => {
       })
     })
 
-    it('makes the confirmation a compile-time requirement', () => {
-      // @ts-expect-error confirm_details is required on create
-      const missing: CreatePayoutDestinationRequest = {
+    it('makes the confirmation and the minimum compile-time requirements', () => {
+      const base = {
         wallet_id: WALLET_ID,
         chain_id: CHAIN_ID,
         token: TOKEN,
         address: DEST_ADDRESS,
-      }
+        label: 'Kraken',
+      } as const
+      // @ts-expect-error confirm_details is required on create
+      const missing: CreatePayoutDestinationRequest = { ...base, min_amount: '11000000' }
       // @ts-expect-error confirm_details cannot be false
       const refused: CreatePayoutDestinationRequest = { ...missing, confirm_details: false }
+      // @ts-expect-error the minimum is required: min_amount or no_minimum: true
+      const neither: CreatePayoutDestinationRequest = { ...base, confirm_details: true }
+      const both: CreatePayoutDestinationRequest = {
+        ...base,
+        min_amount: '11000000',
+        // @ts-expect-error never min_amount and no_minimum together
+        no_minimum: true,
+        confirm_details: true,
+      }
+      const falseFlag: CreatePayoutDestinationRequest = {
+        ...base,
+        // @ts-expect-error no_minimum is the literal true, not false
+        no_minimum: false,
+        confirm_details: true,
+      }
+      const figure: CreatePayoutDestinationRequest = {
+        ...base,
+        min_amount: '0',
+        confirm_details: true,
+      }
+      const none: CreatePayoutDestinationRequest = {
+        ...base,
+        no_minimum: true,
+        confirm_details: true,
+      }
+      const { label: _label, ...unlabelled } = base
+      // @ts-expect-error the label is required on create
+      const noLabel: CreatePayoutDestinationRequest = {
+        ...unlabelled,
+        no_minimum: true,
+        confirm_details: true,
+      }
       // @ts-expect-error changing min_amount needs confirm_details: true
       const minOnly: UpdatePayoutDestinationRequest = { min_amount: '5000000' }
+      // @ts-expect-error removing the minimum needs confirm_details: true
+      const flagOnly: UpdatePayoutDestinationRequest = { no_minimum: true }
       const label: UpdatePayoutDestinationRequest = { label: 'Kraken' }
       const min: UpdatePayoutDestinationRequest = { min_amount: '5000000', confirm_details: true }
-      expect([missing, refused, minOnly, label, min]).toHaveLength(5)
+      const remove: UpdatePayoutDestinationRequest = { no_minimum: true, confirm_details: true }
+      expect([missing, refused, neither, both, falseFlag, figure, none, noLabel]).toHaveLength(8)
+      expect([minOnly, flagOnly, label, min, remove]).toHaveLength(5)
+    })
+
+    it('sends no_minimum: true as given when the venue has none', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          json({ ...destination, status: 'unverified', min_amount: null, no_minimum: true }, 201),
+        )
+      const body: CreatePayoutDestinationRequest = {
+        wallet_id: WALLET_ID,
+        chain_id: CHAIN_ID,
+        token: TOKEN,
+        address: DEST_ADDRESS,
+        label: 'Kraken',
+        no_minimum: true,
+        confirm_details: true,
+      }
+      const created = await client.payoutDestinations.create(body)
+      expect(call(spy).body).toEqual(body)
+      expect(created.no_minimum).toBe(true)
+    })
+
+    it('refuses a blank, missing or conflicting minimum locally, before any request', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch')
+      const base = {
+        wallet_id: WALLET_ID,
+        chain_id: CHAIN_ID,
+        token: TOKEN,
+        address: DEST_ADDRESS,
+        label: 'Kraken',
+        confirm_details: true,
+      } as const
+      // Casts stand for plain-JS callers the type cannot hold.
+      const neither = base as unknown as CreatePayoutDestinationRequest
+      const both = {
+        ...base,
+        min_amount: '1',
+        no_minimum: true,
+      } as unknown as CreatePayoutDestinationRequest
+      await expect(client.payoutDestinations.create(neither)).rejects.toThrow(
+        /no_minimum: true when/,
+      )
+      await expect(client.payoutDestinations.create(both)).rejects.toThrow(/not both/)
+      await expect(client.payoutDestinations.create({ ...base, min_amount: ' ' })).rejects.toThrow(
+        /may not be blank/,
+      )
+      await expect(
+        client.payoutDestinations.update(DEST_ID, { min_amount: '', confirm_details: true }),
+      ).rejects.toThrow(/may not be blank/)
+      expect(spy).not.toHaveBeenCalled()
+    })
+
+    it('reads the label as a non-null string', () => {
+      const label: string = destination.label
+      const { label: _label, ...unlabelled } = destination
+      // @ts-expect-error the gateway always sends the label
+      const noLabel: PayoutDestination = unlabelled
+      // @ts-expect-error the label is never null
+      const nullLabel: PayoutDestination = { ...destination, label: null }
+      expect([label, noLabel, nullLabel]).toHaveLength(3)
+    })
+
+    it('refuses a missing or blank label locally, before any request', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch')
+      const base = {
+        wallet_id: WALLET_ID,
+        chain_id: CHAIN_ID,
+        token: TOKEN,
+        address: DEST_ADDRESS,
+        no_minimum: true,
+        confirm_details: true,
+      } as const
+      // A cast stands for a plain-JS caller the type cannot hold.
+      const missing = base as unknown as CreatePayoutDestinationRequest
+      await expect(client.payoutDestinations.create(missing)).rejects.toThrow(/label required/)
+      await expect(client.payoutDestinations.create({ ...base, label: '  ' })).rejects.toThrow(
+        /label required/,
+      )
+      await expect(client.payoutDestinations.update(DEST_ID, { label: '' })).rejects.toThrow(
+        /label required/,
+      )
+      expect(spy).not.toHaveBeenCalled()
+    })
+
+    it('leaves the label alone on an update that does not send one', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(destination))
+      await client.payoutDestinations.update(DEST_ID, { active: false })
+      expect(call(spy).body).toEqual({ active: false })
+    })
+
+    it('surfaces payout_destination_label_taken from the gateway', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        json(
+          {
+            code: 'payout_destination_label_taken',
+            title: 'Label already in use',
+            detail: 'Another destination of this account already has this label.',
+          },
+          409,
+        ),
+      )
+      await expect(
+        client.payoutDestinations.update(DEST_ID, { label: 'kraken' }),
+      ).rejects.toMatchObject({ status: 409, code: 'payout_destination_label_taken' })
+    })
+
+    it('surfaces minimum_conflict from the gateway', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        json(
+          {
+            code: 'minimum_conflict',
+            title: 'Minimum deposit conflict',
+            detail: 'Send either min_amount or no_minimum: true, not both.',
+          },
+          422,
+        ),
+      )
+      await expect(
+        client.payoutDestinations.update(DEST_ID, { min_amount: '5000000', confirm_details: true }),
+      ).rejects.toMatchObject({ status: 422, code: 'minimum_conflict' })
     })
 
     it('quotes the details_v1 text verbatim', () => {
@@ -436,7 +596,7 @@ describe('payout resources', () => {
           json([{ id: 'e1', action: 'destination.verified' }], 200, { 'x-total-count': '1' }),
         )
       await client.payoutDestinations.get(DEST_ID)
-      await client.payoutDestinations.update(DEST_ID, { min_amount: '', confirm_details: true })
+      await client.payoutDestinations.update(DEST_ID, { no_minimum: true, confirm_details: true })
       await client.payoutDestinations.confirm(DEST_ID)
       const events = await client.payoutDestinations.events(DEST_ID, { per_page: 50 })
       expect(call(spy, 0)).toMatchObject({
@@ -446,7 +606,7 @@ describe('payout resources', () => {
       expect(call(spy, 1)).toMatchObject({
         url: `${BASE_URL}/payout_destinations/${DEST_ID}`,
         method: 'PATCH',
-        body: { min_amount: '', confirm_details: true },
+        body: { no_minimum: true, confirm_details: true },
       })
       expect(call(spy, 2)).toMatchObject({
         url: `${BASE_URL}/payout_destinations/${DEST_ID}/confirm`,
@@ -454,6 +614,88 @@ describe('payout resources', () => {
       })
       expect(call(spy, 3).url).toBe(`${BASE_URL}/payout_destinations/${DEST_ID}/events?per_page=50`)
       expect(events.data[0]?.action).toBe('destination.verified')
+    })
+
+    it('lists deleted destinations only when asked', async () => {
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json([destination]))
+      await client.payoutDestinations.list({ wallet_id: WALLET_ID, include_deleted: true })
+      expect(call(spy).url).toBe(
+        `${BASE_URL}/payout_destinations?wallet_id=${WALLET_ID}&include_deleted=true`,
+      )
+    })
+
+    it('deletes on DELETE and returns the row with deleted_at set', async () => {
+      const deleted: PayoutDestination = {
+        ...destination,
+        status: 'disabled',
+        deleted_at: '2026-11-02T10:00:00Z',
+      }
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(deleted))
+      const res = await client.payoutDestinations.delete(DEST_ID)
+      expect(call(spy)).toMatchObject({
+        url: `${BASE_URL}/payout_destinations/${DEST_ID}`,
+        method: 'DELETE',
+      })
+      expect(res.deleted_at).toBe('2026-11-02T10:00:00Z')
+      expect(res.status).toBe('disabled')
+    })
+
+    it('surfaces payout_already_signed on a delete with a signed payout pending', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        json(
+          {
+            code: 'payout_already_signed',
+            title: 'Payout already signed',
+            detail: 'A signed payout to this destination is pending.',
+          },
+          409,
+        ),
+      )
+      await expect(client.payoutDestinations.delete(DEST_ID)).rejects.toMatchObject({
+        status: 409,
+        code: 'payout_already_signed',
+      })
+    })
+
+    it('reads the reserves a payout would keep back', async () => {
+      const reserves: PayoutReserves = {
+        destination_id: DEST_ID,
+        chain_id: CHAIN_ID,
+        token: TOKEN,
+        token_symbol: 'USDC',
+        decimals: 6,
+        balance: '100000000',
+        balance_formatted: '100.0',
+        refund_reserve: '25000000',
+        refund_reserve_formatted: '25.0',
+        refundable_payments: 2,
+        native_gas: true,
+        gas_reserve: '300000',
+        gas_reserve_formatted: '0.3',
+        gas_refunds: 2,
+        open_authorizations: 1,
+        base_captures: 10,
+        gas_allowance: '20000',
+        gas_allowance_formatted: '0.02',
+        available: '74680000',
+        available_formatted: '74.68',
+      }
+      const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json(reserves))
+      const res = await client.payoutDestinations.reserves(DEST_ID)
+      expect(call(spy)).toMatchObject({
+        url: `${BASE_URL}/payout_destinations/${DEST_ID}/reserves`,
+        method: 'GET',
+      })
+      expect(res).toEqual(reserves)
+    })
+
+    it('no longer takes a reserve on a destination', () => {
+      const edits: UpdatePayoutDestinationRequest = {
+        label: 'Kraken',
+        // @ts-expect-error the reserve is decided at payout time, not stored on the destination
+        reserve_amount: '1000000',
+      }
+      expect(edits.label).toBe('Kraken')
     })
   })
 
@@ -495,6 +737,40 @@ describe('payout resources', () => {
       expect(calls[1]?.body).toEqual({ destination_id: DEST_ID, purpose: 'proof' })
       expect(calls[2]?.body).toEqual({ signed_transaction: '0x02ab' })
       expect(calls[5]?.body).toEqual({ transaction_hash: `0x${'aa'.repeat(32)}` })
+    })
+
+    it('sends the reserve opt-outs on a payout prepare as given', async () => {
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(json(makePayout({ refund_reserve: '0', gas_reserve: '0' }), 201))
+      const res = await client.payouts.prepare({
+        destination_id: DEST_ID,
+        amount: 'all',
+        keep_refund_reserve: false,
+        keep_gas_reserve: false,
+      })
+      expect(call(spy)).toMatchObject({
+        url: `${BASE_URL}/payouts/prepare`,
+        method: 'POST',
+        body: {
+          destination_id: DEST_ID,
+          amount: 'all',
+          keep_refund_reserve: false,
+          keep_gas_reserve: false,
+        },
+      })
+      expect(res.refund_reserve).toBe('0')
+      expect(res.gas_reserve).toBe('0')
+    })
+
+    it('takes the reserve opt-outs on a payout only, never on a proof', () => {
+      const p = client.payouts.prepare.bind(client.payouts, {
+        destination_id: DEST_ID,
+        purpose: 'proof',
+        // @ts-expect-error a proof keeps no reserve back
+        keep_refund_reserve: false,
+      })
+      expect(p).toBeTypeOf('function')
     })
 
     it('makes amount a compile-time requirement of a payout prepare', () => {
@@ -585,6 +861,8 @@ describe('payout resources', () => {
 describe('payout error hints', () => {
   it.each([
     'confirmation_required',
+    'minimum_required',
+    'minimum_conflict',
     'payout_below_minimum',
     'payout_destination_unverified',
     'payout_destination_disabled',
@@ -597,6 +875,8 @@ describe('payout error hints', () => {
     'insufficient_balance',
     'foreign_transfer_hash',
     'payout_destination_exists',
+    'payout_destination_label_taken',
+    'label_required',
     'payout_destination_is_contract',
     'invalid_amount',
   ])('has a hint for %s', (code) => {

@@ -121,8 +121,6 @@ export type WebhookTopic =
   | 'payouts.confirmed'
   | 'payouts.failed'
   | 'payout_destinations.verified'
-/** What a payout destination is: the venue its deposit address belongs to. */
-export type PayoutDestinationKind = 'exchange' | 'circle_mint' | 'self_custody' | 'provider'
 /**
  * `unverified` (born so; may receive the proof amount at most), `verified` (the merchant
  * attested the venue credited the proof), `disabled` (switched off; `active: true`
@@ -325,7 +323,7 @@ export interface WebhookTestResult {
 }
 /**
  * Body of POST /payout_destinations: a deposit address at a venue, for the session's own
- * wallet, bound to ONE chain and ONE token.
+ * wallet, bound to ONE chain and ONE token, under a REQUIRED `label` unique per account.
  *
  * `confirm_details` is REQUIRED and typed as the literal `true`: it records the merchant's
  * statement of the `details_v1` text (`PAYOUT_DETAILS_CONFIRMATION.text`) — "I have checked
@@ -334,8 +332,14 @@ export interface WebhookTestResult {
  * minimum, may be permanently lost and cannot be recovered by rail0." The SDK never sends
  * it for you: set it only once the merchant has made that check (422
  * `confirmation_required` otherwise).
+ *
+ * The minimum is a required, explicit answer too, never defaulted: EXACTLY ONE of
+ * `min_amount` (the venue's figure, base units) or `no_minimum: true` (the venue has none).
+ * The type refuses neither and both; the gateway answers 422 `minimum_required` (neither,
+ * or a blank figure) and `minimum_conflict` (both). A minimum nobody looked up is how a
+ * deposit gets lost.
  */
-export interface CreatePayoutDestinationRequest {
+export type CreatePayoutDestinationRequest = {
   /** The wallet (uuid or address) that will sign transfers to it; must be the session's own. */
   wallet_id: string
   /** The chain the deposit address was issued for. */
@@ -344,27 +348,39 @@ export interface CreatePayoutDestinationRequest {
   token: Address
   /** The deposit address, generated at the venue WITH THE NETWORK SET TO THIS CHAIN. */
   address: Address
-  label?: string
-  /** Defaults to `exchange`. */
-  kind?: PayoutDestinationKind
   /**
-   * Base units to keep in the wallet on an `all` payout (digits only, below 2^120; 422
-   * `invalid_amount` otherwise). Omit for the suggestion (`suggested_reserve`).
+   * REQUIRED name for the destination (e.g. "Kraken"), unique per account: the gateway
+   * trims it, refuses a blank one (422 `label_required`; checked locally before the
+   * request) and one another live destination of the account already has, case-insensitive
+   * (409 `payout_destination_label_taken`). Deleting a destination frees its label.
    */
-  reserve_amount?: Uint256String
-  /**
-   * The venue's deposit minimum in base units (digits only, below 2^120); omit for none.
-   * A payout below it is refused (`payout_below_minimum`) and the proof is raised to it.
-   */
-  min_amount?: Uint256String
+  label: string
   /** The merchant's confirmation of the `details_v1` text — see above. */
   confirm_details: true
-}
+} & (
+  | {
+      /**
+       * The venue's deposit minimum in base units, from its deposit page (digits only,
+       * below 2^120; 422 `invalid_amount` otherwise; never blank). `"0"` is a figure like
+       * any other. A payout below it is refused (`payout_below_minimum`) and the proof is
+       * raised to it.
+       */
+      min_amount: Uint256String
+      no_minimum?: undefined
+    }
+  | {
+      /** The merchant states the venue has no minimum deposit. */
+      no_minimum: true
+      min_amount?: undefined
+    }
+)
 /** The fields of a destination PATCH other than the minimum. */
 export interface PayoutDestinationEdits {
+  /**
+   * Renames the destination: never blank (422 `label_required`; checked locally) and
+   * unique per account, case-insensitive (409 `payout_destination_label_taken`).
+   */
   label?: string
-  /** Base units; an empty string restores the suggestion. */
-  reserve_amount?: Uint256String
   /**
    * `false` disables the destination (any wallet of the account may); `true` re-enables
    * it, restoring the verification it had (only the destination's own wallet).
@@ -374,25 +390,51 @@ export interface PayoutDestinationEdits {
 /**
  * Body of PATCH /payout_destinations/:id.
  *
- * A request that CHANGES `min_amount` (an empty string removes it) needs
- * `confirm_details: true` — the merchant's statement of the `details_v1` text (see
- * `CreatePayoutDestinationRequest`); otherwise 422 `confirmation_required` and nothing is
- * written. The type asks for it whenever `min_amount` is present: the gateway itself
- * waives it for a re-send of the same value. Raising the minimum above the amount of the
- * latest proof takes the verification away (`status` back to `unverified`).
+ * The minimum: `min_amount` sets a figure (and clears `no_minimum`); `no_minimum: true`
+ * removes it (`min_amount` becomes null). Never both (422 `minimum_conflict`), and never a
+ * blank `min_amount` (refused locally; 422 `minimum_required` from the gateway). A request
+ * that CHANGES either needs `confirm_details: true` — the merchant's statement of the
+ * `details_v1` text (see `CreatePayoutDestinationRequest`); otherwise 422
+ * `confirmation_required` and nothing is written. The type asks for it whenever either is
+ * present: the gateway itself waives it for a re-send of the same value. Raising the
+ * minimum above the amount of the latest proof takes the verification away (`status` back
+ * to `unverified`).
  */
 export type UpdatePayoutDestinationRequest =
-  | (PayoutDestinationEdits & { min_amount?: undefined; confirm_details?: boolean })
-  | (PayoutDestinationEdits & { min_amount: Uint256String; confirm_details: true })
+  | (PayoutDestinationEdits & {
+      min_amount?: undefined
+      no_minimum?: undefined
+      confirm_details?: boolean
+    })
+  | (PayoutDestinationEdits & {
+      min_amount: Uint256String
+      no_minimum?: undefined
+      confirm_details: true
+    })
+  | (PayoutDestinationEdits & { no_minimum: true; min_amount?: undefined; confirm_details: true })
 /**
  * Body of POST /payouts/prepare. A `proof` sends the gateway's proof amount
  * (`PAYOUT_PROOF_AMOUNT`, 1 token unit by default), raised to the destination's
  * `min_amount` when that is higher; a `payout` sends `amount` — a human decimal
- * (`"25.50"`) or `"all"` (the wallet's balance minus the refund reserve).
+ * (`"25.50"`) or `"all"` (the wallet's balance minus the reserves kept back).
+ *
+ * The reserves are decided here, per payout (see `payoutDestinations.reserves`): both are
+ * kept by default. `keep_refund_reserve: false` moves the refundable balance of payments
+ * still inside their refund window too — a refund after this payout may then fail for lack
+ * of funds; `keep_gas_reserve: false` moves the gas kept for the refunds and captures the
+ * wallet still owes (native-gas chains only). A proof takes neither.
  */
 export type PreparePayoutRequest =
   | { destination_id: string; purpose: 'proof' }
-  | { destination_id: string; purpose?: 'payout'; amount: string }
+  | {
+      destination_id: string
+      purpose?: 'payout'
+      amount: string
+      /** Defaults to `true`. `false`: do not keep back the refund reserve. */
+      keep_refund_reserve?: boolean
+      /** Defaults to `true`. `false`: do not keep back the gas reserve. */
+      keep_gas_reserve?: boolean
+    }
 
 // ── Domain models (gateway vocabulary) ───────────────────────────────
 /** Condensed payment record (GET /payments list item). */
@@ -747,16 +789,27 @@ export interface Health {
  * account's wallets cashes out to — bound to ONE chain and ONE token. An alias of the
  * schema component, with the fields the gateway always sends made required.
  *
- * Amounts are base-unit strings with a `*_formatted` human twin: `reserve_amount` (null =
- * `suggested_reserve`, the refundable balance still inside its refund window, which an
- * `all` payout leaves in the wallet) and `min_amount` (the venue's deposit minimum; null
- * = none).
+ * `min_amount` (the venue's deposit minimum) is a base-unit string with a
+ * `min_amount_formatted` human twin. A null `min_amount` reads with `no_minimum`: true =
+ * the merchant stated the venue has none; false = never stated (a destination registered
+ * before it was asked). The reserves are not stored here: a payout decides them at prepare
+ * (`payoutDestinations.reserves` shows them). `deleted_at` is set (and `status`
+ * `disabled`) once the destination was deleted. `label` is always a non-blank string,
+ * unique (case-insensitive) among the account's live destinations.
  */
 export type PayoutDestination = components['schemas']['PayoutDestination'] &
   Required<
     Pick<
       components['schemas']['PayoutDestination'],
-      'id' | 'wallet_id' | 'chain_id' | 'token' | 'address' | 'kind' | 'status' | 'created_at'
+      | 'id'
+      | 'wallet_id'
+      | 'chain_id'
+      | 'token'
+      | 'address'
+      | 'label'
+      | 'status'
+      | 'no_minimum'
+      | 'created_at'
     >
   >
 /**
@@ -768,6 +821,9 @@ export type PayoutDestination = components['schemas']['PayoutDestination'] &
  * `amount` (base units) — which `verifyPayoutTransaction` holds the transaction to before
  * any key touches it. `signed: true` on a `pending` row means the gateway stores its
  * signed bytes (and `transaction_hash`): resend it, never re-prepare it.
+ *
+ * `refund_reserve` and `gas_reserve` are the base units this payout kept back in the
+ * wallet, decided at prepare (`0` when opted out; null for a proof).
  */
 export type Payout = components['schemas']['Payout'] &
   Required<
@@ -788,6 +844,15 @@ export type Payout = components['schemas']['Payout'] &
   >
 /** One append-only entry of the payout audit trail (destination and payout events). */
 export type PayoutEvent = components['schemas']['PayoutEvent']
+/**
+ * What a payout to a destination would keep back right now (GET
+ * /payout_destinations/:id/reserves), computed from the wallet's payments and the chain's
+ * current fees — nothing is stored. Every amount is a base-unit string with a
+ * `*_formatted` human twin. `available` = `balance` − `refund_reserve` − `gas_reserve`
+ * − `gas_allowance`, floored at 0: what `amount: "all"` moves with both reserves kept.
+ * The gas figures are `0` unless `native_gas` (the chain's gas is paid in this token).
+ */
+export type PayoutReserves = components['schemas']['PayoutReserves']
 
 // ── Analytics (merchant sales rollups) ───────────────────────────────
 /** Volume for one (token, chain). Amounts are token base-unit integer strings

@@ -7,12 +7,13 @@ import type {
   PayoutDestination,
   PayoutDestinationStatus,
   PayoutEvent,
+  PayoutReserves,
   UpdatePayoutDestinationRequest,
 } from './types.js'
 
 /**
  * The statement `confirm_details: true` records (POST /payout_destinations, and a PATCH that
- * changes `min_amount`): show `text` to the merchant and send the flag only once they
+ * changes the minimum): show `text` to the merchant and send the flag only once they
  * have made the check. A new wording gets a new `version` on the gateway.
  */
 export const PAYOUT_DETAILS_CONFIRMATION = {
@@ -20,10 +21,48 @@ export const PAYOUT_DETAILS_CONFIRMATION = {
   text: "I have checked the address, network, token and minimum deposit on the venue's deposit page and confirm they are correct. Funds sent to a wrong address or network, or below the venue's minimum, may be permanently lost and cannot be recovered by rail0.",
 } as const
 
+/**
+ * The local half of the minimum rule, for callers the type cannot hold (plain JS, `as`
+ * casts): a blank `min_amount` is never sent, nor one beside `no_minimum: true`, and a
+ * registration must state one of them — the SDK never picks for the merchant. Throws before
+ * any request; the gateway enforces the same (`minimum_required`, `minimum_conflict`).
+ */
+function checkMinimum(
+  params: { min_amount?: string | undefined; no_minimum?: boolean | undefined },
+  create: boolean,
+): void {
+  const figure = params.min_amount
+  if (figure !== undefined && figure.trim() === '') {
+    throw new Error('min_amount may not be blank — send no_minimum: true when the venue has none')
+  }
+  if (figure !== undefined && params.no_minimum === true) {
+    throw new Error('send either min_amount or no_minimum: true, not both')
+  }
+  if (create && figure === undefined && params.no_minimum !== true) {
+    throw new Error(
+      "state the venue's deposit minimum: min_amount (base units) or no_minimum: true when it has none",
+    )
+  }
+}
+
+/**
+ * A destination's label is required on create and never blank on update (when given).
+ * Throws before any request; the gateway enforces the same (`label_required`) and also
+ * refuses a label another live destination of the account has (`payout_destination_label_taken`).
+ */
+function checkLabel(params: { label?: string | undefined }, create: boolean): void {
+  const label = params.label
+  if (label === undefined ? create : label.trim() === '') {
+    throw new Error('label required — name the destination (unique per account)')
+  }
+}
+
 export interface ListPayoutDestinationsParams {
   /** Restrict to one wallet (uuid). */
   wallet_id?: string
   status?: PayoutDestinationStatus
+  /** `true` lists deleted destinations too (left out by default). */
+  include_deleted?: boolean
   sort?: string
   /** 1-based page number, bounded 1..1,000,000 — the gateway answers 400 outside that range. */
   page?: number
@@ -47,6 +86,10 @@ export interface ListPayoutEventsParams {
  * `verified`, fires `payout_destinations.verified`). Until then the destination may
  * receive the proof amount at most (`payout_destination_unverified`).
  *
+ * The reserves are decided per payout, not stored on the destination: `reserves` shows
+ * what a payout would keep back now, and `payouts.prepare` takes `keep_refund_reserve` /
+ * `keep_gas_reserve` to opt out of either.
+ *
  * Reads are account-wide; writes act for the destination's own wallet (403
  * `not_your_wallet` otherwise), except that any wallet of the account may disable one.
  * A deactivated account is read-only (403 `account_deactivated`).
@@ -54,7 +97,7 @@ export interface ListPayoutEventsParams {
 export class PayoutDestinationsResource {
   constructor(private readonly http: HttpClient) {}
 
-  /** List the account's destinations. */
+  /** List the account's destinations (deleted ones only with `include_deleted: true`). */
   list(params?: ListPayoutDestinationsParams): Promise<PaginatedResponse<PayoutDestination>> {
     return this.http.getPaginated(`/payout_destinations${buildQuery(params)}`)
   }
@@ -62,13 +105,19 @@ export class PayoutDestinationsResource {
   /**
    * Register a destination for the session's own wallet (201, `unverified`).
    *
-   * `confirm_details: true` is required — the merchant's statement of
-   * `PAYOUT_DETAILS_CONFIRMATION.text`; never set it on their behalf. Refused: the zero
+   * `label` is required and unique per account (case-insensitive; a blank one is refused
+   * locally, 422 `label_required` from the gateway; one already in use is 409
+   * `payout_destination_label_taken`). `confirm_details: true` is required — the merchant's statement of
+   * `PAYOUT_DETAILS_CONFIRMATION.text`; never set it on their behalf. Exactly one of
+   * `min_amount` or `no_minimum: true` is required as well (checked locally before the
+   * request; 422 `minimum_required` / `minimum_conflict` from the gateway). Refused: the zero
    * address, the wallet itself, and every contract the gateway knows on the chain (422
-   * `payout_destination_*`); the same address/token/chain twice on a wallet (409
-   * `payout_destination_exists`).
+   * `payout_destination_*`); a second destination for the same token and chain on a
+   * wallet — one per payment method — (409 `payout_destination_exists`).
    */
-  create(params: CreatePayoutDestinationRequest): Promise<PayoutDestination> {
+  async create(params: CreatePayoutDestinationRequest): Promise<PayoutDestination> {
+    checkLabel(params, true)
+    checkMinimum(params, true)
     return this.http.post('/payout_destinations', params)
   }
 
@@ -77,14 +126,40 @@ export class PayoutDestinationsResource {
   }
 
   /**
-   * Update the label, reserve, minimum or `active` flag. Changing `min_amount` needs
-   * `confirm_details: true` (422 `confirmation_required` otherwise, nothing written);
-   * raising it above the latest proof's amount takes the verification away. `active:
+   * Update the label, minimum or `active` flag. A label is never blank (refused locally)
+   * and unique per account (409 `payout_destination_label_taken`). Changing `min_amount` needs
+   * `confirm_details: true` (422 `confirmation_required` otherwise, nothing written) and
+   * may not be blank (refused locally) — `no_minimum: true` removes the minimum, never with
+   * `min_amount` beside it; raising it above the latest proof's amount takes the verification away. `active:
    * false` cancels an unsigned pending payout to it, and is refused 409
    * `payout_already_signed` while a signed one is pending.
    */
-  update(id: string, params: UpdatePayoutDestinationRequest): Promise<PayoutDestination> {
+  async update(id: string, params: UpdatePayoutDestinationRequest): Promise<PayoutDestination> {
+    checkLabel(params, false)
+    checkMinimum(params, false)
     return this.http.patch(path`/payout_destinations/${id}`, params)
+  }
+
+  /**
+   * Delete the destination (soft): it leaves the lists and its address and label may be
+   * registered again, while its payouts and audit trail still name it — `get` and `events` still
+   * read it, with `deleted_at` set and `status` `disabled`. An unsigned pending payout
+   * to it is cancelled; a signed one refuses the delete (409 `payout_already_signed`). Only
+   * the destination's own wallet may delete it; an already deleted one is 404.
+   */
+  delete(id: string): Promise<PayoutDestination> {
+    return this.http.delete<PayoutDestination>(path`/payout_destinations/${id}`)
+  }
+
+  /**
+   * What a payout to the destination would keep back in the wallet right now — the refund
+   * reserve, the gas reserve (native-gas chains only) and the transfer's own gas allowance
+   * — and `available`, what `amount: "all"` moves with both reserves kept. Computed live
+   * from the wallet's payments and the chain's fees (two chain reads; 502 when the chain
+   * cannot be read). A deleted destination still reads.
+   */
+  reserves(id: string): Promise<PayoutReserves> {
+    return this.http.get(path`/payout_destinations/${id}/reserves`)
   }
 
   /**
