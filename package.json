@@ -1,6 +1,6 @@
 {
   "name": "@commercelayer/rail0-sdk",
-  "version": "1.13.1",
+  "version": "1.13.2",
   "description": "TypeScript SDK for the RAIL0 stablecoin payment API",
   "keywords": [
     "rail0",
@@ -59,14 +59,14 @@
     "release:prepare": "bin/release-prepare"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.2",
-    "@types/node": "^26.6.5",
+    "@biomejs/biome": "^2.6.5",
+    "@types/node": "^26.6.6",
     "openapi-typescript": "^7.13.0",
     "tsup": "^9.0.0",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
   },
   "publishConfig": {
     "access": "public"
