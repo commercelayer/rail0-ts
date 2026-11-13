@@ -79,7 +79,6 @@ describe('describeError', () => {
 
   it('describes the public onboarding codes of POST /signup and POST /claim', () => {
     for (const code of [
-      'signup_unavailable',
       'onboarding_unavailable',
       'email_provider_not_configured',
       'email_domain_not_allowed',

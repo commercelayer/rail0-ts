@@ -50,7 +50,7 @@ export interface paths {
          * Liveness/readiness check (incl. DB connectivity)
          * @description **Public and token-blind**: one body for every caller, and the Authorization header is never read — a missing, invalid or revoked token changes nothing and never yields a 401. The Sidekiq worker figures moved to the operator-only GET /admin/health.
          *
-         *     **Alert on `status`, not on the HTTP status code.** The code is liveness for the load balancer — 503 only when the database is down — and a dead Sidekiq fleet stays 200 on purpose, because the API still serves every synchronous request while jobs queue. A monitor watching only the code therefore reports a healthy gateway while nothing broadcasts or confirms. `status` carries `ok` / `degraded` / `error`.
+         *     **Alert on `status`, or call it with `?strict=true`.** The plain probe's code is liveness for the load balancer — 503 only when the database is down — and a dead Sidekiq fleet stays 200 on purpose, because the API still serves every synchronous request while jobs queue. A monitor watching only the code of the plain probe therefore reports a healthy gateway while nothing broadcasts or confirms; `?strict=true` answers 503 for any `status` other than `ok`, for exactly that monitor. `status` carries `ok` / `degraded` / `error`.
          */
         get: operations["getHealth"];
         put?: never;
@@ -196,7 +196,7 @@ export interface paths {
          *     - **an admin session** (require_admin!): an operator's invite (origin `operator`, link valid 7 days), audited as onboarding.create (onboarding.send when an open invite with the same email and address is reused), with explicit 409s.
          *     - **any other token**: 401 (invalid, expired, revoked; the codes of every authenticated route) or 403 (valid but without the operator grant, or a deactivated wallet) — never a fallback to the public path.
          *
-         *     Before anything is written: validation (400), a delivering email provider (503) and the email domain allowlist (422). An open request of the same origin with the same email and address is REUSED (a new link: link_version + 1, renewed expiry, send_count + 1, and the name just submitted); otherwise a new request is inserted, and the open requests already past their expiry are deleted in the same transaction. Open requests never block each other: clashes with other requests are reported to the operator as `conflicts`. The mail is queued after the commit and sent by the gateway's worker; no response ever contains the link. `RAIL0_SIGNUP_ENABLED=false` switches the public path off (503 signup_unavailable) without touching invites. Rate limits: `signup/ip` (5/h per client IP, an IPv6 client by its /64) without a verifiable token, `signup/operator` (60/h per session) with one, plus the shared public per-IP tier.
+         *     Before anything is written: validation (400), a delivering email provider (503) and the email domain allowlist (422). An open request of the same origin with the same email and address is REUSED (a new link: link_version + 1, renewed expiry, send_count + 1, and the name just submitted); otherwise a new request is inserted, and the open requests already past their expiry are deleted in the same transaction. Open requests never block each other: clashes with other requests are reported to the operator as `conflicts`. The mail is queued after the commit and sent by the gateway's worker; no response ever contains the link. With `RAIL0_FEATURE_SIGNUP` off (the default: on only with true/1/yes/on) the public path is a 404 unknown_route; invites are not affected. Rate limits: `signup/ip` (5/h per client IP, an IPv6 client by its /64) without a verifiable token, `signup/operator` (60/h per session) with one, plus the shared public per-IP tier.
          */
         post: operations["signup"];
         delete?: never;
@@ -248,7 +248,7 @@ export interface paths {
         };
         /**
          * List every account (admin)
-         * @description Admin only (require_admin!: the session account must hold the operator grant — a row in administrators — and be active, re-read from the rows per request, so a revocation bites on the next request; the session wallet must be active even for reads, because these reads are cross-account). Every account, Full entity, each carrying `admin` (whether the account holds the grant) and the derived `status`: `active` or `deactivated` (switched off by an operator). Filters: admin, status; sort and pagination. There is no create: an account is born only at POST /claim, from an onboarding request (POST /signup).
+         * @description Admin only (require_admin!: the session account must hold the operator grant — a row in administrators — and be active, re-read from the rows per request, so a revocation bites on the next request; the session wallet must be active even for reads, because these reads are cross-account). Every account, Full entity, each carrying `admin` (whether the account holds the grant) and the derived `status`: `active` or `deactivated` (switched off by an operator). Filters: admin, status, and the search `q`; sort and pagination. There is no create: an account is born only at POST /claim, from an onboarding request (POST /signup).
          */
         get: operations["listAccounts"];
         put?: never;
@@ -1356,6 +1356,34 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/write_mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the presented token is in write mode, and until when (admin)
+         * @description An operator session READS by default: every write the grant reaches — under /admin and on the standard routes (another account's profile, wallets, webhooks, a redrive, an invite through POST /signup) — is refused with 403 `write_mode_required` until the request presents a write-mode token (POST /admin/write_mode). Decided from the token's `admin_write` claim alone; no row is read for it. This answers which of the two the presented token is.
+         */
+        get: operations["getAdminWriteMode"];
+        put?: never;
+        /**
+         * Switch write mode on: a write-mode token for this session (admin)
+         * @description Answers a second token for the same address and account, carrying the `admin_write` claim, valid for ADMIN_WRITE_MODE_TTL seconds (3600 by default) and never past the asking session's own expiry. Send it as the bearer for writes; the session token keeps reading. No signature is asked: the session already proved the wallet. Audited as `write_mode.enable`.
+         */
+        post: operations["enableAdminWriteMode"];
+        /**
+         * Switch write mode off: revoke the presented write-mode token (admin)
+         * @description Revokes the write-mode token presented as the bearer (the same deny-list a sign-out uses) and audits `write_mode.disable`. A session token presented here is left alone and answers `revoked: false`: switching write mode off never signs anyone out.
+         */
+        delete: operations["disableAdminWriteMode"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3605,7 +3633,10 @@ export interface operations {
     };
     getHealth: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description For an external monitor: 503 unless status is ok (workers included) */
+                strict?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3621,7 +3652,7 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
-            /** @description Degraded (database unreachable). Same public body as the 200. */
+            /** @description Database unreachable; with `strict=true`, also any `status` other than `ok`. Same public body as the 200. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -3939,7 +3970,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description signup_unavailable (public path switched off), onboarding_unavailable, or email_provider_not_configured (operator: with `preview`). */
+            /** @description onboarding_unavailable, or email_provider_not_configured (operator: with `preview`). */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -4017,6 +4048,8 @@ export interface operations {
                 admin?: boolean;
                 /** @description Filter by status: active or deactivated. */
                 status?: "active" | "deactivated";
+                /** @description Search: a part of the name or of the email (case-insensitive), a wallet address or its beginning (0x…), or the account's id. */
+                q?: string;
             };
             header?: never;
             path?: never;
@@ -6160,6 +6193,82 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    getAdminWriteMode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether the token is a write-mode one, and when it expires. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        active?: boolean;
+                        /** Format: date-time */
+                        expires_at?: string | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    enableAdminWriteMode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The write-mode token and its expiry. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        token?: string;
+                        /** Format: date-time */
+                        expires_at?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    disableAdminWriteMode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether a write-mode token was revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        revoked?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     reloadCatalog: {
         parameters: {
             query?: never;
@@ -6209,6 +6318,8 @@ export interface operations {
                 chain_id?: number;
                 /** @description Only transactions on payments whose payee is one of this account's wallets. */
                 account_id?: string;
+                /** @description The transaction with this hash (0x + 64 hex): what an operator holds after reading an explorer or a merchant's message. */
+                hash?: string;
             };
             header?: never;
             path?: never;
@@ -6863,7 +6974,7 @@ export interface operations {
                 /** @description Comma-separated sort fields; prefix with - for descending (e.g. -created_at,status). An unsupported field is rejected with 422 `invalid_sort`, whose detail names the allowed set — it is never silently dropped (#243). */
                 sort?: components["parameters"]["Sort"];
                 /** @description Only this kind of action. */
-                action?: "account.create" | "account.update" | "account.activate" | "account.deactivate" | "onboarding.create" | "onboarding.update" | "onboarding.send" | "onboarding.delete" | "wallet.add" | "wallet.update" | "wallet.deactivate" | "wallet.reactivate" | "administrator.grant" | "administrator.revoke" | "webhook.reset_circuit" | "transaction.redrive" | "catalog.reload" | "sync_errors.clear";
+                action?: "account.create" | "account.update" | "account.activate" | "account.deactivate" | "onboarding.create" | "onboarding.update" | "onboarding.send" | "onboarding.delete" | "wallet.add" | "wallet.update" | "wallet.deactivate" | "wallet.reactivate" | "administrator.grant" | "administrator.revoke" | "webhook.reset_circuit" | "transaction.redrive" | "catalog.reload" | "sync_errors.clear" | "write_mode.enable" | "write_mode.disable";
                 /** @description Only actions by this admin account. */
                 actor_account_id?: string;
                 /** @description Only actions that landed on this account. */
