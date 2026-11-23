@@ -202,8 +202,6 @@ const errorHints: Record<string, string> = {
   // The /admin/onboardings codes (onboarding_not_found, onboarding_completed) are left
   // out: those routes are the console's, not the SDK's. The link codes never say which
   // term failed — a stale link has one remedy: the newest email, or a new link.
-  signup_unavailable:
-    'self-service sign-up is switched off on this gateway for now — try again later, or ask your RAIL0 contact for an invite',
   onboarding_unavailable:
     'this gateway has no onboarding secret configured, so it can neither issue nor verify sign-up links — ask the operator',
   email_provider_not_configured:
