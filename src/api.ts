@@ -2512,6 +2512,18 @@ export interface components {
                      */
                     latest_at?: string | null;
                 };
+                /** @description How long webhook deliveries wait before a worker thread takes them. Every merchant's deliveries share one queue, so past 60 seconds (or when the queue cannot be read) the check is `degraded`: events are reaching everyone late. */
+                webhook_queue?: {
+                    /**
+                     * @description This check's own verdict; the top-level `status` is the worst of them.
+                     * @enum {string}
+                     */
+                    status: "ok" | "degraded" | "error";
+                    /** @description One sentence on what this check's figures MEAN. It ships in the response rather than living in the dashboard, so curl and the UI read the same explanation. */
+                    describes: string;
+                    /** @description Seconds the oldest queued webhook delivery has been waiting for a worker thread; 0 for an empty queue, null when the queue could not be read. */
+                    oldest_wait_seconds?: number | null;
+                };
                 /** @description Active chains whose deployed contract is not the version this gateway signs for. Payer signatures do not verify there, because the EIP-712 domain is built from Rail0::VERSION globally. Until now this existed only as a boot-time log line, gone the moment it scrolled. */
                 contracts: {
                     /**
@@ -3153,7 +3165,7 @@ export interface components {
             rate_limit?: {
                 [key: string]: components["schemas"]["ConfigSetting"];
             };
-            /** @description domains (SIWE_DOMAIN), accepted_chain_ids (1 plus the ids of the active catalog chains: the chainId values a login may carry) and nonce_ttl. */
+            /** @description domains (SIWE_DOMAIN), accepted_chain_ids (1 plus the ids of the catalog's chains, active or not: the chainId values a login may carry) and nonce_ttl. */
             siwe?: {
                 [key: string]: components["schemas"]["ConfigSetting"];
             };
@@ -3710,7 +3722,7 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or one of the four binding failures `siwe_domain_not_allowed` / `siwe_uri_mismatch` / `siwe_chain_mismatch` / `siwe_proof_expired` (each names the value the caller sent, never the gateway's expected value). The message's `chainId` may be 1, or the id of any active chain of this environment's catalog; anything else is `siwe_chain_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (201). */
+            /** @description SIWE verification failed. The `code` field identifies the failing step: `invalid_siwe`, `invalid_nonce`, `nonce_used`, `signer_mismatch`, or one of the four binding failures `siwe_domain_not_allowed` / `siwe_uri_mismatch` / `siwe_chain_mismatch` / `siwe_proof_expired` (each names the value the caller sent, never the gateway's expected value). The message's `chainId` may be 1, or the id of any chain of this environment's catalog, active or not; anything else is `siwe_chain_mismatch`. An address with no gateway account is NOT a failure — it yields an account-less token (201). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4655,7 +4667,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description Client-supplied key; replays return the existing payment. */
+                /** @description Client-supplied key, at most 255 characters (a longer one is 400 `validation_failed`); replays return the existing payment. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -4990,8 +5002,17 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Payment not in a state that permits this operation. Inside the stranded-escrow window (after a partial capture, before authorization_expiry) the void and release refusals each name the other verb and the timestamp when release opens — the codes (not_voidable / authorization_not_expired) are unchanged and remain the field to branch on. */
+            /** @description Payment not in a state that permits this operation. Inside the stranded-escrow window (after a partial capture, before authorization_expiry) the void and release refusals each name the other verb and the timestamp when release opens — the codes (not_voidable / authorization_not_expired) are unchanged and remain the field to branch on. On `release`, `transaction_in_flight`: the other party's signed transaction is waiting to be broadcast and a prepare would clear it; retry in a moment to get a transaction of your own. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description rate_limited: the payment already has as many transactions of this operation waiting to be confirmed as it may (3; 10 for capture and refund). Nothing is written. `Retry-After` is set; retry once one has confirmed or failed. */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5090,12 +5111,21 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The operation's transaction is already confirmed — its hash is not overwritable. A `failed` row IS overwritable: re-reporting the hash repairs an orphan (mined on-chain, recorded failed) by moving it back to `submitted`. */
+            /** @description The operation's transaction is already confirmed — its hash is not overwritable. A `failed` row IS overwritable: re-reporting the hash repairs an orphan (mined on-chain, recorded failed) by moving it back to `submitted`. On `release`, `transaction_in_flight`: the row holds the other party's signed transaction or reported hash, which this session cannot replace; prepare the release again and report the hash on your own row. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description rate_limited: the party already has as many reported hashes waiting to be confirmed as it may (OPEN_REPORTED_TRANSACTIONS_LIMIT, default 100). Nothing is recorded. Replacing the hash on a row that is already an open report is never refused. `Retry-After` is set. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };
@@ -5143,6 +5173,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description rate_limited: the party already has as many reported hashes waiting to be confirmed as it may (OPEN_REPORTED_TRANSACTIONS_LIMIT, default 100). Nothing is recorded. Replacing the hash on a row that is already an open report is never refused. `Retry-After` is set. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     submitCloseDisputeByHash: {
@@ -5188,6 +5227,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description rate_limited: the party already has as many reported hashes waiting to be confirmed as it may (OPEN_REPORTED_TRANSACTIONS_LIMIT, default 100). Nothing is recorded. Replacing the hash on a row that is already an open report is never refused. `Retry-After` is set. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };
@@ -5243,6 +5291,15 @@ export interface operations {
             404: components["responses"]["NotFound"];
             /** @description `unknown_dispute_reason` when `reason` is supplied, non-zero, and not a DisputeOpenReason code or its bytes32; otherwise the payment-state refusal or `idempotency_key_reused`. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description rate_limited: the payment already has as many transactions of this operation waiting to be confirmed as it may (3; 10 for capture and refund). Nothing is written. `Retry-After` is set; retry once one has confirmed or failed. */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5352,6 +5409,15 @@ export interface operations {
             404: components["responses"]["NotFound"];
             /** @description `unknown_dispute_reason` when `reason` is supplied, non-zero, and not a DisputeCloseReason code or its bytes32; otherwise the payment-state refusal or `idempotency_key_reused`. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description rate_limited: the payment already has as many transactions of this operation waiting to be confirmed as it may (3; 10 for capture and refund). Nothing is written. `Retry-After` is set; retry once one has confirmed or failed. */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5838,6 +5904,15 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description rate_limited: a test delivery is already running for this account, or the gateway is running as many as it allows at once (half its web threads). Refused at once, never queued; `Retry-After` carries the delivery deadline in seconds. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listWebhookEventCallbacks: {
