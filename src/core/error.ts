@@ -87,7 +87,9 @@ const errorHints: Record<string, string> = {
   unknown_dispute_reason:
     'the reason is not in the dispute-reason dictionary — send a code from DISPUTE_OPEN_REASONS / DISPUTE_CLOSE_REASONS (or its exact bytes32); full_refund is recorded by the protocol and cannot be sent',
   transaction_not_overwritable:
-    'a transaction for this operation is already in flight — wait for it to settle',
+    "this operation's transaction is already confirmed — its hash cannot be replaced (a failed one can: report the hash again)",
+  transaction_in_flight:
+    "the other party already has this operation's transaction signed or sent, and this session cannot replace it — wait a moment and prepare the operation again to get a transaction of your own",
   signer_mismatch:
     "the signature recovers to a different wallet than the one that must sign — the payment's payer/payee, or at POST /claim the wallet the onboarding request names",
   // The SIWE BINDING failures, split out of signer_mismatch so a login failure says
@@ -190,7 +192,7 @@ const errorHints: Record<string, string> = {
   validation_failed: 'a parameter is invalid — the detail names the offending field',
   invalid_sort: 'that field cannot be sorted on — the detail names the allowed set',
   rate_limited:
-    'too many requests — wait the Retry-After seconds (the time left in the current window) and retry',
+    "too many requests, or too many of this payment's transactions still waiting to be confirmed — wait the Retry-After seconds and retry",
   // transaction lifecycle
   not_redrivable:
     'only a pending transaction that already holds its signed bytes can be re-enqueued — submit a signature instead',
